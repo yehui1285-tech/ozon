@@ -3,47 +3,37 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>OZON 运费快速测算</title>
+  <title>OZON 本地核价表</title>
   <style>
     :root {
       color-scheme: light;
       --bg: #f5f7fb;
       --panel: #ffffff;
       --ink: #18212f;
-      --muted: #607086;
+      --muted: #637187;
       --line: #dce3ec;
+      --manual: #fff7df;
+      --calc: #f3f7fb;
       --blue: #1768d1;
-      --green: #0a8f5a;
-      --red: #c2412d;
-      --amber: #a66600;
+      --green: #0a7f55;
+      --red: #c23b2a;
+      --amber: #9b6500;
       --shadow: 0 10px 28px rgba(24, 33, 47, 0.08);
     }
 
-    * {
-      box-sizing: border-box;
-    }
+    * { box-sizing: border-box; }
 
     body {
       margin: 0;
       font-family: "Microsoft YaHei", "PingFang SC", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: var(--bg);
       color: var(--ink);
+      background: var(--bg);
     }
 
-    .app {
-      min-height: 100vh;
-      display: grid;
-      grid-template-columns: 360px 1fr;
-    }
-
-    aside {
-      background: #111827;
+    header {
+      padding: 22px 24px 16px;
       color: #f8fafc;
-      padding: 28px 24px;
-      position: sticky;
-      top: 0;
-      height: 100vh;
-      overflow: auto;
+      background: #111827;
     }
 
     h1 {
@@ -54,806 +44,884 @@
     }
 
     .subtitle {
-      color: #b8c3d4;
-      margin: 0 0 26px;
+      max-width: 1120px;
+      margin: 0;
+      color: #c8d2e1;
+      font-size: 13px;
       line-height: 1.6;
-      font-size: 14px;
     }
 
-    .source-note {
-      border: 1px solid rgba(255, 255, 255, 0.16);
-      background: rgba(255, 255, 255, 0.06);
-      padding: 12px;
-      margin-bottom: 22px;
-      font-size: 13px;
-      line-height: 1.55;
-      color: #d8dee9;
-    }
-
-    label {
-      display: block;
-      font-weight: 700;
-      margin-bottom: 8px;
-      font-size: 14px;
-    }
-
-    .field {
-      margin-bottom: 16px;
-    }
-
-    input {
-      width: 100%;
-      border: 1px solid #334155;
-      background: #0f172a;
-      color: #ffffff;
-      height: 42px;
-      padding: 0 12px;
-      font-size: 16px;
-      border-radius: 6px;
-      outline: none;
-    }
-
-    input:focus {
-      border-color: #7db5ff;
-      box-shadow: 0 0 0 3px rgba(125, 181, 255, 0.18);
-    }
-
-    .hint {
-      color: #a9b6c8;
-      margin-top: 6px;
-      font-size: 12px;
-      line-height: 1.4;
-    }
-
-    .preset-row {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 8px;
-      margin: 8px 0 18px;
-    }
-
-    .fx-panel {
-      border: 1px solid rgba(255, 255, 255, 0.16);
-      background: rgba(255, 255, 255, 0.05);
-      padding: 14px;
-      margin-top: 30px;
-      border-radius: 6px;
-    }
-
-    .fx-panel h2 {
-      margin: 0 0 12px;
-      font-size: 17px;
-      line-height: 1.3;
-      color: #f8fafc;
-    }
-
-    .fx-grid {
-      display: grid;
-      grid-template-columns: 1fr;
-      gap: 12px;
-    }
-
-    .fx-result {
-      margin-top: 12px;
-      padding: 10px;
-      border-radius: 6px;
-      background: #0f172a;
-      color: #dbeafe;
-      font-size: 13px;
-      line-height: 1.55;
-    }
-
-    .extract-panel {
-      border: 1px solid rgba(255, 255, 255, 0.16);
-      background: rgba(255, 255, 255, 0.05);
-      padding: 14px;
-      margin-top: 22px;
-      border-radius: 6px;
-    }
-
-    .extract-panel h2 {
-      margin: 0 0 8px;
-      font-size: 17px;
-      line-height: 1.3;
-      color: #f8fafc;
-    }
-
-    textarea {
-      width: 100%;
-      min-height: 86px;
-      resize: vertical;
-      border: 1px solid #334155;
-      background: #0f172a;
-      color: #ffffff;
-      padding: 10px 12px;
-      font-size: 14px;
-      border-radius: 6px;
-      outline: none;
-      font-family: inherit;
-      line-height: 1.45;
-    }
-
-    textarea:focus {
-      border-color: #7db5ff;
-      box-shadow: 0 0 0 3px rgba(125, 181, 255, 0.18);
-    }
-
-    .extract-actions {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 8px;
-      margin-top: 10px;
-    }
-
-    .extract-status {
-      margin-top: 10px;
-      color: #d8dee9;
-      font-size: 12px;
-      line-height: 1.5;
-      min-height: 18px;
-    }
-
-    button {
-      border: 1px solid rgba(255, 255, 255, 0.18);
-      background: rgba(255, 255, 255, 0.08);
-      color: #eef4ff;
-      height: 34px;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: 13px;
-    }
-
-    button:hover {
-      background: rgba(255, 255, 255, 0.14);
-    }
-
-    main {
-      padding: 28px;
-      overflow: auto;
-    }
+    main { padding: 20px 24px 28px; }
 
     .summary {
       display: grid;
       grid-template-columns: repeat(4, minmax(150px, 1fr));
-      gap: 14px;
-      margin-bottom: 18px;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .metric, .panel {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
     }
 
     .metric {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      box-shadow: var(--shadow);
-      padding: 16px;
-      border-radius: 8px;
-      min-height: 86px;
+      min-height: 82px;
+      padding: 14px;
     }
 
     .metric span {
       display: block;
+      margin-bottom: 7px;
       color: var(--muted);
       font-size: 13px;
-      margin-bottom: 8px;
     }
 
     .metric strong {
-      font-size: 24px;
+      display: block;
+      font-size: 23px;
       line-height: 1.2;
     }
+
+    .good { color: var(--green); }
+    .bad { color: var(--red); }
+    .warn { color: var(--amber); }
 
     .toolbar {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      gap: 14px;
-      margin: 12px 0 16px;
+      gap: 12px;
+      margin-bottom: 14px;
     }
 
     .toolbar h2 {
       margin: 0;
-      font-size: 22px;
+      font-size: 20px;
+      line-height: 1.25;
     }
 
-    .pill {
-      display: inline-flex;
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
       align-items: center;
-      height: 30px;
-      padding: 0 10px;
-      border-radius: 999px;
-      background: #e7eef8;
-      color: #334155;
+      gap: 8px;
+    }
+
+    button {
+      height: 34px;
+      border: 1px solid #cdd6e3;
+      border-radius: 6px;
+      padding: 0 12px;
+      cursor: pointer;
+      color: #1f2a3d;
+      background: #ffffff;
       font-size: 13px;
+    }
+
+    button.primary {
+      border-color: #145fbd;
+      color: #ffffff;
+      background: var(--blue);
+    }
+
+    button:hover { filter: brightness(0.97); }
+
+    .panel {
+      padding: 15px;
+      margin-bottom: 16px;
+    }
+
+    .table-wrap {
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+    }
+
+    .pricing-table-wrap {
+      max-height: 176px;
+    }
+
+    table {
+      width: max-content;
+      min-width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    th, td {
+      border-right: 1px solid #e5ebf2;
+      border-bottom: 1px solid #e5ebf2;
+      padding: 0;
+      text-align: left;
+      vertical-align: middle;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      height: 48px;
+      min-width: 94px;
+      padding: 8px 10px;
+      color: #273346;
+      background: #eaf0f7;
+      font-weight: 700;
+      line-height: 1.25;
       white-space: nowrap;
     }
 
-    .results {
+    th.manual { background: #ffeeb9; }
+    th.optional { background: #eef7ef; }
+    th.price-title {
+      color: #ffffff;
+      background: #1768d1;
+    }
+    th.index-col,
+    td.index {
+      width: 46px;
+      min-width: 46px;
+      max-width: 46px;
+      text-align: center;
+    }
+
+    th.compact,
+    td.compact {
+      width: 68px;
+      min-width: 68px;
+      max-width: 68px;
+    }
+
+    td.index, td.calc, td.fixed {
+      padding: 8px 10px;
+      background: var(--calc);
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    td.fixed { background: #f7f9fc; }
+    td.price-cell {
+      color: #0b5fc7;
+      background: #eaf3ff;
+      font-weight: 800;
+    }
+    td.manual { background: var(--manual); }
+    th.soft-manual { background: #e5e7eb; }
+    td.soft-manual { background: #f3f4f6; }
+    td.optional { background: #f7fcf7; }
+    td.compact input {
+      width: 68px;
+      min-width: 0;
+      padding: 0 6px;
+    }
+
+    input, textarea, select {
+      width: 100%;
+      border: 0;
+      outline: none;
+      color: var(--ink);
+      background: transparent;
+      font: inherit;
+    }
+
+    td input {
+      min-width: 92px;
+      height: 38px;
+      padding: 0 9px;
+    }
+
+    td textarea {
+      min-width: 150px;
+      height: 38px;
+      min-height: 38px;
+      resize: vertical;
+      padding: 9px;
+      line-height: 1.4;
+    }
+
+    .wide { min-width: 170px; }
+    .link { min-width: 220px; }
+    .copy-cell {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
-      gap: 14px;
+      grid-template-columns: minmax(150px, 1fr) 56px;
+      gap: 6px;
+      align-items: stretch;
+      min-width: 220px;
+      padding: 0 6px;
+    }
+
+    .copy-cell textarea {
+      min-width: 0;
+      padding-left: 3px;
+      padding-right: 3px;
+    }
+
+    .copy-btn {
+      align-self: center;
+      width: 50px;
+      height: 28px;
+      padding: 0;
+      border: 1px solid #cbd5e1;
+      border-radius: 5px;
+      color: #1f2a3d;
+      background: #ffffff;
+      font-size: 12px;
+    }
+
+    .copy-btn.copied {
+      border-color: #0a7f55;
+      color: #0a7f55;
+      background: #eefbf5;
+    }
+
+    .delete-row-btn {
+      width: 48px;
+      height: 28px;
+      padding: 0;
+      border: 1px solid #efc8c0;
+      border-radius: 5px;
+      color: #b82d1f;
+      background: #fff7f5;
+      font-size: 12px;
+    }
+
+    .delete-row-btn:hover {
+      background: #ffe9e5;
+    }
+    .money { text-align: right; }
+    .percent { text-align: right; }
+
+    .note {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .freight-grid {
+      display: grid;
+      grid-template-columns: 1fr 1.1fr;
+      gap: 16px;
+      align-items: start;
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(120px, 1fr));
+      gap: 10px;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .field input, .field select, .field textarea {
+      height: 38px;
+      border: 1px solid #cfd8e5;
+      border-radius: 6px;
+      padding: 0 10px;
+      background: #ffffff;
+    }
+
+    .field textarea {
+      height: 78px;
+      padding: 9px 10px;
+      resize: vertical;
+    }
+
+    .routes {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 10px;
     }
 
     .route {
-      background: var(--panel);
       border: 1px solid var(--line);
       border-left: 4px solid var(--green);
-      box-shadow: var(--shadow);
       border-radius: 8px;
-      padding: 16px;
-      min-height: 250px;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
+      padding: 12px;
+      background: #ffffff;
     }
 
     .route.unavailable {
       border-left-color: var(--red);
-      opacity: 0.82;
+      opacity: 0.78;
     }
 
-    .route header {
-      display: flex;
-      justify-content: space-between;
-      gap: 12px;
-      align-items: flex-start;
-    }
+    .route.best { border-left-color: var(--blue); }
 
     .route h3 {
-      margin: 0;
-      font-size: 17px;
-      line-height: 1.35;
-    }
-
-    .route .cn {
-      color: var(--muted);
-      font-size: 13px;
-      margin-top: 3px;
-      line-height: 1.4;
-    }
-
-    .price {
-      text-align: right;
-      color: var(--green);
-      min-width: 92px;
-    }
-
-    .unavailable .price {
-      color: var(--red);
-    }
-
-    .price b {
-      display: block;
-      font-size: 24px;
-      line-height: 1;
-      white-space: nowrap;
-    }
-
-    .price small {
-      color: var(--muted);
-      font-size: 12px;
-    }
-
-    .facts {
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 8px;
-    }
-
-    .fact {
-      background: #f7f9fc;
-      border: 1px solid #e4eaf2;
-      padding: 9px 10px;
-      border-radius: 6px;
-      min-height: 56px;
-    }
-
-    .fact span {
-      display: block;
-      color: var(--muted);
-      font-size: 12px;
-      margin-bottom: 3px;
-    }
-
-    .fact b {
+      margin: 0 0 4px;
       font-size: 14px;
-      line-height: 1.35;
+      line-height: 1.3;
     }
 
-    .rule {
-      font-size: 13px;
-      line-height: 1.55;
-      color: #405066;
+    .route .meta, .route .reason {
       margin: 0;
-    }
-
-    .reason {
-      margin: 0;
-      color: var(--red);
-      font-size: 13px;
-      line-height: 1.5;
-    }
-
-    .best {
-      border-left-color: var(--blue);
-    }
-
-    .best-tag {
-      color: #0b5fc7;
+      color: var(--muted);
       font-size: 12px;
-      margin-top: 5px;
-      font-weight: 700;
+      line-height: 1.45;
     }
 
-    .empty {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 24px;
-      color: var(--amber);
-      box-shadow: var(--shadow);
+    .route .price {
+      margin: 8px 0;
+      color: var(--green);
+      font-size: 20px;
+      font-weight: 800;
     }
+
+    .unavailable .price { color: var(--red); }
+
+    .route .reason { color: var(--red); }
 
     @media (max-width: 960px) {
-      .app {
-        display: block;
-      }
-
-      aside {
-        position: static;
-        height: auto;
-      }
-
-      main {
-        padding: 20px 14px;
-      }
-
-      .summary {
-        grid-template-columns: repeat(2, 1fr);
-      }
-    }
-
-    @media (max-width: 560px) {
-      .summary,
-      .results,
-      .facts {
-        grid-template-columns: 1fr;
-      }
-
-      .toolbar {
-        align-items: flex-start;
-        flex-direction: column;
-      }
+      main { padding: 16px 12px 24px; }
+      .summary { grid-template-columns: repeat(2, 1fr); }
+      .freight-grid, .form-grid { grid-template-columns: 1fr; }
+      .toolbar { align-items: flex-start; flex-direction: column; }
     }
   </style>
 </head>
 <body>
-  <div class="app">
-    <aside>
-      <h1>OZON 运费快速测算</h1>
-      <p class="subtitle">根据“运费价格测算表 agent.xlsx”当前可见内容制作。</p>
-      <div class="source-note">仅纳入 Excel 当前可见的 Economy 渠道、可见资费、可见限制和可见计费逻辑。隐藏行、隐藏列、隐藏公式未作为工具依据。</div>
+  <header>
+    <h1>OZON 本地核价表</h1>
+    <p class="subtitle">按“最新定价表 agent.xlsx”重做：带 * 的列均为人工填写；真实售价、自动生成、定价、贴单费、平台佣金、利润、利润率自动计算。下方运费测算只是辅助，可一键填入当前行的“国际运费*”。</p>
+  </header>
 
-      <div class="field">
-        <label for="sale">售价 / 卢布</label>
-        <input id="sale" type="number" min="0" step="1" value="200" inputmode="decimal">
-        <div class="hint">表格提示：135 元内可填 200，135-600 元可填 2000，600 元以上可填 20000。</div>
-      </div>
+  <main>
+    <section class="summary" aria-live="polite">
+      <div class="metric"><span>已填写行数</span><strong id="filledRows">0</strong></div>
+      <div class="metric"><span>达标行数</span><strong id="okRows">0</strong></div>
+      <div class="metric"><span>总利润</span><strong id="totalProfit">¥0.00</strong></div>
+      <div class="metric"><span>平均利润率</span><strong id="avgMargin">-</strong></div>
+    </section>
 
-      <div class="field">
-        <label for="weight">实重 / kg</label>
-        <input id="weight" type="number" min="0" step="0.001" value="0.2" inputmode="decimal">
-      </div>
-
-      <div class="field">
-        <label for="length">长 / cm</label>
-        <input id="length" type="number" min="0" step="0.1" value="20" inputmode="decimal">
-      </div>
-
-      <div class="field">
-        <label for="width">宽 / cm</label>
-        <input id="width" type="number" min="0" step="0.1" value="15" inputmode="decimal">
-      </div>
-
-      <div class="field">
-        <label for="height">高 / cm</label>
-        <input id="height" type="number" min="0" step="0.1" value="5" inputmode="decimal">
-      </div>
-
-      <div class="preset-row">
-        <button type="button" data-preset="small">轻小件</button>
-        <button type="button" data-preset="budget">低客单</button>
-        <button type="button" data-preset="big">大件</button>
-      </div>
-
-      <div class="extract-panel">
-        <h2>页面数据识别</h2>
-        <div class="hint">从 OZON/ERP 页面复制包含长宽高、重量的文字，粘贴到这里会自动填入上方。</div>
-        <textarea id="ozonText" placeholder="例如：长宽高：560 x 480 x 130mm&#10;重量：1800g"></textarea>
-        <div class="extract-actions">
-          <button type="button" id="parseOzon">识别并填入</button>
-          <button type="button" id="clearOzon">清空</button>
-        </div>
-        <div id="parseStatus" class="extract-status"></div>
-      </div>
-
-      <div class="fx-panel">
-        <h2>汇率计算器</h2>
-        <div class="fx-grid">
-          <div>
-            <label for="rate">汇率：1 人民币 = 多少卢布</label>
-            <input id="rate" type="number" min="0" step="0.0001" value="12.80" inputmode="decimal">
-          </div>
-          <div>
-            <label for="rub">卢布 RUB</label>
-            <input id="rub" type="number" min="0" step="0.01" value="2000" inputmode="decimal">
-          </div>
-          <div>
-            <label for="cny">人民币 CNY</label>
-            <input id="cny" type="number" min="0" step="0.01" inputmode="decimal">
-          </div>
-        </div>
-        <div id="fxResult" class="fx-result">-</div>
-      </div>
-    </aside>
-
-    <main>
-      <section class="summary" aria-live="polite">
-        <div class="metric"><span>三边和</span><strong id="sum">-</strong></div>
-        <div class="metric"><span>实重 / 体积重</span><strong id="vol12000">-</strong></div>
-        <div class="metric"><span>可用渠道</span><strong id="availableCount">-</strong></div>
-        <div class="metric"><span>最低可见运费</span><strong id="bestPrice">-</strong></div>
-      </section>
-
+    <section class="panel">
       <div class="toolbar">
-        <h2>测算结果</h2>
-        <span class="pill">价格单位：人民币 CNY</span>
+        <h2>核价明细</h2>
+        <div class="actions">
+          <button type="button" id="addRow">新增行</button>
+          <button type="button" id="deleteBlankRows">删除空白行</button>
+          <button type="button" id="exportCsv" class="primary">导出 CSV</button>
+        </div>
       </div>
+      <div class="table-wrap pricing-table-wrap">
+        <table id="pricingTable">
+          <thead>
+            <tr>
+              <th class="index-col">序号</th>
+              <th class="index-col">操作</th>
+              <th class="manual compact">绿标价格*</th>
+              <th class="manual compact">黑标价格*</th>
+              <th class="manual compact">佣金*</th>
+              <th>真实售价</th>
+              <th>自动生成<br>不用填</th>
+              <th class="price-title">定价<br>低于真实售价</th>
+              <th class="soft-manual compact">手动<br>定价</th>
+              <th>系数</th>
+              <th class="soft-manual">手动系数</th>
+              <th class="manual compact">采购<br>成本*</th>
+              <th class="manual compact">国际运费*</th>
+              <th>贴单费</th>
+              <th>平台佣金</th>
+              <th>利润</th>
+              <th>利润率 ≥18%</th>
+              <th class="optional">SKU</th>
+              <th class="optional">跟卖链接</th>
+              <th class="optional">货源</th>
+              <th class="optional">备注</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <div class="note">公式：E=(C-B)*2.2+C；F=G*定价；J=3；K=G*佣金；L=G-H-I-J-K-F；M=L/(H+I)。系数默认 0.97；选择手动系数后，“系数”列会同步显示所选值。手动定价为空时使用自动定价，填写后仅覆盖当前行，并联动货值和运费。佣金按百分数填写，例如 8 表示 8%。</div>
+    </section>
 
-      <section id="results" class="results"></section>
-    </main>
-  </div>
+    <section class="panel">
+      <div class="toolbar">
+        <h2>国际运费辅助测算</h2>
+        <div class="actions">
+          <button type="button" id="fillFreight" class="primary">填入所选行国际运费*</button>
+        </div>
+      </div>
+      <div class="freight-grid">
+        <div>
+          <div class="form-grid">
+            <div class="field">
+              <label for="activeRow">回填行</label>
+              <select id="activeRow"></select>
+              <div class="note">默认最新一行；修改测算参数后会自动回填。</div>
+            </div>
+            <div class="field">
+              <label for="saleRub">货值 / 卢布</label>
+              <input id="saleRub" type="number" min="0" step="1" value="2000">
+              <div class="note">按所选行“定价”自动填：＜135 为 200，135≤定价≤600 为 2000，＞600 为 20000。</div>
+            </div>
+            <div class="field">
+              <label for="weight">实重 / kg</label>
+              <input id="weight" type="number" min="0" step="0.001" value="0.8">
+            </div>
+            <div class="field">
+              <label for="length">长 / cm</label>
+              <input id="length" type="number" min="0" step="0.1" value="30">
+            </div>
+            <div class="field">
+              <label for="width">宽 / cm</label>
+              <input id="width" type="number" min="0" step="0.1" value="20">
+            </div>
+            <div class="field">
+              <label for="height">高 / cm</label>
+              <input id="height" type="number" min="0" step="0.1" value="8">
+            </div>
+          </div>
+          <div class="field" style="margin-top: 10px;">
+            <label for="ozonText">页面数据识别</label>
+            <textarea id="ozonText" placeholder="例如：长宽高：560 x 480 x 130mm&#10;重量：1800g"></textarea>
+          </div>
+          <div class="actions">
+            <button type="button" id="parseOzon">识别尺寸重量</button>
+            <button type="button" id="clearOzon">清空</button>
+          </div>
+          <div id="parseStatus" class="note"></div>
+        </div>
+        <div>
+          <div id="freightSummary" class="note" style="margin: 0 0 10px;"></div>
+          <div id="routes" class="routes"></div>
+        </div>
+      </div>
+    </section>
+  </main>
 
   <script>
     const routes = [
-      {
-        category: "Extra Small（超级轻小件）",
-        name: "CEL Economy Extra Small",
-        cn: "经济超级轻小件",
-        delivery: "21-26 天",
-        destination: "到取货点",
-        feeText: "25元/千克 + 3元/票",
-        weightText: "0.5KG",
-        valueText: "1500卢布",
-        sizeText: "三边之和不超90CM",
-        logicText: "实重计费，不计抛",
-        minValue: 0,
-        maxValue: 1500,
-        minWeightExclusive: 0,
-        maxWeight: 0.5,
-        maxSum: 90,
-        maxSide: Infinity,
-        usesVolume: false,
-        rate: 26,
-        fixed: 3.12
-      },
-      {
-        category: "Budget（低客单轻小件）",
-        name: "CEL Economy Budget",
-        cn: "经济低客单价轻小件",
-        delivery: "16-21 天",
-        destination: "到取货点",
-        feeText: "17元/千克 + 23元/票",
-        weightText: "0.5KG-25KG",
-        valueText: "1500卢布",
-        sizeText: "三边之和不超150CM，单边最大尺寸不超60CM",
-        logicText: "实重计费，不计抛",
-        minValue: 0,
-        maxValue: 1500,
-        minWeightExclusive: 0.5,
-        maxWeight: 25,
-        maxSum: 150,
-        maxSide: 60,
-        usesVolume: false,
-        rate: 17.68,
-        fixed: 23.92
-      },
-      {
-        category: "SMALL（轻小件）",
-        name: "CEL Economy Small",
-        cn: "经济轻小件",
-        delivery: "16-21 天",
-        destination: "到取货点",
-        feeText: "25元/千克 + 16元/票",
-        weightText: "2KG",
-        valueText: "1501-7000卢布",
-        sizeText: "三边之和不超150CM，单边最大尺寸不超60CM",
-        logicText: "实重计费，不计抛",
-        minValue: 1500,
-        maxValue: 7000,
-        minWeightExclusive: 0,
-        maxWeight: 2,
-        maxSum: 150,
-        maxSide: 60,
-        usesVolume: false,
-        rate: 26,
-        fixed: 16.64
-      },
-      {
-        category: "Premium Small（高客单轻小件）",
-        name: "CEL Economy Premium Small",
-        cn: "经济高客单轻小件",
-        delivery: "16-21 天",
-        destination: "到取货点",
-        feeText: "25元/千克 + 22元/票",
-        weightText: "5KG",
-        valueText: "7001-250000卢布",
-        sizeText: "三边之和不超250CM，单边最大尺寸不超150CM",
-        logicText: "实重计费，不计抛",
-        minValue: 7000,
-        maxValue: 250000,
-        minWeightExclusive: 0,
-        maxWeight: 5,
-        maxSum: 250,
-        maxSide: 150,
-        usesVolume: false,
-        rate: 26,
-        fixed: 22.88
-      },
-      {
-        category: "Big（大件）",
-        name: "CEL Economy Big",
-        cn: "经济大件",
-        delivery: "21-26 天",
-        destination: "到取货点",
-        feeText: "17元/千克 + 36元/票",
-        weightText: "2.001-30KG（计抛、体积重不超31KG）",
-        valueText: "1501-7000卢布",
-        sizeText: "三边之和不超250CM，单边最大尺寸不超150CM",
-        logicText: "实重与体积重比较，取最大值计费。体积重 = 长 x 宽 x 高 / 12000",
-        minValue: 1500,
-        maxValue: 7000,
-        minWeightExclusive: 2,
-        maxWeight: 30,
-        maxBillable: 31,
-        maxSum: 250,
-        maxSide: 150,
-        usesVolume: true,
-        rate: 17.68,
-        fixed: 37.44
-      },
-      {
-        category: "Premium Big（高客单大件）",
-        name: "CEL Economy Premium Big",
-        cn: "经济高客单大件",
-        delivery: "21-26 天",
-        destination: "到取货点",
-        feeText: "23元/千克 + 62元/票",
-        weightText: "5.001-30KG（计抛、体积重不超80KG）",
-        valueText: "7001-250000卢布",
-        sizeText: "三边之和不超310CM，单边最大尺寸不超150CM，最大尺寸限制150*80*80",
-        logicText: "实重与体积重比较，取最大值计费。体积重 = 长 x 宽 x 高 / 12000",
-        minValue: 7000,
-        maxValue: 250000,
-        minWeightExclusive: 5,
-        maxWeight: 30,
-        maxBillable: 80,
-        maxSum: 310,
-        maxSide: 150,
-        maxBox: [150, 80, 80],
-        usesVolume: true,
-        rate: 23.92,
-        fixed: 64.48
-      }
+      { name: "CEL Economy Extra Small", cn: "经济超级轻小件", delivery: "21-26 天", feeText: "26元/kg + 3.12元/票", weightText: "0-0.5KG", valueText: "0-1500卢布", minValue: 0, maxValue: 1500, minWeightExclusive: 0, maxWeight: 0.5, maxSum: 90, maxSide: Infinity, usesVolume: false, rate: 26, fixed: 3.12 },
+      { name: "CEL Economy Budget", cn: "经济低客单价轻小件", delivery: "16-21 天", feeText: "17.68元/kg + 23.92元/票", weightText: "0.5-25KG", valueText: "0-1500卢布", minValue: 0, maxValue: 1500, minWeightExclusive: 0.5, maxWeight: 25, maxSum: 150, maxSide: 60, usesVolume: false, rate: 17.68, fixed: 23.92 },
+      { name: "CEL Economy Small", cn: "经济轻小件", delivery: "16-21 天", feeText: "26元/kg + 16.64元/票", weightText: "0-2KG", valueText: "1501-7000卢布", minValue: 1500, maxValue: 7000, minWeightExclusive: 0, maxWeight: 2, maxSum: 150, maxSide: 60, usesVolume: false, rate: 26, fixed: 16.64 },
+      { name: "CEL Economy Premium Small", cn: "经济高客单轻小件", delivery: "16-21 天", feeText: "26元/kg + 22.88元/票", weightText: "0-5KG", valueText: "7001-250000卢布", minValue: 7000, maxValue: 250000, minWeightExclusive: 0, maxWeight: 5, maxSum: 250, maxSide: 150, usesVolume: false, rate: 26, fixed: 22.88 },
+      { name: "CEL Economy Big", cn: "经济大件", delivery: "21-26 天", feeText: "17.68元/kg + 37.44元/票", weightText: "2.001-30KG", valueText: "1501-7000卢布", minValue: 1500, maxValue: 7000, minWeightExclusive: 2, maxWeight: 30, maxBillable: 31, maxSum: 250, maxSide: 150, usesVolume: true, rate: 17.68, fixed: 37.44 },
+      { name: "CEL Economy Premium Big", cn: "经济高客单大件", delivery: "21-26 天", feeText: "23.92元/kg + 64.48元/票", weightText: "5.001-30KG", valueText: "7001-250000卢布", minValue: 7000, maxValue: 250000, minWeightExclusive: 5, maxWeight: 30, maxBillable: 80, maxSum: 310, maxSide: 150, maxBox: [150, 80, 80], usesVolume: true, rate: 23.92, fixed: 64.48 }
     ];
 
-    const fields = ["sale", "weight", "length", "width", "height"];
     const $ = (id) => document.getElementById(id);
-    const money = (value) => `¥${value.toFixed(2)}`;
-    const kg = (value) => `${value.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")} kg`;
-    const cm = (value) => `${value.toFixed(1).replace(/\.0$/, "")} cm`;
+    let rows = Array.from({ length: 1 }, (_, index) => emptyRow(index + 1));
+    let bestFreight = null;
 
-    function getInputs() {
-      const values = Object.fromEntries(fields.map((id) => [id, Number($(id).value || 0)]));
-      values.sum = values.length + values.width + values.height;
-      values.sides = [values.length, values.width, values.height].sort((a, b) => b - a);
-      values.volume12000 = values.length * values.width * values.height / 12000;
-      return values;
+    function emptyRow(index) {
+      return {
+        id: window.crypto && crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random()),
+        index,
+        green: "",
+        black: "",
+        commission: "",
+        factorOverride: "",
+        quoteOverride: "",
+        cost: "",
+        freight: "",
+        sku: "",
+        link: "",
+        source: "",
+        note: ""
+      };
+    }
+
+    function number(value) {
+      const n = Number(String(value ?? "").replace("%", "").replace(",", "."));
+      return Number.isFinite(n) ? n : 0;
+    }
+
+    function commissionRate(value) {
+      const n = number(value);
+      return n / 100;
+    }
+
+    function hasRequired(row) {
+      return ["green", "black", "commission", "cost", "freight"].some((key) => String(row[key]).trim() !== "");
+    }
+
+    function calc(row) {
+      const green = number(row.green);
+      const black = number(row.black);
+      const rate = commissionRate(row.commission);
+      const cost = number(row.cost);
+      const freight = number(row.freight);
+      const trueSale = (black - green) * 2.2 + black;
+      const manualFactor = String(row.factorOverride).trim() === "" ? null : number(row.factorOverride);
+      const pricingFactor = manualFactor && manualFactor > 0 ? manualFactor : 0.97;
+      const autoQuote = trueSale * pricingFactor;
+      const manualQuote = String(row.quoteOverride).trim() === "" ? null : number(row.quoteOverride);
+      const quote = manualQuote && manualQuote > 0 ? manualQuote : autoQuote;
+      const autoFee = quote * 0.04;
+      const labelFee = 3;
+      const platform = quote * rate;
+      const profit = quote - cost - freight - labelFee - platform - autoFee;
+      const margin = cost + freight > 0 ? profit / (cost + freight) : null;
+      return { trueSale, pricingFactor, autoQuote, quote, autoFee, labelFee, platform, profit, margin };
+    }
+
+    function money(value) {
+      if (!Number.isFinite(value)) return "-";
+      return `¥${value.toFixed(2)}`;
+    }
+
+    function pct(value) {
+      if (!Number.isFinite(value)) return "-";
+      return `${(value * 100).toFixed(1)}%`;
+    }
+
+    function displayValue(row, key) {
+      if (key === "commission" && String(row[key]).trim() !== "") {
+        return `${number(row[key])}%`;
+      }
+      return row[key] ?? "";
+    }
+
+    function inputCell(row, key, type = "number", cls = "manual") {
+      const value = row[key] ?? "";
+      if (key === "link") {
+        return `<td class="${cls}">
+          <div class="copy-cell">
+            <textarea data-id="${row.id}" data-key="${key}" placeholder="粘贴页面地址">${escapeHtml(value)}</textarea>
+            <button type="button" class="copy-btn" data-copy-id="${row.id}">复制</button>
+          </div>
+        </td>`;
+      }
+      if (type === "textarea") {
+        return `<td class="${cls}"><textarea data-id="${row.id}" data-key="${key}">${escapeHtml(value)}</textarea></td>`;
+      }
+      if (key === "factorOverride") {
+        return `<td class="${cls}">
+          <select data-id="${row.id}" data-key="${key}">
+            <option value="" ${value === "" ? "selected" : ""}>空</option>
+            <option value="0.97" ${String(value) === "0.97" ? "selected" : ""}>0.97</option>
+            <option value="0.98" ${String(value) === "0.98" ? "selected" : ""}>0.98</option>
+            <option value="0.99" ${String(value) === "0.99" ? "selected" : ""}>0.99</option>
+          </select>
+        </td>`;
+      }
+      const inputType = key === "commission" ? "text" : type;
+      return `<td class="${cls}"><input class="${type === "number" ? "money" : ""}" data-id="${row.id}" data-key="${key}" type="${inputType}" value="${escapeAttr(displayValue(row, key))}"></td>`;
+    }
+
+    function renderRows() {
+      $("rows").innerHTML = rows.map((row, i) => {
+        row.index = i + 1;
+        const c = calc(row);
+        const marginClass = c.margin === null ? "warn" : c.margin >= 0.18 ? "good" : "bad";
+        const profitClass = c.profit >= 0 ? "good" : "bad";
+        return `
+          <tr>
+            <td class="index">${row.index}</td>
+            <td class="fixed"><button type="button" class="delete-row-btn" data-delete-id="${row.id}">删除</button></td>
+            ${inputCell(row, "green", "number", "manual compact")}
+            ${inputCell(row, "black", "number", "manual compact")}
+            ${inputCell(row, "commission", "number", "manual compact")}
+            <td class="calc money">${money(c.trueSale)}</td>
+            <td class="calc money">${money(c.autoFee)}</td>
+            <td class="calc money price-cell">${money(c.quote)}</td>
+            ${inputCell(row, "quoteOverride", "number", "soft-manual compact")}
+            <td class="calc percent">${c.pricingFactor.toFixed(2)}</td>
+            ${inputCell(row, "factorOverride", "number", "soft-manual")}
+            ${inputCell(row, "cost", "number", "manual compact")}
+            ${inputCell(row, "freight", "number", "manual compact")}
+            <td class="fixed money">${money(c.labelFee)}</td>
+            <td class="calc money">${money(c.platform)}</td>
+            <td class="calc money ${profitClass}">${money(c.profit)}</td>
+            <td class="calc percent ${marginClass}">${pct(c.margin)}</td>
+            ${inputCell(row, "sku", "text", "optional")}
+            ${inputCell(row, "link", "textarea", "optional link")}
+            ${inputCell(row, "source", "text", "optional")}
+            ${inputCell(row, "note", "textarea", "optional wide")}
+          </tr>
+        `;
+      }).join("");
+      bindRowInputs();
+      renderActiveRowOptions();
+      renderSummary();
+    }
+
+    function bindRowInputs() {
+      document.querySelectorAll("[data-id][data-key]").forEach((el) => {
+        el.addEventListener("input", () => {
+          const row = rows.find((item) => item.id === el.dataset.id);
+          if (!row) return;
+          row[el.dataset.key] = el.dataset.key === "commission" ? String(number(el.value) || "") : el.value;
+          renderSummary();
+        });
+        el.addEventListener("change", () => {
+          const row = rows.find((item) => item.id === el.dataset.id);
+          if (!row) return;
+          row[el.dataset.key] = el.dataset.key === "commission" ? String(number(el.value) || "") : el.value;
+          renderRows();
+          if (row.id === $("activeRow").value && ["green", "black", "factorOverride", "quoteOverride"].includes(el.dataset.key)) {
+            syncSaleRubFromActiveRow(true);
+          }
+        });
+      });
+      document.querySelectorAll("[data-copy-id]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const row = rows.find((item) => item.id === button.dataset.copyId);
+          const text = row?.link?.trim() || "";
+          if (!text) return;
+          const ok = await copyText(text);
+          button.textContent = ok ? "已复制" : "失败";
+          button.classList.toggle("copied", ok);
+          setTimeout(() => {
+            button.textContent = "复制";
+            button.classList.remove("copied");
+          }, 1200);
+        });
+      });
+      document.querySelectorAll("[data-delete-id]").forEach((button) => {
+        button.addEventListener("click", () => {
+          rows = rows.filter((item) => item.id !== button.dataset.deleteId);
+          if (!rows.length) rows.push(emptyRow(1));
+          renderRows();
+        });
+      });
+    }
+
+    async function copyText(text) {
+      if (navigator.clipboard && window.isSecureContext) {
+        try {
+          await navigator.clipboard.writeText(text);
+          return true;
+        } catch (error) {}
+      }
+      const area = document.createElement("textarea");
+      area.value = text;
+      area.style.position = "fixed";
+      area.style.left = "-9999px";
+      document.body.appendChild(area);
+      area.focus();
+      area.select();
+      const ok = document.execCommand("copy");
+      area.remove();
+      return ok;
+    }
+
+    function renderActiveRowOptions() {
+      const current = $("activeRow").value || rows[rows.length - 1]?.id;
+      $("activeRow").innerHTML = rows.map((row) => `<option value="${row.id}">第 ${row.index} 行${row.sku ? ` - ${escapeHtml(row.sku)}` : ""}</option>`).join("");
+      if (rows.some((row) => row.id === current)) $("activeRow").value = current;
+      else if (rows.length) $("activeRow").value = rows[rows.length - 1].id;
+    }
+
+    function saleRubForQuote(quote) {
+      if (quote < 135) return 200;
+      if (quote <= 600) return 2000;
+      return 20000;
+    }
+
+    function syncSaleRubFromActiveRow(shouldRenderFreight = false) {
+      const row = rows.find((item) => item.id === $("activeRow").value) || rows[rows.length - 1];
+      if (!row) return;
+      const quote = calc(row).quote;
+      const saleRub = saleRubForQuote(quote);
+      if (String($("saleRub").value) !== String(saleRub)) {
+        $("saleRub").value = String(saleRub);
+        if (shouldRenderFreight) renderFreight();
+      }
+    }
+
+    function fillBestFreight(rowId = $("activeRow").value, shouldRender = true) {
+      if (!bestFreight) return false;
+      const targetId = rowId || rows[rows.length - 1]?.id;
+      const row = rows.find((item) => item.id === targetId);
+      if (!row) return false;
+      const value = bestFreight.price.toFixed(2);
+      if (row.freight === value) return false;
+      row.freight = value;
+      if (shouldRender) renderRows();
+      return true;
+    }
+
+    function scrollPricingTableToBottom() {
+      const wrapper = document.querySelector(".pricing-table-wrap");
+      if (!wrapper) return;
+      requestAnimationFrame(() => {
+        wrapper.scrollTop = wrapper.scrollHeight;
+      });
+    }
+
+    function renderSummary() {
+      const filled = rows.filter(hasRequired);
+      const calcs = filled.map(calc);
+      const validMargins = calcs.filter((item) => item.margin !== null);
+      const ok = validMargins.filter((item) => item.margin >= 0.18).length;
+      const totalProfit = calcs.reduce((sum, item) => sum + item.profit, 0);
+      const avgMargin = validMargins.length ? validMargins.reduce((sum, item) => sum + item.margin, 0) / validMargins.length : null;
+      $("filledRows").textContent = String(filled.length);
+      $("okRows").textContent = String(ok);
+      $("totalProfit").textContent = money(totalProfit);
+      $("totalProfit").className = totalProfit >= 0 ? "good" : "bad";
+      $("avgMargin").textContent = pct(avgMargin);
+      $("avgMargin").className = avgMargin === null ? "" : avgMargin >= 0.18 ? "good" : "bad";
+    }
+
+    function freightInputs() {
+      const length = number($("length").value);
+      const width = number($("width").value);
+      const height = number($("height").value);
+      const sides = [length, width, height].sort((a, b) => b - a);
+      return {
+        sale: number($("saleRub").value),
+        weight: number($("weight").value),
+        length,
+        width,
+        height,
+        sum: length + width + height,
+        sides,
+        volume12000: length * width * height / 12000
+      };
     }
 
     function checkRoute(route, input) {
       const reasons = [];
       const billableWeight = route.usesVolume ? Math.max(input.weight, input.volume12000) : input.weight;
-
-      if (!(input.sale > route.minValue && input.sale <= route.maxValue)) {
-        reasons.push(`货值需为 ${route.valueText}`);
-      }
-      if (!(input.weight > route.minWeightExclusive && input.weight <= route.maxWeight)) {
-        reasons.push(`实重需为 ${route.weightText}`);
-      }
-      if (route.maxBillable && billableWeight > route.maxBillable) {
-        reasons.push(`计费重量需不超过 ${route.maxBillable}KG`);
-      }
-      if (input.sum > route.maxSum) {
-        reasons.push(`三边和需不超过 ${route.maxSum}CM`);
-      }
-      if (Math.max(...input.sides) > route.maxSide) {
-        reasons.push(`单边最大尺寸需不超过 ${route.maxSide}CM`);
-      }
+      if (!(input.sale > route.minValue && input.sale <= route.maxValue)) reasons.push(`货值需为 ${route.valueText}`);
+      if (!(input.weight > route.minWeightExclusive && input.weight <= route.maxWeight)) reasons.push(`实重需为 ${route.weightText}`);
+      if (route.maxBillable && billableWeight > route.maxBillable) reasons.push(`计费重量需不超过 ${route.maxBillable}KG`);
+      if (input.sum > route.maxSum) reasons.push(`三边和需不超过 ${route.maxSum}CM`);
+      if (Math.max(...input.sides) > route.maxSide) reasons.push(`单边最大尺寸需不超过 ${route.maxSide}CM`);
       if (route.maxBox) {
         const limits = [...route.maxBox].sort((a, b) => b - a);
-        const fitsBox = input.sides.every((side, index) => side <= limits[index]);
-        if (!fitsBox) reasons.push("最大尺寸需符合 150*80*80");
+        if (!input.sides.every((side, index) => side <= limits[index])) reasons.push("最大尺寸需符合 150*80*80");
       }
-
       const ok = reasons.length === 0;
-      return {
-        ...route,
-        ok,
-        reasons,
-        billableWeight,
-        price: ok ? billableWeight * route.rate + route.fixed : null
-      };
+      return { ...route, ok, reasons, billableWeight, price: ok ? billableWeight * route.rate + route.fixed : null };
     }
 
-    function render() {
-      const input = getInputs();
+    function renderFreight() {
+      const input = freightInputs();
       const checked = routes.map((route) => checkRoute(route, input));
       const available = checked.filter((route) => route.ok).sort((a, b) => a.price - b.price);
-      const best = available[0];
-      const bestName = best ? best.name : "";
-
-      $("sum").textContent = cm(input.sum);
-      $("vol12000").textContent = `${kg(input.weight)} / ${kg(input.volume12000)}`;
-      $("availableCount").textContent = `${available.length} 个`;
-      $("bestPrice").textContent = best ? money(best.price) : "无";
-
-      const ordered = [
-        ...available,
-        ...checked.filter((route) => !route.ok)
-      ];
-
-      $("results").innerHTML = ordered.map((route) => `
-        <article class="route ${route.ok ? "" : "unavailable"} ${route.name === bestName ? "best" : ""}">
-          <header>
-            <div>
-              <h3>${route.name}</h3>
-              <div class="cn">${route.category}<br>${route.cn}</div>
-              ${route.name === bestName ? '<div class="best-tag">当前最低可用渠道</div>' : ""}
-            </div>
-            <div class="price">
-              <b>${route.ok ? money(route.price) : "不可用"}</b>
-              <small>${route.destination}</small>
-            </div>
-          </header>
-
-          <div class="facts">
-            <div class="fact"><span>时效</span><b>${route.delivery}</b></div>
-            <div class="fact"><span>资费</span><b>${route.feeText}</b></div>
-            <div class="fact"><span>计费重量</span><b>${kg(route.billableWeight)}</b></div>
-            <div class="fact"><span>货值限制</span><b>${route.valueText}</b></div>
-          </div>
-
-          <p class="rule">${route.sizeText}<br>${route.logicText}</p>
-          ${route.ok ? "" : `<p class="reason">超出渠道限制：${route.reasons.join("；")}</p>`}
+      bestFreight = available[0] || null;
+      $("freightSummary").innerHTML = `三边和：<b>${input.sum.toFixed(1)} cm</b>，体积重：<b>${input.volume12000.toFixed(3)} kg</b>，最低可用运费：<b class="${bestFreight ? "good" : "bad"}">${bestFreight ? money(bestFreight.price) : "无"}</b>`;
+      const ordered = [...available, ...checked.filter((route) => !route.ok)];
+      $("routes").innerHTML = ordered.map((route) => `
+        <article class="route ${route.ok ? "" : "unavailable"} ${bestFreight && route.name === bestFreight.name ? "best" : ""}">
+          <h3>${route.name}</h3>
+          <p class="meta">${route.cn}｜${route.delivery}<br>${route.feeText}<br>计费重：${route.billableWeight.toFixed(3)} kg</p>
+          <div class="price">${route.ok ? money(route.price) : "不可用"}</div>
+          ${route.ok ? "" : `<p class="reason">${route.reasons.join("；")}</p>`}
         </article>
-      `).join("") || '<div class="empty">请先填写售价、重量和尺寸。</div>';
+      `).join("");
+      fillBestFreight($("activeRow").value || rows[rows.length - 1]?.id);
     }
 
-    document.querySelectorAll("input").forEach((input) => input.addEventListener("input", render));
-    document.querySelectorAll("[data-preset]").forEach((button) => {
-      button.addEventListener("click", () => {
-        const presets = {
-          small: { sale: 2000, weight: 1, length: 28, width: 20, height: 10 },
-          budget: { sale: 200, weight: 0.8, length: 30, width: 20, height: 8 },
-          big: { sale: 2000, weight: 8, length: 70, width: 40, height: 30 }
-        };
-        const preset = presets[button.dataset.preset];
-        for (const [id, value] of Object.entries(preset)) $(id).value = value;
-        render();
-      });
-    });
-
-    const ozonText = $("ozonText");
-    const parseStatus = $("parseStatus");
+    function parseOzonText() {
+      const text = $("ozonText").value.replace(/\s+/g, " ").trim();
+      if (!text) {
+        $("parseStatus").textContent = "请先粘贴包含长宽高和重量的文字。";
+        return;
+      }
+      const dimMatch = text.match(/(\d+(?:[.,]\d+)?)\s*(?:x|X|×|\*)\s*(\d+(?:[.,]\d+)?)\s*(?:x|X|×|\*)\s*(\d+(?:[.,]\d+)?)\s*(mm|毫米|cm|厘米)?/i);
+      const weightMatch = text.match(/重量[^0-9]*(\d+(?:[.,]\d+)?)\s*(kg|千克|公斤|g|克)?/i) || text.match(/(\d+(?:[.,]\d+)?)\s*(kg|千克|公斤|g|克)/i);
+      const found = [];
+      if (dimMatch) {
+        let dims = [normalizeNumber(dimMatch[1]), normalizeNumber(dimMatch[2]), normalizeNumber(dimMatch[3])];
+        const unit = (dimMatch[4] || "").toLowerCase();
+        if (unit.includes("mm") || unit.includes("毫米") || (!unit && Math.max(...dims) > 150)) dims = dims.map((value) => value / 10);
+        dims = dims.sort((a, b) => b - a);
+        $("length").value = trimNumber(dims[0], 2);
+        $("width").value = trimNumber(dims[1], 2);
+        $("height").value = trimNumber(dims[2], 2);
+        found.push(`尺寸 ${$("length").value} x ${$("width").value} x ${$("height").value} cm`);
+      }
+      if (weightMatch) {
+        let weight = normalizeNumber(weightMatch[1]);
+        const unit = (weightMatch[2] || "").toLowerCase();
+        if (unit === "g" || unit.includes("克") || (!unit && weight > 50)) weight = weight / 1000;
+        $("weight").value = trimNumber(weight, 3);
+        found.push(`重量 ${$("weight").value} kg`);
+      }
+      $("parseStatus").textContent = found.length ? `已填入：${found.join("；")}` : "没有识别到长宽高或重量。";
+      renderFreight();
+    }
 
     function normalizeNumber(text) {
       return Number(String(text).replace(",", "."));
     }
 
-    function parseOzonText() {
-      const text = ozonText.value.replace(/\s+/g, " ").trim();
-      if (!text) {
-        parseStatus.textContent = "请先粘贴包含长宽高和重量的文字。";
-        return;
-      }
-
-      const dimMatch = text.match(/(\d+(?:[.,]\d+)?)\s*(?:x|X|×|\*)\s*(\d+(?:[.,]\d+)?)\s*(?:x|X|×|\*)\s*(\d+(?:[.,]\d+)?)\s*(mm|毫米|cm|厘米)?/i);
-      const weightMatch = text.match(/重量[^0-9]*(\d+(?:[.,]\d+)?)\s*(kg|千克|公斤|g|克)?/i) || text.match(/(\d+(?:[.,]\d+)?)\s*(kg|千克|公斤|g|克)/i);
-      const found = [];
-
-      if (dimMatch) {
-        let dims = [normalizeNumber(dimMatch[1]), normalizeNumber(dimMatch[2]), normalizeNumber(dimMatch[3])];
-        const unit = (dimMatch[4] || "").toLowerCase();
-        const looksLikeMm = unit.includes("mm") || unit.includes("毫米") || (!unit && Math.max(...dims) > 150);
-        if (looksLikeMm) dims = dims.map((value) => value / 10);
-        dims = dims.sort((a, b) => b - a);
-        $("length").value = dims[0].toFixed(2).replace(/\.?0+$/, "");
-        $("width").value = dims[1].toFixed(2).replace(/\.?0+$/, "");
-        $("height").value = dims[2].toFixed(2).replace(/\.?0+$/, "");
-        found.push(`尺寸 ${$("length").value} x ${$("width").value} x ${$("height").value} cm`);
-      }
-
-      if (weightMatch) {
-        let weight = normalizeNumber(weightMatch[1]);
-        const unit = (weightMatch[2] || "").toLowerCase();
-        const looksLikeGram = unit === "g" || unit.includes("克") || (!unit && weight > 50);
-        if (looksLikeGram) weight = weight / 1000;
-        $("weight").value = weight.toFixed(3).replace(/\.?0+$/, "");
-        found.push(`重量 ${$("weight").value} kg`);
-      }
-
-      if (found.length) {
-        parseStatus.textContent = `已填入：${found.join("；")}`;
-        render();
-      } else {
-        parseStatus.textContent = "没有识别到长宽高或重量。请复制包含“长宽高/重量”的文字。";
-      }
+    function trimNumber(value, digits) {
+      return value.toFixed(digits).replace(/\.?0+$/, "");
     }
 
+    function exportCsv() {
+      const headers = ["序号","绿标价格*","黑标价格*","佣金*","真实售价","自动生成不用填","定价低于真实售价","手动定价","系数","手动系数","采购成本*","国际运费*","贴单费","平台佣金","利润","利润率 ≥18%","SKU","跟卖链接","货源","备注"];
+      const body = rows.map((row) => {
+        const c = calc(row);
+        return [
+          row.index, row.green, row.black, row.commission === "" ? "" : `${row.commission}%`, c.trueSale, c.autoFee, c.quote, row.quoteOverride, c.pricingFactor, row.factorOverride,
+          row.cost, row.freight, c.labelFee, c.platform, c.profit, c.margin === null ? "" : c.margin,
+          row.sku, row.link, row.source, row.note
+        ];
+      });
+      const csv = [headers, ...body].map((line) => line.map(csvCell).join(",")).join("\n");
+      const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "OZON本地核价表.csv";
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+
+    function csvCell(value) {
+      const text = String(value ?? "");
+      return `"${text.replace(/"/g, '""')}"`;
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[ch]));
+    }
+
+    function escapeAttr(value) {
+      return escapeHtml(value).replace(/`/g, "&#096;");
+    }
+
+    $("addRow").addEventListener("click", () => {
+      const row = emptyRow(rows.length + 1);
+      rows.push(row);
+      renderRows();
+      $("activeRow").value = row.id;
+      syncSaleRubFromActiveRow(false);
+      scrollPricingTableToBottom();
+    });
+
+    $("deleteBlankRows").addEventListener("click", () => {
+      rows = rows.filter(hasRequired);
+      if (!rows.length) rows.push(emptyRow(1));
+      renderRows();
+    });
+
+    $("exportCsv").addEventListener("click", exportCsv);
+
+    $("fillFreight").addEventListener("click", () => {
+      fillBestFreight();
+    });
+
+    $("activeRow").addEventListener("change", () => {
+      syncSaleRubFromActiveRow(true);
+    });
+
+    ["saleRub", "weight", "length", "width", "height"].forEach((id) => $(id).addEventListener("input", renderFreight));
     $("parseOzon").addEventListener("click", parseOzonText);
     $("clearOzon").addEventListener("click", () => {
-      ozonText.value = "";
-      parseStatus.textContent = "";
+      $("ozonText").value = "";
+      $("parseStatus").textContent = "";
     });
-    ozonText.addEventListener("paste", () => setTimeout(parseOzonText, 0));
+    $("ozonText").addEventListener("paste", () => setTimeout(parseOzonText, 0));
 
-    const fx = {
-      rate: $("rate"),
-      rub: $("rub"),
-      cny: $("cny"),
-      result: $("fxResult"),
-      editing: "rub"
-    };
-
-    function formatCurrency(value, digits = 2) {
-      if (!Number.isFinite(value)) return "-";
-      return value.toLocaleString("zh-CN", {
-        minimumFractionDigits: digits,
-        maximumFractionDigits: digits
-      });
-    }
-
-    function renderFx() {
-      const rate = Number(fx.rate.value || 0);
-      const rub = Number(fx.rub.value || 0);
-      const cny = Number(fx.cny.value || 0);
-
-      if (rate <= 0) {
-        fx.result.textContent = "请先填写大于 0 的汇率。";
-        return;
-      }
-
-      if (fx.editing === "rub") {
-        const converted = rub / rate;
-        fx.cny.value = converted ? converted.toFixed(2) : "";
-        fx.result.textContent = `${formatCurrency(rub)} RUB = ${formatCurrency(converted)} CNY`;
-      } else {
-        const converted = cny * rate;
-        fx.rub.value = converted ? converted.toFixed(2) : "";
-        fx.result.textContent = `${formatCurrency(cny)} CNY = ${formatCurrency(converted)} RUB`;
-      }
-    }
-
-    fx.rub.addEventListener("input", () => {
-      fx.editing = "rub";
-      renderFx();
-    });
-    fx.cny.addEventListener("input", () => {
-      fx.editing = "cny";
-      renderFx();
-    });
-    fx.rate.addEventListener("input", renderFx);
-
-    render();
-    renderFx();
+    renderRows();
+    renderFreight();
   </script>
 </body>
 </html>
