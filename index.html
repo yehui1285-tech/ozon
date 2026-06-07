@@ -514,6 +514,7 @@
     let rows = Array.from({ length: 1 }, (_, index) => emptyRow(index + 1));
     let bestFreight = null;
     const yellowNavKeys = ["green", "black", "commission", "cost", "freight"];
+    let pendingYellowFocus = null;
 
     function emptyRow(index) {
       return {
@@ -607,9 +608,10 @@
           </select>
         </td>`;
       }
-      const inputType = key === "commission" ? "text" : type;
-      const yellowNav = cls.includes("manual compact") && yellowNavKeys.includes(key) ? 'data-yellow-nav="true"' : "";
-      return `<td class="${cls}"><input class="${type === "number" ? "money" : ""}" data-id="${row.id}" data-key="${key}" ${yellowNav} type="${inputType}" value="${escapeAttr(displayValue(row, key))}"></td>`;
+      const yellowNav = cls.includes("manual compact") && yellowNavKeys.includes(key);
+      const inputType = key === "commission" || yellowNav ? "text" : type;
+      const yellowNavAttr = yellowNav ? 'data-yellow-nav="true" inputmode="decimal"' : "";
+      return `<td class="${cls}"><input class="${type === "number" ? "money" : ""}" data-id="${row.id}" data-key="${key}" ${yellowNavAttr} type="${inputType}" value="${escapeAttr(displayValue(row, key))}"></td>`;
     }
 
     function renderRows() {
@@ -647,6 +649,7 @@
       bindRowInputs();
       renderActiveRowOptions();
       renderSummary();
+      restorePendingYellowFocus();
     }
 
     function bindRowInputs() {
@@ -661,20 +664,10 @@
           const row = rows.find((item) => item.id === el.dataset.id);
           if (!row) return;
           row[el.dataset.key] = el.dataset.key === "commission" ? String(number(el.value) || "") : el.value;
+          const shouldRestoreFocus = Boolean(pendingYellowFocus);
           renderRows();
           if (row.id === $("activeRow").value && ["green", "black", "factorOverride", "quoteOverride"].includes(el.dataset.key)) {
-            syncSaleRubFromActiveRow(true);
-          }
-        });
-        el.addEventListener("keydown", (event) => {
-          if (!el.dataset.yellowNav) return;
-          if (["ArrowLeft", "ArrowRight"].includes(event.key)) {
-            moveYellowCellFocus(el, event.key === "ArrowRight" ? 1 : -1);
-            event.preventDefault();
-          }
-          if (["ArrowUp", "ArrowDown"].includes(event.key)) {
-            moveYellowRowFocus(el, event.key === "ArrowDown" ? 1 : -1);
-            event.preventDefault();
+            syncSaleRubFromActiveRow(!shouldRestoreFocus);
           }
         });
       });
@@ -720,6 +713,51 @@
       if (!next) return;
       next.focus();
       if (typeof next.select === "function") next.select();
+    }
+
+    function getYellowNavTarget(current, direction) {
+      if (direction.left || direction.right) {
+        const index = yellowNavKeys.indexOf(current.dataset.key);
+        if (index === -1) return null;
+        const key = yellowNavKeys[index + (direction.right ? 1 : -1)];
+        return key ? { id: current.dataset.id, key } : null;
+      }
+      const rowIndex = rows.findIndex((row) => row.id === current.dataset.id);
+      const row = rows[rowIndex + (direction.down ? 1 : -1)];
+      return row ? { id: row.id, key: current.dataset.key } : null;
+    }
+
+    function restorePendingYellowFocus() {
+      if (!pendingYellowFocus) return;
+      const target = document.querySelector(`[data-id="${pendingYellowFocus.id}"][data-key="${pendingYellowFocus.key}"]`);
+      pendingYellowFocus = null;
+      if (!target) return;
+      target.focus();
+      if (typeof target.select === "function") target.select();
+    }
+
+    function handleYellowNavKey(event) {
+      const target = event.target;
+      if (!(target instanceof HTMLInputElement) || !target.dataset.yellowNav) return;
+      if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+      const next = getYellowNavTarget(target, {
+        left: event.key === "ArrowLeft",
+        right: event.key === "ArrowRight",
+        up: event.key === "ArrowUp",
+        down: event.key === "ArrowDown"
+      });
+      if (!next) return;
+      const row = rows.find((item) => item.id === target.dataset.id);
+      if (row) {
+        row[target.dataset.key] = target.dataset.key === "commission" ? String(number(target.value) || "") : target.value;
+      }
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      pendingYellowFocus = next;
+      if (event.key === "ArrowLeft") moveYellowCellFocus(target, -1);
+      if (event.key === "ArrowRight") moveYellowCellFocus(target, 1);
+      if (event.key === "ArrowUp") moveYellowRowFocus(target, -1);
+      if (event.key === "ArrowDown") moveYellowRowFocus(target, 1);
     }
 
     async function copyText(text) {
@@ -946,6 +984,7 @@
       syncSaleRubFromActiveRow(true);
     });
 
+    $("pricingTable").addEventListener("keydown", handleYellowNavKey, true);
     ["saleRub", "weight", "length", "width", "height"].forEach((id) => $(id).addEventListener("input", renderFreight));
     $("parseOzon").addEventListener("click", parseOzonText);
     $("clearOzon").addEventListener("click", () => {
