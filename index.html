@@ -513,6 +513,7 @@
     const $ = (id) => document.getElementById(id);
     let rows = Array.from({ length: 1 }, (_, index) => emptyRow(index + 1));
     let bestFreight = null;
+    const yellowNavKeys = ["green", "black", "commission", "cost", "freight"];
 
     function emptyRow(index) {
       return {
@@ -607,7 +608,8 @@
         </td>`;
       }
       const inputType = key === "commission" ? "text" : type;
-      return `<td class="${cls}"><input class="${type === "number" ? "money" : ""}" data-id="${row.id}" data-key="${key}" type="${inputType}" value="${escapeAttr(displayValue(row, key))}"></td>`;
+      const yellowNav = cls.includes("manual compact") && yellowNavKeys.includes(key) ? 'data-yellow-nav="true"' : "";
+      return `<td class="${cls}"><input class="${type === "number" ? "money" : ""}" data-id="${row.id}" data-key="${key}" ${yellowNav} type="${inputType}" value="${escapeAttr(displayValue(row, key))}"></td>`;
     }
 
     function renderRows() {
@@ -664,6 +666,17 @@
             syncSaleRubFromActiveRow(true);
           }
         });
+        el.addEventListener("keydown", (event) => {
+          if (!el.dataset.yellowNav) return;
+          if (["ArrowLeft", "ArrowRight"].includes(event.key)) {
+            moveYellowCellFocus(el, event.key === "ArrowRight" ? 1 : -1);
+            event.preventDefault();
+          }
+          if (["ArrowUp", "ArrowDown"].includes(event.key)) {
+            moveYellowRowFocus(el, event.key === "ArrowDown" ? 1 : -1);
+            event.preventDefault();
+          }
+        });
       });
       document.querySelectorAll("[data-copy-id]").forEach((button) => {
         button.addEventListener("click", async () => {
@@ -686,6 +699,27 @@
           renderRows();
         });
       });
+    }
+
+    function moveYellowCellFocus(current, direction) {
+      const index = yellowNavKeys.indexOf(current.dataset.key);
+      if (index === -1) return;
+      const nextKey = yellowNavKeys[index + direction];
+      if (!nextKey) return;
+      const next = document.querySelector(`[data-id="${current.dataset.id}"][data-key="${nextKey}"]`);
+      if (!next) return;
+      next.focus();
+      if (typeof next.select === "function") next.select();
+    }
+
+    function moveYellowRowFocus(current, direction) {
+      const rowIndex = rows.findIndex((row) => row.id === current.dataset.id);
+      const targetRow = rows[rowIndex + direction];
+      if (!targetRow) return;
+      const next = document.querySelector(`[data-id="${targetRow.id}"][data-key="${current.dataset.key}"]`);
+      if (!next) return;
+      next.focus();
+      if (typeof next.select === "function") next.select();
     }
 
     async function copyText(text) {
