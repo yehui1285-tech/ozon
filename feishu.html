@@ -1152,33 +1152,91 @@
       return escapeHtml(value).replace(/`/g, "&#096;");
     }
 
+    function parseProductDimensions(product) {
+      let dims = [number(product.lengthCm), number(product.widthCm), number(product.heightCm)].filter((value) => value > 0);
+      if (dims.length === 3) return dims.sort((a, b) => b - a);
+      const text = `${product.dimensionsText || ""} ${product.rawText || ""}`;
+      const match = text.match(/(\d+(?:[.,]\d+)?)\s*(?:x|X|×|\*)\s*(\d+(?:[.,]\d+)?)\s*(?:x|X|×|\*)\s*(\d+(?:[.,]\d+)?)\s*(mm|毫米|cm|厘米)?/i);
+      if (!match) return [];
+      dims = [normalizeNumber(match[1]), normalizeNumber(match[2]), normalizeNumber(match[3])];
+      const unit = String(match[4] || "").toLowerCase();
+      if (unit.includes("mm") || unit.includes("毫米") || (!unit && Math.max(...dims) > 150)) dims = dims.map((value) => value / 10);
+      return dims.sort((a, b) => b - a);
+    }
+
+    function parseProductWeight(product) {
+      const direct = number(product.weightKg);
+      if (direct > 0) return direct;
+      const text = `${product.weightText || ""} ${product.rawText || ""}`;
+      const match = text.match(/重量[^0-9]*(\d+(?:[.,]\d+)?)\s*(kg|千克|公斤|g|克)?/i) || text.match(/(\d+(?:[.,]\d+)?)\s*(kg|千克|公斤|g|克)/i);
+      if (!match) return 0;
+      let weight = normalizeNumber(match[1]);
+      const unit = String(match[2] || "").toLowerCase();
+      if (unit === "g" || unit.includes("克")) weight /= 1000;
+      return weight;
+    }
+
+    function freightInputFromProduct(product) {
+      const dims = parseProductDimensions(product);
+      const weight = parseProductWeight(product);
+      const green = number(product.greenPrice);
+      if (dims.length !== 3 || !weight || !green) return null;
+      return {
+        sale: saleRubForQuote(green),
+        weight,
+        length: dims[0],
+        width: dims[1],
+        height: dims[2],
+        sides: dims,
+        sum: dims[0] + dims[1] + dims[2],
+        volume12000: dims[0] * dims[1] * dims[2] / 12000,
+      };
+    }
+
+    function bestFreightForProduct(product) {
+      const input = freightInputFromProduct(product);
+      if (!input) return null;
+      const best = routes
+        .map((route) => checkRoute(route, input))
+        .filter((route) => route.ok)
+        .sort((a, b) => a.price - b.price)[0] || null;
+      return best ? { best, input } : { best: null, input };
+    }
+
     function applyErpDetailToRow(product) {
       if (rows.length === 1 && !hasRequired(rows[0]) && !rows[0].sku && !rows[0].link && !rows[0].source && !rows[0].note) {
         rows = [];
       }
       const row = emptyRow(rows.length + 1);
       rows.push(row);
+      const productFreight = bestFreightForProduct(product);
       if (product.greenPrice) row.green = trimNumber(number(product.greenPrice), 2);
       if (product.sku) row.sku = String(product.sku);
       if (product.commission) row.commission = trimNumber(number(product.commission), 2);
-      if (product.freight) row.freight = trimNumber(number(product.freight), 2);
+      if (productFreight?.best) row.freight = trimNumber(productFreight.best.price, 2);
+      else if (product.freight) row.freight = trimNumber(number(product.freight), 2);
       if (product.link) row.link = String(product.link);
       const notes = [];
       if (product.pageGreenPrice) notes.push(`页面绿底价：${trimNumber(number(product.pageGreenPrice), 2)}`);
       if (product.minCompetitorPrice) notes.push(`ERP跟卖最低价：${trimNumber(number(product.minCompetitorPrice), 2)}`);
-      if (product.dimensionsText) notes.push(`尺寸：${product.dimensionsText}`);
-      if (product.weightText) notes.push(`重量：${product.weightText}`);
-      if (product.freightRoute) notes.push(`运费渠道：${product.freightRoute}`);
+      if (productFreight?.input) notes.push(`尺寸：${trimNumber(productFreight.input.length, 2)} x ${trimNumber(productFreight.input.width, 2)} x ${trimNumber(productFreight.input.height, 2)}cm`);
+      else if (product.dimensionsText) notes.push(`尺寸：${product.dimensionsText}`);
+      if (productFreight?.input) notes.push(`重量：${trimNumber(productFreight.input.weight, 3)}kg`);
+      else if (product.weightText) notes.push(`重量：${product.weightText}`);
+      if (productFreight?.best) notes.push(`运费渠道：${productFreight.best.name}`);
+      else if (product.freightRoute) notes.push(`运费渠道：${product.freightRoute}`);
       if (product.note) notes.push(product.note);
       if (notes.length) row.note = notes.join("；");
       renderRows();
       $("activeRow").value = row.id;
-      if (product.greenPrice) $("saleRub").value = String(saleRubForQuote(number(product.greenPrice)));
-      if (product.weightKg) $("weight").value = trimNumber(number(product.weightKg), 3);
-      if (product.lengthCm) $("length").value = trimNumber(number(product.lengthCm), 2);
-      if (product.widthCm) $("width").value = trimNumber(number(product.widthCm), 2);
-      if (product.heightCm) $("height").value = trimNumber(number(product.heightCm), 2);
-      renderFreight();
+      if (productFreight?.input) {
+        $("saleRub").value = String(productFreight.input.sale);
+        $("weight").value = trimNumber(productFreight.input.weight, 3);
+        $("length").value = trimNumber(productFreight.input.length, 2);
+        $("width").value = trimNumber(productFreight.input.width, 2);
+        $("height").value = trimNumber(productFreight.input.height, 2);
+        renderFreight();
+      }
       scrollPricingTableToBottom();
       $("syncStatus").textContent = `已从详情页填入：SKU ${row.sku || "-"}，绿标 ${row.green || "-"}，佣金 ${row.commission || "-"}%，运费 ${row.freight || "-"}`;
       $("syncStatus").className = "sync-status good";
