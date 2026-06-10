@@ -1153,8 +1153,11 @@
     }
 
     function applyErpDetailToRow(product) {
-      const row = rows.find((item) => item.id === $("activeRow").value) || rows[rows.length - 1] || emptyRow(1);
-      if (!rows.includes(row)) rows.push(row);
+      if (rows.length === 1 && !hasRequired(rows[0]) && !rows[0].sku && !rows[0].link && !rows[0].source && !rows[0].note) {
+        rows = [];
+      }
+      const row = emptyRow(rows.length + 1);
+      rows.push(row);
       if (product.greenPrice) row.green = trimNumber(number(product.greenPrice), 2);
       if (product.sku) row.sku = String(product.sku);
       if (product.commission) row.commission = trimNumber(number(product.commission), 2);
@@ -1169,7 +1172,14 @@
       if (product.note) notes.push(product.note);
       if (notes.length) row.note = notes.join("；");
       renderRows();
+      $("activeRow").value = row.id;
+      if (product.greenPrice) $("saleRub").value = String(saleRubForQuote(number(product.greenPrice)));
+      if (product.weightKg) $("weight").value = trimNumber(number(product.weightKg), 3);
+      if (product.lengthCm) $("length").value = trimNumber(number(product.lengthCm), 2);
+      if (product.widthCm) $("width").value = trimNumber(number(product.widthCm), 2);
+      if (product.heightCm) $("height").value = trimNumber(number(product.heightCm), 2);
       renderFreight();
+      scrollPricingTableToBottom();
       $("syncStatus").textContent = `已从详情页填入：SKU ${row.sku || "-"}，绿标 ${row.green || "-"}，佣金 ${row.commission || "-"}%，运费 ${row.freight || "-"}`;
       $("syncStatus").className = "sync-status good";
     }
