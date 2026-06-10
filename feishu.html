@@ -1185,7 +1185,7 @@
     }
 
     window.addEventListener("message", (event) => {
-      if (event.origin !== "https://www.ozon.ru") return;
+      if (!["https://www.ozon.ru", "https://yehui1285-tech.github.io"].includes(event.origin)) return;
       const data = event.data || {};
       if (data.type !== "OZON_ERP_DETAIL") return;
       applyErpDetailToRow(data.product || {});
