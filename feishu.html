@@ -440,6 +440,7 @@
         <h2>云端同步</h2>
         <div class="actions">
           <button type="button" id="syncCloud" class="primary">同步到飞书多维表格</button>
+          <button type="button" id="enrichLinks">批量补全飞书链接</button>
         </div>
       </div>
       <div class="sync-panel">
@@ -1098,6 +1099,46 @@
       }
     }
 
+    async function enrichFeishuLinks() {
+      const button = $("enrichLinks");
+      const endpoint = $("syncEndpoint").value.trim();
+      if (!endpoint) {
+        $("syncStatus").textContent = "请先填写同步接口地址。";
+        $("syncStatus").className = "sync-status bad";
+        return;
+      }
+      try {
+        saveSyncSettings();
+        button.disabled = true;
+        button.textContent = "补全中...";
+        $("syncStatus").textContent = "正在读取飞书“核价明细”里的跟卖链接，并回填商品参数。";
+        $("syncStatus").className = "sync-status";
+
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "enrichLinks",
+            submitter: $("submitter").value.trim(),
+            note: $("syncNote").value.trim(),
+            limit: 20,
+          }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.ok) {
+          throw new Error(data.error || `补全失败：HTTP ${response.status}`);
+        }
+        $("syncStatus").textContent = `补全完成：找到 ${data.matchedRows} 条链接，成功 ${data.successRows} 条，失败 ${data.failedRows} 条。`;
+        $("syncStatus").className = data.failedRows ? "sync-status bad" : "sync-status good";
+      } catch (error) {
+        $("syncStatus").textContent = error.message || String(error);
+        $("syncStatus").className = "sync-status bad";
+      } finally {
+        button.disabled = false;
+        button.textContent = "批量补全飞书链接";
+      }
+    }
+
     function csvCell(value) {
       const text = String(value ?? "");
       return `"${text.replace(/"/g, '""')}"`;
@@ -1110,6 +1151,35 @@
     function escapeAttr(value) {
       return escapeHtml(value).replace(/`/g, "&#096;");
     }
+
+    function applyErpDetailToRow(product) {
+      const row = rows.find((item) => item.id === $("activeRow").value) || rows[rows.length - 1] || emptyRow(1);
+      if (!rows.includes(row)) rows.push(row);
+      if (product.greenPrice) row.green = trimNumber(number(product.greenPrice), 2);
+      if (product.sku) row.sku = String(product.sku);
+      if (product.commission) row.commission = trimNumber(number(product.commission), 2);
+      if (product.freight) row.freight = trimNumber(number(product.freight), 2);
+      if (product.link) row.link = String(product.link);
+      const notes = [];
+      if (product.pageGreenPrice) notes.push(`页面绿底价：${trimNumber(number(product.pageGreenPrice), 2)}`);
+      if (product.minCompetitorPrice) notes.push(`ERP跟卖最低价：${trimNumber(number(product.minCompetitorPrice), 2)}`);
+      if (product.dimensionsText) notes.push(`尺寸：${product.dimensionsText}`);
+      if (product.weightText) notes.push(`重量：${product.weightText}`);
+      if (product.freightRoute) notes.push(`运费渠道：${product.freightRoute}`);
+      if (product.note) notes.push(product.note);
+      if (notes.length) row.note = notes.join("；");
+      renderRows();
+      renderFreight();
+      $("syncStatus").textContent = `已从详情页填入：SKU ${row.sku || "-"}，绿标 ${row.green || "-"}，佣金 ${row.commission || "-"}%，运费 ${row.freight || "-"}`;
+      $("syncStatus").className = "sync-status good";
+    }
+
+    window.addEventListener("message", (event) => {
+      if (event.origin !== "https://www.ozon.ru") return;
+      const data = event.data || {};
+      if (data.type !== "OZON_ERP_DETAIL") return;
+      applyErpDetailToRow(data.product || {});
+    });
 
     $("addRow").addEventListener("click", () => {
       const row = emptyRow(rows.length + 1);
@@ -1129,6 +1199,7 @@
     $("exportCsv").addEventListener("click", exportCsv);
     $("saveSyncSettings").addEventListener("click", saveSyncSettings);
     $("syncCloud").addEventListener("click", syncToCloud);
+    $("enrichLinks").addEventListener("click", enrichFeishuLinks);
 
     $("fillFreight").addEventListener("click", () => {
       fillBestFreight();
