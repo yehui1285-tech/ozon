@@ -278,10 +278,10 @@
     .link { min-width: 220px; }
     .copy-cell {
       display: grid;
-      grid-template-columns: minmax(150px, 1fr) 56px;
+      grid-template-columns: minmax(150px, 1fr) 56px 56px;
       gap: 6px;
       align-items: stretch;
-      min-width: 220px;
+      min-width: 285px;
       padding: 0 6px;
     }
 
@@ -653,6 +653,7 @@
           <div class="copy-cell">
             <textarea data-id="${row.id}" data-key="${key}" placeholder="粘贴页面地址">${escapeHtml(value)}</textarea>
             <button type="button" class="copy-btn" data-copy-id="${row.id}">复制</button>
+            <button type="button" class="copy-btn" data-open-id="${row.id}">浏览</button>
           </div>
         </td>`;
       }
@@ -744,6 +745,18 @@
             button.textContent = "复制";
             button.classList.remove("copied");
           }, 1200);
+        });
+      });
+      document.querySelectorAll("[data-open-id]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const row = rows.find((item) => item.id === button.dataset.openId);
+          const ok = openRowLink(row?.link);
+          if (!ok) {
+            button.textContent = "无效";
+            setTimeout(() => {
+              button.textContent = "浏览";
+            }, 1200);
+          }
         });
       });
       document.querySelectorAll("[data-delete-id]").forEach((button) => {
@@ -838,6 +851,13 @@
       const ok = document.execCommand("copy");
       area.remove();
       return ok;
+    }
+
+    function openRowLink(text) {
+      const url = String(text || "").trim();
+      if (!/^https?:\/\//i.test(url)) return false;
+      window.open(url, "_blank", "noopener,noreferrer");
+      return true;
     }
 
     function renderActiveRowOptions() {
