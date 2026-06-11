@@ -469,6 +469,8 @@
         <div class="actions">
           <button type="button" id="addRow">新增行</button>
           <button type="button" id="deleteBlankRows">删除空白行</button>
+          <button type="button" id="importCsv">导入 CSV</button>
+          <input id="csvFile" type="file" accept=".csv,text/csv" hidden>
           <button type="button" id="exportCsv" class="primary">导出 CSV</button>
         </div>
       </div>
@@ -1006,6 +1008,107 @@
       URL.revokeObjectURL(a.href);
     }
 
+    function normalizeHeader(value) {
+      return String(value ?? "").replace(/^\uFEFF/, "").replace(/\s+/g, "").replace(/\*/g, "").trim();
+    }
+
+    function cleanImportedNumber(value) {
+      let text = String(value ?? "").replace("%", "").replace(/[¥￥]/g, "").trim();
+      if (text === "" || text === "-") return "";
+      if (/^-?\d{1,3}(,\d{3})+(\.\d+)?$/.test(text)) text = text.replace(/,/g, "");
+      else if (/^-?\d+,\d+$/.test(text)) text = text.replace(",", ".");
+      const n = Number(text);
+      return Number.isFinite(n) ? trimNumber(n, 4) : text;
+    }
+
+    function parseCsv(text) {
+      const rowsOut = [];
+      let row = [];
+      let cell = "";
+      let quoted = false;
+      const source = String(text ?? "").replace(/^\uFEFF/, "");
+      for (let i = 0; i < source.length; i += 1) {
+        const ch = source[i];
+        const next = source[i + 1];
+        if (quoted) {
+          if (ch === '"' && next === '"') {
+            cell += '"';
+            i += 1;
+          } else if (ch === '"') {
+            quoted = false;
+          } else {
+            cell += ch;
+          }
+          continue;
+        }
+        if (ch === '"') {
+          quoted = true;
+        } else if (ch === ",") {
+          row.push(cell);
+          cell = "";
+        } else if (ch === "\n") {
+          row.push(cell);
+          rowsOut.push(row);
+          row = [];
+          cell = "";
+        } else if (ch !== "\r") {
+          cell += ch;
+        }
+      }
+      if (cell !== "" || row.length) {
+        row.push(cell);
+        rowsOut.push(row);
+      }
+      return rowsOut.filter((line) => line.some((value) => String(value).trim() !== ""));
+    }
+
+    function rowFromCsvRecord(record, index) {
+      const row = emptyRow(index);
+      row.green = cleanImportedNumber(record["绿标价格"] ?? record["绿标价格*"]);
+      row.black = cleanImportedNumber(record["黑标价格"] ?? record["黑标价格*"]);
+      row.commission = cleanImportedNumber(record["佣金"] ?? record["佣金*"]);
+      row.quoteOverride = cleanImportedNumber(record["手动定价"]);
+      row.factorOverride = cleanImportedNumber(record["手动系数"]);
+      row.cost = cleanImportedNumber(record["采购成本"] ?? record["采购成本*"]);
+      row.freight = cleanImportedNumber(record["国际运费"] ?? record["国际运费*"]);
+      row.sku = String(record["SKU"] ?? "").trim();
+      row.link = String(record["跟卖链接"] ?? "").trim();
+      row.source = String(record["货源"] ?? "").trim();
+      row.note = String(record["备注"] ?? "").trim();
+      return row;
+    }
+
+    function importCsvText(text) {
+      const table = parseCsv(text);
+      if (table.length < 2) throw new Error("CSV 没有可导入的数据。");
+      const headers = table[0].map(normalizeHeader);
+      const imported = table.slice(1).map((line, index) => {
+        const record = {};
+        headers.forEach((header, colIndex) => {
+          record[header] = line[colIndex] ?? "";
+        });
+        return rowFromCsvRecord(record, index + 1);
+      }).filter((row) => hasRequired(row) || row.sku || row.link || row.source || row.note);
+      if (!imported.length) throw new Error("CSV 里没有识别到核价明细。");
+      if (rows.length === 1 && !hasRequired(rows[0]) && !rows[0].sku && !rows[0].link && !rows[0].source && !rows[0].note) {
+        rows = imported;
+      } else {
+        rows = [...rows, ...imported];
+      }
+      renderRows();
+      $("activeRow").value = rows[rows.length - 1]?.id || "";
+      syncSaleRubFromActiveRow(true);
+      scrollPricingTableToBottom();
+      $("syncStatus").textContent = `已导入 CSV：${imported.length} 行。`;
+      $("syncStatus").className = "sync-status good";
+    }
+
+    async function importCsvFile(file) {
+      if (!file) return;
+      const text = await file.text();
+      importCsvText(text);
+    }
+
     function currentSummary() {
       const filled = rows.filter(hasRequired);
       const calcs = filled.map(calc);
@@ -1155,8 +1258,9 @@
     function parseProductDimensions(product) {
       let dims = [number(product.lengthCm), number(product.widthCm), number(product.heightCm)].filter((value) => value > 0);
       if (dims.length === 3) return dims.sort((a, b) => b - a);
-      const text = `${product.dimensionsText || ""} ${product.rawText || ""}`;
-      const match = text.match(/(\d+(?:[.,]\d+)?)\s*(?:x|X|×|\*)\s*(\d+(?:[.,]\d+)?)\s*(?:x|X|×|\*)\s*(\d+(?:[.,]\d+)?)\s*(mm|毫米|cm|厘米)?/i);
+      const text = `${product.dimensionsText || ""} ${product.rawText || ""}`.replace(/[：]/g, ":").replace(/[×]/g, "x").replace(/\s+/g, " ");
+      const match = text.match(/(?:长\s*宽\s*高|长宽高|尺寸|包装尺寸|规格)\s*:?\s*(\d+(?:[.,]\d+)?)\s*(?:x|X|\*)\s*(\d+(?:[.,]\d+)?)\s*(?:x|X|\*)\s*(\d+(?:[.,]\d+)?)\s*(mm|毫米|cm|厘米)?/i)
+        || text.match(/(\d+(?:[.,]\d+)?)\s*(?:x|X|\*)\s*(\d+(?:[.,]\d+)?)\s*(?:x|X|\*)\s*(\d+(?:[.,]\d+)?)\s*(mm|毫米|cm|厘米)/i);
       if (!match) return [];
       dims = [normalizeNumber(match[1]), normalizeNumber(match[2]), normalizeNumber(match[3])];
       const unit = String(match[4] || "").toLowerCase();
@@ -1167,8 +1271,9 @@
     function parseProductWeight(product) {
       const direct = number(product.weightKg);
       if (direct > 0) return direct;
-      const text = `${product.weightText || ""} ${product.rawText || ""}`;
-      const match = text.match(/重量[^0-9]*(\d+(?:[.,]\d+)?)\s*(kg|千克|公斤|g|克)?/i) || text.match(/(\d+(?:[.,]\d+)?)\s*(kg|千克|公斤|g|克)/i);
+      const text = `${product.weightText || ""} ${product.rawText || ""}`.replace(/[：]/g, ":").replace(/\s+/g, " ");
+      const match = text.match(/(?:重量|实重|毛重|净重)\s*:?\s*(\d+(?:[.,]\d+)?)\s*(kg|千克|公斤|g|克)?/i)
+        || text.match(/(\d+(?:[.,]\d+)?)\s*(kg|千克|公斤|g|克)/i);
       if (!match) return 0;
       let weight = normalizeNumber(match[1]);
       const unit = String(match[2] || "").toLowerCase();
@@ -1225,6 +1330,8 @@
       else if (product.weightText) notes.push(`重量：${product.weightText}`);
       if (productFreight?.best) notes.push(`运费渠道：${productFreight.best.name}`);
       else if (product.freightRoute) notes.push(`运费渠道：${product.freightRoute}`);
+      if (!productFreight?.input) notes.push("未计算运费：缺少长宽高、重量或绿标价格");
+      else if (!productFreight?.best) notes.push("未计算运费：没有匹配到可用渠道");
       if (product.note) notes.push(product.note);
       if (notes.length) row.note = notes.join("；");
       renderRows();
@@ -1265,6 +1372,18 @@
     });
 
     $("exportCsv").addEventListener("click", exportCsv);
+    $("importCsv").addEventListener("click", () => $("csvFile").click());
+    $("csvFile").addEventListener("change", async (event) => {
+      const file = event.target.files?.[0];
+      try {
+        await importCsvFile(file);
+      } catch (error) {
+        $("syncStatus").textContent = `CSV 导入失败：${error.message || error}`;
+        $("syncStatus").className = "sync-status bad";
+      } finally {
+        event.target.value = "";
+      }
+    });
     $("saveSyncSettings").addEventListener("click", saveSyncSettings);
     $("syncCloud").addEventListener("click", syncToCloud);
     $("enrichLinks").addEventListener("click", enrichFeishuLinks);
