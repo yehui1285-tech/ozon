@@ -440,7 +440,6 @@
         <h2>云端同步</h2>
         <div class="actions">
           <button type="button" id="syncCloud" class="primary">同步到飞书多维表格</button>
-          <button type="button" id="enrichLinks">批量补全飞书链接</button>
         </div>
       </div>
       <div class="sync-panel">
@@ -1386,7 +1385,7 @@
     });
     $("saveSyncSettings").addEventListener("click", saveSyncSettings);
     $("syncCloud").addEventListener("click", syncToCloud);
-    $("enrichLinks").addEventListener("click", enrichFeishuLinks);
+    if ($("enrichLinks")) $("enrichLinks").addEventListener("click", enrichFeishuLinks);
 
     $("fillFreight").addEventListener("click", () => {
       fillBestFreight();
