@@ -596,7 +596,26 @@
     }
 
     function number(value) {
-      const n = Number(String(value ?? "").replace("%", "").replace(",", "."));
+      let text = String(value ?? "")
+        .replace(/[¥￥₽%]/g, "")
+        .replace(/[\u00a0\u202f]/g, " ")
+        .trim();
+      const match = text.match(/-?[\d\s.,]+/);
+      if (!match) return 0;
+      text = match[0].replace(/\s+/g, "");
+      const lastComma = text.lastIndexOf(",");
+      const lastDot = text.lastIndexOf(".");
+      if (lastComma >= 0 && lastDot >= 0) {
+        const decimalMark = lastComma > lastDot ? "," : ".";
+        text = text
+          .replace(new RegExp(`\\${decimalMark === "," ? "." : ","}`, "g"), "")
+          .replace(decimalMark, ".");
+      } else if (/^-?\d{1,3}(,\d{3})+$/.test(text)) {
+        text = text.replace(/,/g, "");
+      } else if (lastComma >= 0) {
+        text = text.replace(",", ".");
+      }
+      const n = Number(text);
       return Number.isFinite(n) ? n : 0;
     }
 
@@ -1034,6 +1053,8 @@
     function cleanImportedNumber(value) {
       let text = String(value ?? "").replace("%", "").replace(/[¥￥]/g, "").trim();
       if (text === "" || text === "-") return "";
+      text = text.replace(/[\u00a0\u202f]/g, " ");
+      if (/^-?\d{1,3}(\s\d{3})+([,.]\d+)?$/.test(text)) text = text.replace(/\s/g, "").replace(",", ".");
       if (/^-?\d{1,3}(,\d{3})+(\.\d+)?$/.test(text)) text = text.replace(/,/g, "");
       else if (/^-?\d+,\d+$/.test(text)) text = text.replace(",", ".");
       const n = Number(text);
@@ -1335,6 +1356,7 @@
       rows.push(row);
       const productFreight = bestFreightForProduct(product);
       if (product.greenPrice) row.green = trimNumber(number(product.greenPrice), 2);
+      if (product.blackPrice) row.black = trimNumber(number(product.blackPrice), 2);
       if (product.sku) row.sku = String(product.sku);
       if (product.commission) row.commission = trimNumber(number(product.commission), 2);
       if (productFreight?.best) row.freight = trimNumber(productFreight.best.price, 2);
