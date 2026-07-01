@@ -503,7 +503,7 @@
           <tbody id="rows"></tbody>
         </table>
       </div>
-      <div class="note">公式：E=(C-B)*2.2+C；F=G*定价；J=3；K=G*佣金；L=G-H-I-J-K-F；M=L/(H+I)。系数默认 0.97；选择手动系数后，“系数”列会同步显示所选值。手动定价为空时使用自动定价，填写后仅覆盖当前行，并联动货值和运费。佣金按百分数填写，例如 8 表示 8%。</div>
+      <div class="note">公式：E=(C-B)*2.2+C；F=G*定价；J=3；K=G*佣金；L=G-H-I-J-K-F；M=L/(H+I)。系数默认 0.97；填写手动系数后，“系数”列会同步显示所填值。手动定价为空时使用自动定价，填写后仅覆盖当前行，并联动货值和运费。佣金按百分数填写，例如 8 表示 8%。</div>
     </section>
 
     <section class="panel">
@@ -678,16 +678,6 @@
       }
       if (type === "textarea") {
         return `<td class="${cls}"><textarea data-id="${row.id}" data-key="${key}">${escapeHtml(value)}</textarea></td>`;
-      }
-      if (key === "factorOverride") {
-        return `<td class="${cls}">
-          <select data-id="${row.id}" data-key="${key}">
-            <option value="" ${value === "" ? "selected" : ""}>空</option>
-            <option value="0.97" ${String(value) === "0.97" ? "selected" : ""}>0.97</option>
-            <option value="0.98" ${String(value) === "0.98" ? "selected" : ""}>0.98</option>
-            <option value="0.99" ${String(value) === "0.99" ? "selected" : ""}>0.99</option>
-          </select>
-        </td>`;
       }
       const yellowNav = cls.includes("manual compact") && yellowNavKeys.includes(key);
       const inputType = key === "commission" || yellowNav ? "text" : type;
@@ -1362,19 +1352,6 @@
       if (productFreight?.best) row.freight = trimNumber(productFreight.best.price, 2);
       else if (product.freight) row.freight = trimNumber(number(product.freight), 2);
       if (product.link) row.link = String(product.link);
-      const notes = [];
-      if (product.pageGreenPrice) notes.push(`页面绿底价：${trimNumber(number(product.pageGreenPrice), 2)}`);
-      if (product.minCompetitorPrice) notes.push(`ERP跟卖最低价：${trimNumber(number(product.minCompetitorPrice), 2)}`);
-      if (productFreight?.input) notes.push(`尺寸：${trimNumber(productFreight.input.length, 2)} x ${trimNumber(productFreight.input.width, 2)} x ${trimNumber(productFreight.input.height, 2)}cm`);
-      else if (product.dimensionsText) notes.push(`尺寸：${product.dimensionsText}`);
-      if (productFreight?.input) notes.push(`重量：${trimNumber(productFreight.input.weight, 3)}kg`);
-      else if (product.weightText) notes.push(`重量：${product.weightText}`);
-      if (productFreight?.best) notes.push(`运费渠道：${productFreight.best.name}`);
-      else if (product.freightRoute) notes.push(`运费渠道：${product.freightRoute}`);
-      if (!productFreight?.input) notes.push("未计算运费：缺少长宽高、重量或绿标价格");
-      else if (!productFreight?.best) notes.push("未计算运费：没有匹配到可用渠道");
-      if (product.note) notes.push(product.note);
-      if (notes.length) row.note = notes.join("；");
       renderRows();
       $("activeRow").value = row.id;
       if (productFreight?.input) {
