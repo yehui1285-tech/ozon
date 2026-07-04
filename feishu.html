@@ -1221,7 +1221,10 @@
         if (!response.ok || !data.ok) {
           throw new Error(data.error || `同步失败：HTTP ${response.status}`);
         }
-        $("syncStatus").textContent = `同步成功：批次 ${data.batchId}，明细 ${data.syncedRows} 行。`;
+        const skippedText = data.skippedRows ? `，跳过重复 ${data.skippedRows} 行` : "";
+        $("syncStatus").textContent = data.syncedRows > 0
+          ? `同步成功：批次 ${data.batchId}，新增明细 ${data.syncedRows} 行${skippedText}。`
+          : `没有新增明细：${data.skippedRows || 0} 行已存在或本次重复。`;
         $("syncStatus").className = "sync-status good";
       } catch (error) {
         $("syncStatus").textContent = error.message || String(error);
