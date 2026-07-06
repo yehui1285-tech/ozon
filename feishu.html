@@ -564,12 +564,12 @@
 
   <script>
     const routes = [
-      { name: "CEL Economy Extra Small", cn: "经济超级轻小件", delivery: "21-26 天", feeText: "26元/kg + 3.12元/票", weightText: "0-0.5KG", valueText: "0-1500卢布", minValue: 0, maxValue: 1500, minWeightExclusive: 0, maxWeight: 0.5, maxSum: 90, maxSide: Infinity, usesVolume: false, rate: 26, fixed: 3.12 },
+      { name: "CEL Economy Extra Small", cn: "经济超级轻小件", delivery: "21-26 天", feeText: "26元/kg + 3.12元/票", weightText: "0-0.5KG", valueText: "0-1500卢布", minValue: 0, maxValue: 1500, minWeightExclusive: 0, maxWeight: 0.5, maxSum: 90, maxSide: 60, usesVolume: false, rate: 26, fixed: 3.12 },
       { name: "CEL Economy Budget", cn: "经济低客单价轻小件", delivery: "16-21 天", feeText: "17.68元/kg + 23.92元/票", weightText: "0.5-25KG", valueText: "0-1500卢布", minValue: 0, maxValue: 1500, minWeightExclusive: 0.5, maxWeight: 25, maxSum: 150, maxSide: 60, usesVolume: false, rate: 17.68, fixed: 23.92 },
       { name: "CEL Economy Small", cn: "经济轻小件", delivery: "16-21 天", feeText: "26元/kg + 16.64元/票", weightText: "0-2KG", valueText: "1501-7000卢布", minValue: 1500, maxValue: 7000, minWeightExclusive: 0, maxWeight: 2, maxSum: 150, maxSide: 60, usesVolume: false, rate: 26, fixed: 16.64 },
       { name: "CEL Economy Premium Small", cn: "经济高客单轻小件", delivery: "16-21 天", feeText: "26元/kg + 22.88元/票", weightText: "0-5KG", valueText: "7001-250000卢布", minValue: 7000, maxValue: 250000, minWeightExclusive: 0, maxWeight: 5, maxSum: 250, maxSide: 150, usesVolume: false, rate: 26, fixed: 22.88 },
       { name: "CEL Economy Big", cn: "经济大件", delivery: "21-26 天", feeText: "17.68元/kg + 37.44元/票", weightText: "2.001-30KG", valueText: "1501-7000卢布", minValue: 1500, maxValue: 7000, minWeightExclusive: 2, maxWeight: 30, maxBillable: 31, maxSum: 250, maxSide: 150, usesVolume: true, rate: 17.68, fixed: 37.44 },
-      { name: "CEL Economy Premium Big", cn: "经济高客单大件", delivery: "21-26 天", feeText: "23.92元/kg + 64.48元/票", weightText: "5.001-30KG", valueText: "7001-250000卢布", minValue: 7000, maxValue: 250000, minWeightExclusive: 5, maxWeight: 30, maxBillable: 80, maxSum: 310, maxSide: 150, maxBox: [150, 80, 80], usesVolume: true, rate: 23.92, fixed: 64.48 }
+      { name: "CEL Economy Premium Big", cn: "经济高客单大件", delivery: "21-26 天", feeText: "23.92元/kg + 64.48元/票", weightText: "5.001-25KG", valueText: "7001-250000卢布", minValue: 7000, maxValue: 250000, minWeightExclusive: 5, maxWeight: 25, maxBillable: 80, maxSum: 310, maxSide: 150, usesVolume: true, rate: 23.92, fixed: 64.48 }
     ];
 
     const $ = (id) => document.getElementById(id);
@@ -954,10 +954,6 @@
       if (route.maxBillable && billableWeight > route.maxBillable) reasons.push(`计费重量需不超过 ${route.maxBillable}KG`);
       if (input.sum > route.maxSum) reasons.push(`三边和需不超过 ${route.maxSum}CM`);
       if (Math.max(...input.sides) > route.maxSide) reasons.push(`单边最大尺寸需不超过 ${route.maxSide}CM`);
-      if (route.maxBox) {
-        const limits = [...route.maxBox].sort((a, b) => b - a);
-        if (!input.sides.every((side, index) => side <= limits[index])) reasons.push("最大尺寸需符合 150*80*80");
-      }
       const ok = reasons.length === 0;
       return { ...route, ok, reasons, billableWeight, price: ok ? billableWeight * route.rate + route.fixed : null };
     }
