@@ -440,6 +440,7 @@
         <h2>云端同步</h2>
         <div class="actions">
           <button type="button" id="syncCloud" class="primary">同步到飞书多维表格</button>
+          <button type="button" id="openFeishuBase">打开飞书多维表格</button>
         </div>
       </div>
       <div class="sync-panel">
@@ -572,6 +573,7 @@
     ];
 
     const $ = (id) => document.getElementById(id);
+    const FEISHU_DETAIL_TABLE_URL = "https://www.feishu.cn/base/MnB1bj0OqaRYDAsHOQ5cW0SZnDe?table=tblrQj7Ux7DH6poQ";
     let rows = Array.from({ length: 1 }, (_, index) => emptyRow(index + 1));
     let bestFreight = null;
     const yellowNavKeys = ["green", "black", "commission", "cost", "freight"];
@@ -1202,6 +1204,10 @@
       $("syncEndpoint").value = localStorage.getItem("ozon_sync_endpoint") || "";
     }
 
+    function openFeishuBase() {
+      window.open(FEISHU_DETAIL_TABLE_URL, "_blank", "noopener,noreferrer");
+    }
+
     async function syncToCloud() {
       const button = $("syncCloud");
       try {
@@ -1407,6 +1413,7 @@
     });
     $("saveSyncSettings").addEventListener("click", saveSyncSettings);
     $("syncCloud").addEventListener("click", syncToCloud);
+    $("openFeishuBase").addEventListener("click", openFeishuBase);
     if ($("enrichLinks")) $("enrichLinks").addEventListener("click", enrichFeishuLinks);
 
     $("fillFreight").addEventListener("click", () => {
