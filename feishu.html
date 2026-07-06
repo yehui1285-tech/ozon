@@ -440,7 +440,6 @@
         <h2>云端同步</h2>
         <div class="actions">
           <button type="button" id="syncCloud" class="primary">同步到飞书多维表格</button>
-          <button type="button" id="openFeishuBase">打开飞书多维表格</button>
         </div>
       </div>
       <div class="sync-panel">
@@ -525,7 +524,7 @@
             <div class="field">
               <label for="saleRub">货值 / 卢布</label>
               <input id="saleRub" type="number" min="0" step="1" value="2000">
-              <div class="note">按所选行“定价低于真实售价”自动填：＜135 为 200，135≤定价≤600 为 2000，＞600 为 20000。</div>
+              <div class="note">按所选行“定价”自动填：＜135 为 200，135≤定价≤600 为 2000，＞600 为 20000。</div>
             </div>
             <div class="field">
               <label for="weight">实重 / kg</label>
@@ -573,7 +572,6 @@
     ];
 
     const $ = (id) => document.getElementById(id);
-    const FEISHU_DETAIL_TABLE_URL = "https://www.feishu.cn/base/MnB1bj0OqaRYDAsHOQ5cW0SZnDe?table=tblrQj7Ux7DH6poQ";
     let rows = Array.from({ length: 1 }, (_, index) => emptyRow(index + 1));
     let bestFreight = null;
     const yellowNavKeys = ["green", "black", "commission", "cost", "freight"];
@@ -896,10 +894,11 @@
     }
 
     function fillBestFreight(rowId = $("activeRow").value, shouldRender = true) {
+      if (!bestFreight) return false;
       const targetId = rowId || rows[rows.length - 1]?.id;
       const row = rows.find((item) => item.id === targetId);
       if (!row) return false;
-      const value = bestFreight ? bestFreight.price.toFixed(2) : "";
+      const value = bestFreight.price.toFixed(2);
       if (row.freight === value) return false;
       row.freight = value;
       if (shouldRender) renderRows();
@@ -1203,10 +1202,6 @@
       $("syncEndpoint").value = localStorage.getItem("ozon_sync_endpoint") || "";
     }
 
-    function openFeishuBase() {
-      window.open(FEISHU_DETAIL_TABLE_URL, "_blank", "noopener,noreferrer");
-    }
-
     async function syncToCloud() {
       const button = $("syncCloud");
       try {
@@ -1319,13 +1314,13 @@
       return weight;
     }
 
-    function freightInputFromProduct(product, quote) {
+    function freightInputFromProduct(product) {
       const dims = parseProductDimensions(product);
       const weight = parseProductWeight(product);
-      const freightQuote = number(quote);
-      if (dims.length !== 3 || !weight || !freightQuote) return null;
+      const green = number(product.greenPrice);
+      if (dims.length !== 3 || !weight || !green) return null;
       return {
-        sale: saleRubForQuote(freightQuote),
+        sale: saleRubForQuote(green),
         weight,
         length: dims[0],
         width: dims[1],
@@ -1336,8 +1331,8 @@
       };
     }
 
-    function bestFreightForProduct(product, quote) {
-      const input = freightInputFromProduct(product, quote);
+    function bestFreightForProduct(product) {
+      const input = freightInputFromProduct(product);
       if (!input) return null;
       const best = routes
         .map((route) => checkRoute(route, input))
@@ -1352,13 +1347,13 @@
       }
       const row = emptyRow(rows.length + 1);
       rows.push(row);
+      const productFreight = bestFreightForProduct(product);
       if (product.greenPrice) row.green = trimNumber(number(product.greenPrice), 2);
       if (product.blackPrice) row.black = trimNumber(number(product.blackPrice), 2);
       if (product.sku) row.sku = String(product.sku);
       if (product.commission) row.commission = trimNumber(number(product.commission), 2);
-      const productFreight = bestFreightForProduct(product, calc(row).quote);
       if (productFreight?.best) row.freight = trimNumber(productFreight.best.price, 2);
-      else if (!productFreight?.input && product.freight) row.freight = trimNumber(number(product.freight), 2);
+      else if (product.freight) row.freight = trimNumber(number(product.freight), 2);
       if (product.link) row.link = String(product.link);
       renderRows();
       $("activeRow").value = row.id;
@@ -1412,7 +1407,6 @@
     });
     $("saveSyncSettings").addEventListener("click", saveSyncSettings);
     $("syncCloud").addEventListener("click", syncToCloud);
-    $("openFeishuBase").addEventListener("click", openFeishuBase);
     if ($("enrichLinks")) $("enrichLinks").addEventListener("click", enrichFeishuLinks);
 
     $("fillFreight").addEventListener("click", () => {
