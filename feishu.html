@@ -469,6 +469,7 @@
         <div class="actions">
           <button type="button" id="addRow">新增行</button>
           <button type="button" id="deleteBlankRows">删除空白行</button>
+          <button type="button" id="clearAllRows">清空全部记录</button>
           <button type="button" id="importCsv">导入 CSV</button>
           <input id="csvFile" type="file" accept=".csv,text/csv" hidden>
           <button type="button" id="exportCsv" class="primary">导出 CSV</button>
@@ -574,10 +575,14 @@
 
     const $ = (id) => document.getElementById(id);
     const FEISHU_DETAIL_TABLE_URL = "https://www.feishu.cn/base/MnB1bj0OqaRYDAsHOQ5cW0SZnDe?table=tblrQj7Ux7DH6poQ";
+    const PRICING_DRAFT_KEY = "ozon_pricing_draft_v1";
+    const PRICING_DRAFT_VERSION = 1;
+    const PRICING_ROW_KEYS = ["green", "black", "commission", "factorOverride", "quoteOverride", "cost", "freight", "sku", "link", "source", "note"];
     let rows = Array.from({ length: 1 }, (_, index) => emptyRow(index + 1));
     let bestFreight = null;
     const yellowNavKeys = ["green", "black", "commission", "cost", "freight"];
     let pendingYellowFocus = null;
+    let pricingDraftSaveTimer = null;
 
     function emptyRow(index) {
       return {
@@ -595,6 +600,64 @@
         source: "",
         note: ""
       };
+    }
+
+    function savePricingDraft() {
+      if (pricingDraftSaveTimer) {
+        clearTimeout(pricingDraftSaveTimer);
+        pricingDraftSaveTimer = null;
+      }
+      try {
+        localStorage.setItem(PRICING_DRAFT_KEY, JSON.stringify({
+          version: PRICING_DRAFT_VERSION,
+          savedAt: new Date().toISOString(),
+          rows: rows.map((row, index) => {
+            const saved = { id: row.id, index: index + 1 };
+            PRICING_ROW_KEYS.forEach((key) => {
+              saved[key] = String(row[key] ?? "");
+            });
+            return saved;
+          }),
+        }));
+      } catch (error) {
+        console.warn("核价明细自动保存失败：", error);
+      }
+    }
+
+    function schedulePricingDraftSave() {
+      if (pricingDraftSaveTimer) clearTimeout(pricingDraftSaveTimer);
+      pricingDraftSaveTimer = setTimeout(savePricingDraft, 200);
+    }
+
+    function restorePricingDraft() {
+      try {
+        const payload = JSON.parse(localStorage.getItem(PRICING_DRAFT_KEY) || "null");
+        if (!payload || payload.version !== PRICING_DRAFT_VERSION || !Array.isArray(payload.rows) || !payload.rows.length) {
+          return null;
+        }
+        const usedIds = new Set();
+        const restoredRows = payload.rows.slice(0, 1000).map((savedRow, index) => {
+          const row = emptyRow(index + 1);
+          const savedId = String(savedRow?.id || "");
+          if (savedId && !usedIds.has(savedId)) row.id = savedId;
+          usedIds.add(row.id);
+          PRICING_ROW_KEYS.forEach((key) => {
+            row[key] = String(savedRow?.[key] ?? "");
+          });
+          return row;
+        });
+        rows = restoredRows.length ? restoredRows : [emptyRow(1)];
+        const contentRows = rows.filter((row) => PRICING_ROW_KEYS.some((key) => String(row[key]).trim() !== "")).length;
+        return { savedAt: payload.savedAt, contentRows };
+      } catch (error) {
+        console.warn("核价明细自动恢复失败：", error);
+        return null;
+      }
+    }
+
+    function formatDraftSavedAt(value) {
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? "" : date.toLocaleString("zh-CN", { hour12: false });
     }
 
     function number(value) {
@@ -723,6 +786,7 @@
       renderActiveRowOptions();
       renderSummary();
       restorePendingYellowFocus();
+      schedulePricingDraftSave();
     }
 
     function bindRowInputs() {
@@ -732,6 +796,7 @@
           if (!row) return;
           row[el.dataset.key] = el.dataset.key === "commission" ? String(number(el.value) || "") : el.value;
           renderSummary();
+          schedulePricingDraftSave();
         });
         el.addEventListener("change", () => {
           const row = rows.find((item) => item.id === el.dataset.id);
@@ -1393,6 +1458,21 @@
       renderRows();
     });
 
+    $("clearAllRows").addEventListener("click", () => {
+      const contentRows = rows.filter((row) => PRICING_ROW_KEYS.some((key) => String(row[key]).trim() !== "")).length;
+      if (!contentRows) {
+        $("syncStatus").textContent = "当前没有需要清空的核价记录。";
+        $("syncStatus").className = "sync-status";
+        return;
+      }
+      if (!window.confirm(`确定清空当前 ${contentRows} 行核价记录吗？清空后自动保存的记录也会被覆盖。`)) return;
+      rows = [emptyRow(1)];
+      savePricingDraft();
+      renderRows();
+      $("syncStatus").textContent = "核价记录已清空。";
+      $("syncStatus").className = "sync-status good";
+    });
+
     $("exportCsv").addEventListener("click", exportCsv);
     $("importCsv").addEventListener("click", () => $("csvFile").click());
     $("csvFile").addEventListener("change", async (event) => {
@@ -1428,9 +1508,17 @@
     });
     $("ozonText").addEventListener("paste", () => setTimeout(parseOzonText, 0));
 
+    window.addEventListener("pagehide", savePricingDraft);
+
     loadSyncSettings();
+    const restoredDraft = restorePricingDraft();
     renderRows();
     renderFreight();
+    if (restoredDraft?.contentRows) {
+      const savedAt = formatDraftSavedAt(restoredDraft.savedAt);
+      $("syncStatus").textContent = `已自动恢复上次的 ${restoredDraft.contentRows} 行核价记录${savedAt ? `（保存于 ${savedAt}）` : ""}。`;
+      $("syncStatus").className = "sync-status good";
+    }
   </script>
 </body>
 </html>
