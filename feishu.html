@@ -647,6 +647,7 @@
           return row;
         });
         rows = restoredRows.length ? restoredRows : [emptyRow(1)];
+        if (rows.length === 1 && isBlankOrLegacyDefaultRow(rows[0])) rows[0].freight = "";
         const contentRows = rows.filter((row) => PRICING_ROW_KEYS.some((key) => String(row[key]).trim() !== "")).length;
         return { savedAt: payload.savedAt, contentRows };
       } catch (error) {
@@ -691,6 +692,18 @@
 
     function hasRequired(row) {
       return ["green", "black", "commission", "cost", "freight"].some((key) => String(row[key]).trim() !== "");
+    }
+
+    function isBlankOrLegacyDefaultRow(row) {
+      const meaningfulKeys = PRICING_ROW_KEYS.filter((key) => key !== "freight");
+      if (meaningfulKeys.some((key) => String(row[key]).trim() !== "")) return false;
+      const freight = String(row.freight ?? "").trim();
+      return freight === "" || Math.abs(number(freight) - 37.44) < 0.005;
+    }
+
+    function hasPricingInput(row) {
+      return ["green", "black", "commission", "factorOverride", "quoteOverride", "cost", "freight"]
+        .some((key) => String(row[key]).trim() !== "");
     }
 
     function calc(row) {
@@ -754,8 +767,9 @@
       $("rows").innerHTML = rows.map((row, i) => {
         row.index = i + 1;
         const c = calc(row);
-        const marginClass = c.margin === null ? "warn" : c.margin >= 0.18 ? "good" : "bad";
-        const profitClass = c.profit >= 0 ? "good" : "bad";
+        const showCalculated = hasPricingInput(row);
+        const marginClass = !showCalculated ? "" : c.margin === null ? "warn" : c.margin >= 0.18 ? "good" : "bad";
+        const profitClass = !showCalculated ? "" : c.profit >= 0 ? "good" : "bad";
         return `
           <tr>
             <td class="index">${row.index}</td>
@@ -763,18 +777,18 @@
             ${inputCell(row, "green", "number", "manual compact")}
             ${inputCell(row, "black", "number", "manual compact")}
             ${inputCell(row, "commission", "number", "manual compact")}
-            <td class="calc money">${money(c.trueSale)}</td>
-            <td class="calc money">${money(c.autoFee)}</td>
-            <td class="calc money price-cell">${money(c.quote)}</td>
+            <td class="calc money">${showCalculated ? money(c.trueSale) : ""}</td>
+            <td class="calc money">${showCalculated ? money(c.autoFee) : ""}</td>
+            <td class="calc money price-cell">${showCalculated ? money(c.quote) : ""}</td>
             ${inputCell(row, "quoteOverride", "number", "soft-manual compact")}
-            <td class="calc percent">${c.pricingFactor.toFixed(2)}</td>
+            <td class="calc percent">${showCalculated ? c.pricingFactor.toFixed(2) : ""}</td>
             ${inputCell(row, "factorOverride", "number", "soft-manual")}
             ${inputCell(row, "cost", "number", "manual compact")}
             ${inputCell(row, "freight", "number", "manual compact")}
-            <td class="fixed money">${money(c.labelFee)}</td>
-            <td class="calc money">${money(c.platform)}</td>
-            <td class="calc money ${profitClass}">${money(c.profit)}</td>
-            <td class="calc percent ${marginClass}">${pct(c.margin)}</td>
+            <td class="fixed money">${showCalculated ? money(c.labelFee) : ""}</td>
+            <td class="calc money">${showCalculated ? money(c.platform) : ""}</td>
+            <td class="calc money ${profitClass}">${showCalculated ? money(c.profit) : ""}</td>
+            <td class="calc percent ${marginClass}">${showCalculated ? pct(c.margin) : ""}</td>
             ${inputCell(row, "sku", "text", "optional")}
             ${inputCell(row, "link", "textarea", "optional link")}
             ${inputCell(row, "source", "text", "optional")}
@@ -1023,7 +1037,7 @@
       return { ...route, ok, reasons, billableWeight, price: ok ? billableWeight * route.rate + route.fixed : null };
     }
 
-    function renderFreight() {
+    function renderFreight(shouldFillRow = true) {
       const input = freightInputs();
       const checked = routes.map((route) => checkRoute(route, input));
       const available = checked.filter((route) => route.ok).sort((a, b) => a.price - b.price);
@@ -1038,7 +1052,7 @@
           ${route.ok ? "" : `<p class="reason">${route.reasons.join("；")}</p>`}
         </article>
       `).join("");
-      fillBestFreight($("activeRow").value || rows[rows.length - 1]?.id);
+      if (shouldFillRow) fillBestFreight($("activeRow").value || rows[rows.length - 1]?.id);
     }
 
     function parseOzonText() {
@@ -1182,7 +1196,7 @@
         return rowFromCsvRecord(record, index + 1);
       }).filter((row) => hasRequired(row) || row.sku || row.link || row.source || row.note);
       if (!imported.length) throw new Error("CSV 里没有识别到核价明细。");
-      if (rows.length === 1 && !hasRequired(rows[0]) && !rows[0].sku && !rows[0].link && !rows[0].source && !rows[0].note) {
+      if (rows.length === 1 && isBlankOrLegacyDefaultRow(rows[0])) {
         rows = imported;
       } else {
         rows = [...rows, ...imported];
@@ -1408,7 +1422,7 @@
     }
 
     function applyErpDetailToRow(product) {
-      if (rows.length === 1 && !hasRequired(rows[0]) && !rows[0].sku && !rows[0].link && !rows[0].source && !rows[0].note) {
+      if (rows.length === 1 && isBlankOrLegacyDefaultRow(rows[0])) {
         rows = [];
       }
       const row = emptyRow(rows.length + 1);
@@ -1513,7 +1527,7 @@
     loadSyncSettings();
     const restoredDraft = restorePricingDraft();
     renderRows();
-    renderFreight();
+    renderFreight(false);
     if (restoredDraft?.contentRows) {
       const savedAt = formatDraftSavedAt(restoredDraft.savedAt);
       $("syncStatus").textContent = `已自动恢复上次的 ${restoredDraft.contentRows} 行核价记录${savedAt ? `（保存于 ${savedAt}）` : ""}。`;
