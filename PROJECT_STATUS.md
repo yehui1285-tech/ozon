@@ -5,7 +5,7 @@
 
 ## 一句话状态
 
-Ozon 核价/采集工具已完成 P0-P2 本地升级：同步安全、完整行校验、统一运费规则、自动测试/发布、网页源码拆分、裁图内存优化与 Git 初始化均已完成；等待上传网页、重载扩展并部署 Worker。
+Ozon 核价/采集工具已完成 P0-P2 本地升级；Worker 已部署、健康检查通过且飞书去重索引已重建，当前等待上传网页、实际同步验证和重载扩展。
 
 ## 当前重要版本
 
@@ -27,6 +27,10 @@ Ozon 核价/采集工具已完成 P0-P2 本地升级：同步安全、完整行�
 
 ## 最近已知改动
 
+- 2026-07-10：Worker 已部署到生产环境，`/health` 已确认版本 `2026.07.10-p0p2`。重建去重索引请求被缺失的飞书配置项拦截：`FEISHU_APP_ID`、`FEISHU_APP_TOKEN`、`FEISHU_BATCH_TABLE_ID`、`FEISHU_DETAIL_TABLE_ID`。
+- 2026-07-10：补齐上述飞书变量并部署后，Worker 已不再报“缺少环境变量”，但重建索引仍返回“飞书服务调用失败”。需在 Cloudflare Worker 日志中查看飞书的具体错误码，重点核对 App ID/App Secret 是否配对，以及多维表格 Token、两个数据表 ID 与应用权限是否正确。
+- 2026-07-10：Cloudflare 的实时 Tail 日志需要付费计划，未启用。Worker 已改为在受同步令牌保护的失败响应中仅返回飞书 HTTP 状态与错误码，不返回原始响应或密钥；修正 `FEISHU_DETAIL_TABLE_ID` 后去重索引重建成功，已扫描 160 条明细并写入 317 个去重键。
+- 2026-07-10：已登录 Cloudflare，创建 `SYNC_CACHE` KV 并将其绑定到本地 `worker/wrangler.toml`；`SYNC_API_TOKEN` 已作为 Worker Secret 保存，未写入项目文件。严格来源 `ALLOWED_ORIGIN=https://yehui1285-tech.github.io` 将随下一次 Worker 部署生效。
 - 2026-07-10：Worker 强制来源和同步令牌校验，限制请求大小与 Ozon 域名，增加 KV 幂等缓存、去重索引重建和 `/health` 版本检查。
 - 2026-07-10：网页同步前强制五项必填完整，自动保存增加 1000 行/容量保护，CSV 增加公式注入防护。
 - 2026-07-10：网页与扩展运费规则统一到 `shared/freight-rules.json`，扩展升级到 0.5.7。
@@ -50,6 +54,7 @@ Ozon 核价/采集工具已完成 P0-P2 本地升级：同步安全、完整行�
 - `ozon-feishu-sync\site\index.html` 是网页源码侧文件；网页修改时通常需要与 `feishu.html` 保持一致。
 - 2026-07-10 本地两个网页文件已由 `web-src` 构建并同步；线上新功能需要上传新版 `feishu.html` 后才会生效。
 - `ozon-erp-collector-extension.zip` 是扩展分发包；扩展修改后必须重新生成。
+- `ozon-feishu-sync\\worker\\wrangler.toml` 是实际部署配置，包含公开来源限制和 `SYNC_CACHE` 的绑定 ID，不含任何密钥。
 - 常规 `_备份_...` 目录按日期、模块、版本命名，最多只保留最新 5 个；`_旧文件备份_...` 独立归档不计入。
 
 ## 下一次新对话建议开场白
@@ -61,13 +66,12 @@ Ozon 核价/采集工具已完成 P0-P2 本地升级：同步安全、完整行�
 ## 当前待办
 
 - 上传根目录新版 `feishu.html` 到 GitHub Pages。
-- Cloudflare Worker 新增 `SYNC_API_TOKEN`，创建并绑定 `SYNC_CACHE` KV，确认 `ALLOWED_ORIGIN=https://yehui1285-tech.github.io`，然后部署新版 `worker.js`。
-- 部署后打开 `/health` 确认版本为 `2026.07.10-p0p2`，并在网页填写同一个同步令牌。
+- 在网页填写已配置的同步令牌并验证一次飞书同步。
 - 在 Chrome/Edge 扩展管理页重新加载 0.5.7；分发给其他电脑时使用已重新生成的 `ozon-erp-collector-extension.zip`。
-- 首次部署 KV 后，在网页点击“重建去重索引”。
 
 ## 高风险注意
 
 - 不要把飞书 App Secret、账号密码、token、cookie 写入公开文档或 GitHub。
 - 如果需要处理飞书 Worker 环境变量，只说明变量名，不在公开文件里写 secret 值。
 - 如果对线上页面是否已上传不确定，明确说明“本地已准备”和“线上是否已部署”是两件事。
+- 此电脑未检测到可由 Codex 控制的 Chrome 配置，因此扩展重载仍需在本机 Chrome/Edge 的扩展管理页手动完成。

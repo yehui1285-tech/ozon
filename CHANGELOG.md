@@ -5,6 +5,88 @@
 - `当前文件怎么用.md`
 - `OZON项目复现交接文档.md`
 
+## 2026-07-10 - 免费计划下的飞书安全诊断
+
+### 改动
+
+- Cloudflare Tail Workers 需要付费计划，未启用该功能。
+- Worker 的飞书失败响应改为仅返回调用阶段、HTTP 状态和飞书错误码；原始飞书响应、令牌和其他敏感内容仍不会返回给网页客户端。
+- `wrangler.toml` 显式保留 Workers Logs 的配置，避免未来部署时与控制台设置不一致。
+
+### 涉及文件
+
+```text
+ozon-feishu-sync\\worker\\worker.js
+ozon-feishu-sync\\worker\\wrangler.toml
+PROJECT_STATUS.md
+CHANGELOG.md
+```
+
+### 回滚备份
+
+```text
+C:\\Users\\Microsoft\\Documents\\Ozon\\_备份_20260710_ozon_worker_safe_feishu_diagnostic_before
+```
+
+创建新备份后已按规则删除最旧常规备份，常规 `_备份_...` 目录仍为 5 个。
+
+### 部署/安装要求
+
+- 需要部署新版 Worker 后重新执行“重建去重索引”。
+- 未修改网页或扩展，不需要重新上传 `feishu.html`、重新安装扩展或重新生成扩展 zip。
+
+### 验证结果
+
+- `worker.js` 语法检查和 Cloudflare 部署均已通过；当前部署版本为 `73360199-9d3c-4027-b2e5-e22aa9379621`。
+- 重新执行去重索引返回“飞书多维表格调用失败（HTTP 200，错误码 1254004）”。飞书官方将 `1254004` 定义为 `WrongTableId`，即数据表 ID 错误。
+- 本操作仅查询“核价明细”表，故需更正 `FEISHU_DETAIL_TABLE_ID`；它应来自该表地址栏 `table=tbl...` 的完整值，而不是视图 ID、记录 ID 或其他地址片段。
+- 更正 `FEISHU_DETAIL_TABLE_ID` 并部署后，重建去重索引成功：扫描 160 条飞书核价明细，写入 317 个 SKU/链接去重键。
+
+## 2026-07-10 - Cloudflare 同步安全配置
+
+### 改动
+
+- 已通过官方 Wrangler 登录 Cloudflare。
+- 已创建生产 KV 命名空间 `SYNC_CACHE`，并新增 `ozon-feishu-sync\\worker\\wrangler.toml` 绑定该命名空间。
+- 已将严格来源限制设为 `https://yehui1285-tech.github.io`；该配置将在下一次 Worker 部署时在生产环境生效。
+- 已为既有 Worker `ozon-feishu-sync` 创建 `SYNC_API_TOKEN` 加密 Secret；令牌未写入源码、部署配置或本文档。
+
+### 涉及文件
+
+```text
+ozon-feishu-sync\\worker\\wrangler.toml
+PROJECT_STATUS.md
+CHANGELOG.md
+```
+
+### 回滚备份
+
+```text
+C:\\Users\\Microsoft\\Documents\\Ozon\\_备份_20260710_ozon_worker_cloudflare_setup_before_docs
+```
+
+创建新备份后已按规则删除最旧的常规备份 `_备份_20260706_ozon_web_freight_excel_rules_0.5.6_before`；常规 `_备份_...` 目录现为 5 个。
+
+### 验证
+
+- `wrangler whoami` 在配置前确认未登录；完成官方 OAuth 授权后登录成功。
+- Cloudflare 已确认创建 `SYNC_CACHE`，并返回绑定 ID；ID 已写入本地部署配置。
+- Cloudflare 已确认 `SYNC_API_TOKEN` Secret 上传成功。
+- 本次未部署 Worker，故尚未验证生产环境 `/health`、CORS、飞书连通性或 KV 去重索引。
+
+### 部署/安装要求
+
+- 下一步需要部署 `ozon-feishu-sync\\worker\\worker.js`，部署后再访问 `/health`。
+- 网页同步设置中需填写与 Cloudflare Secret 相同的同步令牌；不要将令牌提交到 Git 或写入公开文档。
+- 本次未修改网页、扩展或运费规则，不需要上传 `feishu.html`、重装扩展或重新生成 `ozon-erp-collector-extension.zip`。
+
+### 后续部署结果
+
+- Worker 已于 2026-07-10 正式部署，Cloudflare 版本 ID：`b1f318e0-fceb-4a58-a583-c175d574b524`。
+- 生产健康检查 `GET /health` 返回 `{"ok":true,"service":"ozon-feishu-sync","version":"2026.07.10-p0p2"}`。
+- 已尝试执行“重建去重索引”；Worker 正确拒绝了该请求，因为 Cloudflare 缺少 `FEISHU_APP_ID`、`FEISHU_APP_TOKEN`、`FEISHU_BATCH_TABLE_ID`、`FEISHU_DETAIL_TABLE_ID`。这些值需要由拥有飞书应用/多维表格配置的人员在 Cloudflare 中补齐后再重试。
+- 补齐变量并部署后已再次尝试重建索引；环境变量检查已通过，但飞书 API 返回通用失败。Cloudflare 实时日志连接因网络超时未能读取详细错误码，尚未获得可安全记录的飞书响应内容。
+
 ## 2026-07-10 - P0-P2 全面升级优化
 
 ### P0：安全与数据正确性
@@ -77,7 +159,7 @@ C:\Users\Microsoft\Documents\Ozon\_备份_20260710_ozon_p0_p2_optimization_befor
 ### 部署/安装要求
 
 - 需要上传新版 `feishu.html`。
-- 需要在 Cloudflare 配置 `SYNC_API_TOKEN`、`SYNC_CACHE` KV 和严格 `ALLOWED_ORIGIN`，然后部署 Worker。
+- `SYNC_API_TOKEN`、`SYNC_CACHE` KV 与严格 `ALLOWED_ORIGIN` 已于 2026-07-10 配置完成；仍需要部署 Worker 使绑定和来源限制在生产环境生效。
 - 需要重新加载 Chrome/Edge 扩展 0.5.7。
 - 首次启用 KV 后需要重建去重索引。
 

@@ -58,7 +58,18 @@ async function readJsonPayload(request) {
 
 function safeClientError(error) {
   const message = error?.message || String(error);
-  if (/Feishu API failed|Cannot get Feishu token/i.test(message)) return "飞书服务调用失败，请查看 Worker 日志";
+  const match = message.match(/^(Feishu API failed|Cannot get Feishu token):\s*(\d+)\s+(\{[\s\S]*\})$/i);
+  if (match) {
+    let code = "未知";
+    try {
+      const data = JSON.parse(match[3]);
+      if (data?.code !== undefined && data?.code !== null) code = String(data.code);
+    } catch {
+      // 仅保留通用错误，避免把飞书返回体暴露给客户端。
+    }
+    const stage = /Cannot get Feishu token/i.test(match[1]) ? "应用鉴权" : "多维表格调用";
+    return `飞书${stage}失败（HTTP ${match[2]}，错误码 ${code}）`;
+  }
   return message;
 }
 

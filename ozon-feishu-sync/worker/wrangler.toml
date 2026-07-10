@@ -1,0 +1,21 @@
+name = "ozon-feishu-sync"
+main = "worker.js"
+compatibility_date = "2026-07-10"
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+invocation_logs = true
+
+[vars]
+ALLOWED_ORIGIN = "https://yehui1285-tech.github.io"
+
+[[kv_namespaces]]
+binding = "SYNC_CACHE"
+id = "89ef12d91f904ae9934f96964aca893c"
+
+# Optional: configure a Cloudflare Rate Limiting binding named RATE_LIMITER
+# in the dashboard if traffic limiting is required.
