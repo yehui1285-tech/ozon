@@ -5,7 +5,7 @@
 
 ## 一句话状态
 
-Ozon 核价/采集工具已完成 P0-P2 本地升级；Worker 已部署、健康检查通过且飞书去重索引已重建，最新版网页已上线验证；当前需更正“同步批次”表 ID 后进行实际同步验证，并重载扩展。
+Ozon 核价/采集工具已完成 P0-P2 本地升级；Worker 已部署、健康检查通过、飞书去重索引已重建且实际同步验证成功，最新版网页已上线验证；当前只剩 Chrome/Edge 扩展重载。
 
 ## 当前重要版本
 
@@ -31,7 +31,8 @@ Ozon 核价/采集工具已完成 P0-P2 本地升级；Worker 已部署、健康
 - 2026-07-10：Worker 已部署到生产环境，`/health` 已确认版本 `2026.07.10-p0p2`。重建去重索引请求被缺失的飞书配置项拦截：`FEISHU_APP_ID`、`FEISHU_APP_TOKEN`、`FEISHU_BATCH_TABLE_ID`、`FEISHU_DETAIL_TABLE_ID`。
 - 2026-07-10：补齐上述飞书变量并部署后，Worker 已不再报“缺少环境变量”，但重建索引仍返回“飞书服务调用失败”。需在 Cloudflare Worker 日志中查看飞书的具体错误码，重点核对 App ID/App Secret 是否配对，以及多维表格 Token、两个数据表 ID 与应用权限是否正确。
 - 2026-07-10：Cloudflare 的实时 Tail 日志需要付费计划，未启用。Worker 已改为在受同步令牌保护的失败响应中仅返回飞书 HTTP 状态与错误码，不返回原始响应或密钥；修正 `FEISHU_DETAIL_TABLE_ID` 后去重索引重建成功，已扫描 160 条明细并写入 317 个去重键。
-- 2026-07-10：新增只读同步表结构检查，不写入飞书记录。检查确认“核价明细”表可读取，但 `FEISHU_BATCH_TABLE_ID` 返回 `1254004 (WrongTableId)`；需改为“同步批次”数据表 URL 中完整的 `table=tbl...` 值。
+- 2026-07-10：新增只读同步表结构检查，不写入飞书记录。修正 `FEISHU_BATCH_TABLE_ID` 后，“同步批次”和“核价明细”两个数据表均可读取，Worker 所需字段完整；可安全进行一次实际同步验证。
+- 2026-07-10：网页端实际同步验证成功，飞书新建 1 条核价明细并返回成功批次 ID；网页、Worker、KV 去重索引与飞书写入链路已打通。
 - 2026-07-10：已登录 Cloudflare，创建 `SYNC_CACHE` KV 并将其绑定到本地 `worker/wrangler.toml`；`SYNC_API_TOKEN` 已作为 Worker Secret 保存，未写入项目文件。严格来源 `ALLOWED_ORIGIN=https://yehui1285-tech.github.io` 将随下一次 Worker 部署生效。
 - 2026-07-10：Worker 强制来源和同步令牌校验，限制请求大小与 Ozon 域名，增加 KV 幂等缓存、去重索引重建和 `/health` 版本检查。
 - 2026-07-10：网页同步前强制五项必填完整，自动保存增加 1000 行/容量保护，CSV 增加公式注入防护。
@@ -67,7 +68,6 @@ Ozon 核价/采集工具已完成 P0-P2 本地升级；Worker 已部署、健康
 
 ## 当前待办
 
-- 在飞书多维表格中点击“同步批次”数据表，从 URL 的 `table=tbl...` 复制完整值并替换 Cloudflare Secret `FEISHU_BATCH_TABLE_ID`；保存并部署后再验证一次飞书同步。
 - 在 Chrome/Edge 扩展管理页重新加载 0.5.7；分发给其他电脑时使用已重新生成的 `ozon-erp-collector-extension.zip`。
 
 ## 高风险注意

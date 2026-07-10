@@ -33,6 +33,8 @@ C:\\Users\\Microsoft\\Documents\\Ozon\\_备份_20260710_ozon_worker_schema_check
 - Worker 语法检查通过并已部署，部署版本为 `f5d2ef59-3e2c-4ae7-a606-2175f91556ce`。
 - “核价明细”表可正常读取；“同步批次”表返回飞书 `1254004 (WrongTableId)`。
 - 需将 Cloudflare Secret `FEISHU_BATCH_TABLE_ID` 更正为“同步批次”表 URL 的完整 `table=tbl...` 值后重新验证同步。
+- 更正并部署后，只读检查成功：两个数据表均没有缺失 Worker 所需字段，可进行实际同步验证。
+- 网页端实际同步验证成功：飞书新建 1 条核价明细并返回成功批次 ID，确认网页 → Worker → KV 去重索引 → 飞书多维表格链路可用。
 
 ### 部署/安装要求
 
