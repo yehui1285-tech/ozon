@@ -1,0 +1,26 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const routes = JSON.parse(fs.readFileSync(path.join(root, "shared", "freight-rules.json"), "utf8"));
+
+function available(input) {
+  return routes.filter((route) => {
+    const billable = route.usesVolume ? Math.max(input.weight, input.length * input.width * input.height / 12000) : input.weight;
+    return input.sale > route.minValue && input.sale <= route.maxValue &&
+      input.weight > route.minWeightExclusive && input.weight <= route.maxWeight &&
+      (!route.maxBillable || billable <= route.maxBillable) &&
+      input.length + input.width + input.height <= route.maxSum &&
+      Math.max(input.length, input.width, input.height) <= route.maxSide;
+  });
+}
+
+assert.equal(routes.length, 6);
+assert.equal(available({ sale: 200, weight: 0.3, length: 70, width: 5, height: 5 }).length, 0, "超级轻小件单边不得超过 60cm");
+assert.ok(available({ sale: 20000, weight: 25, length: 50, width: 40, height: 30 }).some((route) => route.name === "CEL Economy Premium Big"));
+assert.ok(!available({ sale: 20000, weight: 25.001, length: 50, width: 40, height: 30 }).some((route) => route.name === "CEL Economy Premium Big"));
+assert.ok(available({ sale: 1500, weight: 0.3, length: 30, width: 20, height: 8 }).some((route) => route.name === "CEL Economy Extra Small"));
+assert.ok(!available({ sale: 0, weight: 0.3, length: 30, width: 20, height: 8 }).length);
+console.log("运费规则边界测试通过");

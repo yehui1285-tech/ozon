@@ -1,0 +1,14 @@
+name = "ozon-feishu-sync"
+main = "worker.js"
+compatibility_date = "2026-07-10"
+
+[vars]
+ALLOWED_ORIGIN = "https://yehui1285-tech.github.io"
+
+# 先运行：wrangler kv namespace create SYNC_CACHE
+# 再把返回的 id 写到本地 wrangler.toml；不要提交真实 token 或 secret。
+[[kv_namespaces]]
+binding = "SYNC_CACHE"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+
+# 可选：在 Cloudflare 中配置 Rate Limiting binding，名称设为 RATE_LIMITER。

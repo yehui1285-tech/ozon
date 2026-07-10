@@ -1,0 +1,1059 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>本地快速裁图工具</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #1f2933;
+      --muted: #667085;
+      --line: #d9dee7;
+      --panel: #ffffff;
+      --soft: #f4f6f9;
+      --accent: #0f766e;
+      --accent-ink: #ffffff;
+      --warn: #b45309;
+      --bad: #b42318;
+      --shadow: 0 18px 50px rgba(31, 41, 51, 0.12);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
+      background: #eef1f5;
+      color: var(--ink);
+    }
+
+    button,
+    input,
+    select {
+      font: inherit;
+    }
+
+    button {
+      border: 0;
+      border-radius: 6px;
+      padding: 10px 14px;
+      color: var(--accent-ink);
+      background: var(--accent);
+      cursor: pointer;
+      transition: transform 0.12s ease, filter 0.12s ease;
+      white-space: nowrap;
+    }
+
+    button:hover {
+      filter: brightness(0.96);
+    }
+
+    button:active {
+      transform: translateY(1px);
+    }
+
+    button.secondary {
+      color: var(--ink);
+      background: #e7ebf0;
+    }
+
+    button.danger {
+      background: var(--bad);
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      filter: grayscale(0.6);
+      opacity: 0.55;
+    }
+
+    .app {
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: auto 1fr;
+    }
+
+    header {
+      padding: 18px 24px;
+      background: #ffffff;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 22px;
+      letter-spacing: 0;
+    }
+
+    .header-meta {
+      color: var(--muted);
+      font-size: 13px;
+      text-align: right;
+      line-height: 1.55;
+    }
+
+    main {
+      padding: 18px;
+      display: grid;
+      grid-template-columns: minmax(320px, 410px) minmax(0, 1fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+
+    .controls {
+      padding: 16px;
+      display: grid;
+      gap: 16px;
+      position: sticky;
+      top: 18px;
+      max-height: calc(100vh - 36px);
+      overflow: auto;
+    }
+
+    .section {
+      display: grid;
+      gap: 10px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .section:last-child {
+      padding-bottom: 0;
+      border-bottom: 0;
+    }
+
+    .section-title {
+      font-weight: 700;
+      font-size: 14px;
+    }
+
+    .dropzone {
+      min-height: 130px;
+      border: 2px dashed #aab4c3;
+      border-radius: 8px;
+      background: var(--soft);
+      display: grid;
+      place-items: center;
+      padding: 18px;
+      text-align: center;
+      color: var(--muted);
+      cursor: pointer;
+      line-height: 1.6;
+    }
+
+    .dropzone.dragover {
+      border-color: var(--accent);
+      background: #e8f5f2;
+      color: var(--accent);
+    }
+
+    .dropzone strong {
+      display: block;
+      color: var(--ink);
+      font-size: 15px;
+    }
+
+    .size-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .check-tile {
+      min-height: 42px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      cursor: pointer;
+      user-select: none;
+      font-size: 13px;
+    }
+
+    .check-tile input {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--accent);
+    }
+
+    .field-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    label.field {
+      display: grid;
+      gap: 5px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .field input,
+    .field select {
+      min-width: 0;
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 9px 10px;
+      background: #fff;
+      color: var(--ink);
+    }
+
+    .inline-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .notice {
+      border-radius: 6px;
+      padding: 10px;
+      background: #fff7ed;
+      color: var(--warn);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .workspace {
+      min-width: 0;
+      display: grid;
+      gap: 14px;
+    }
+
+    .toolbar {
+      padding: 12px 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .status {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .image-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+      gap: 12px;
+    }
+
+    .image-card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+    }
+
+    .card-head {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .file-name {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .badge {
+      flex: 0 0 auto;
+      border-radius: 999px;
+      padding: 4px 8px;
+      font-size: 12px;
+      background: #e7f4f2;
+      color: var(--accent);
+    }
+
+    .preview-area {
+      min-height: 220px;
+      background: #dfe4ea;
+      display: grid;
+      place-items: center;
+      padding: 12px;
+    }
+
+    canvas.preview {
+      width: 100%;
+      height: auto;
+      max-height: 440px;
+      object-fit: contain;
+      background: #fff;
+      border: 1px solid rgba(31, 41, 51, 0.12);
+    }
+
+    .card-foot {
+      padding: 10px 12px;
+      display: grid;
+      gap: 8px;
+      border-top: 1px solid var(--line);
+    }
+
+    .crop-meta {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .download-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    @media (max-width: 920px) {
+      header {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .header-meta {
+        text-align: left;
+      }
+
+      main {
+        grid-template-columns: 1fr;
+      }
+
+      .controls {
+        position: static;
+        max-height: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div>
+        <h1>本地快速裁图工具</h1>
+      </div>
+      <div class="header-meta">固定尺寸裁切 · 模特居中 · 留白保护 · 左上角 Logo</div>
+    </header>
+
+    <main>
+      <aside class="panel controls">
+        <section class="section">
+          <div class="section-title">图片</div>
+          <label class="dropzone" id="dropzone">
+            <input class="hidden" id="imageInput" type="file" accept="image/*" multiple>
+            <span><strong>点击选择或拖入图片</strong>支持 JPG、PNG、WebP，图片只在本机处理</span>
+          </label>
+          <div class="inline-actions">
+            <button class="secondary" id="clearImages" type="button">清空图片</button>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-title">裁切尺寸</div>
+          <div class="size-grid" id="sizeGrid"></div>
+          <div class="field-grid">
+            <label class="field">
+              自定义宽
+              <input id="customWidth" type="number" min="100" step="10" placeholder="如 900">
+            </label>
+            <label class="field">
+              自定义高
+              <input id="customHeight" type="number" min="100" step="10" placeholder="如 1200">
+            </label>
+          </div>
+          <div class="inline-actions">
+            <button class="secondary" id="addSize" type="button">添加尺寸</button>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-title">主体规则</div>
+          <div class="field-grid">
+            <label class="field">
+              图片类型
+              <select id="bodyMode">
+                <option value="auto">自动判断</option>
+                <option value="full">全身</option>
+                <option value="upper">上半身</option>
+                <option value="lower">下半身</option>
+              </select>
+            </label>
+            <label class="field">
+              主体框容错
+              <input id="edgeTolerance" type="number" min="8" max="90" value="30">
+            </label>
+            <label class="field">
+              头部留白 px
+              <input id="topGap" type="number" min="0" max="200" value="30">
+            </label>
+            <label class="field">
+              下方留白 px
+              <input id="bottomGap" type="number" min="0" max="200" value="20">
+            </label>
+            <label class="field">
+              横向微调 px
+              <input id="offsetX" type="number" step="1" value="0">
+            </label>
+            <label class="field">
+              纵向微调 px
+              <input id="offsetY" type="number" step="1" value="0">
+            </label>
+          </div>
+          <div class="notice">复杂背景、多人图或背景与服装颜色接近时，自动主体框可能不够准；可调“主体框容错”和横纵微调后重新生成。</div>
+        </section>
+
+        <section class="section">
+          <div class="section-title">Logo</div>
+          <label class="dropzone" id="logoDropzone">
+            <input class="hidden" id="logoInput" type="file" accept="image/*">
+            <span><strong>点击选择 Logo</strong>默认放在左上角固定位置</span>
+          </label>
+          <div class="field-grid">
+            <label class="field">
+              左边距 px
+              <input id="logoX" type="number" min="0" value="24">
+            </label>
+            <label class="field">
+              上边距 px
+              <input id="logoY" type="number" min="0" value="24">
+            </label>
+            <label class="field">
+              Logo 宽 px
+              <input id="logoWidth" type="number" min="10" value="120">
+            </label>
+            <label class="field">
+              透明度 %
+              <input id="logoOpacity" type="number" min="1" max="100" value="100">
+            </label>
+          </div>
+          <div class="inline-actions">
+            <button class="secondary" id="clearLogo" type="button">移除 Logo</button>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-title">输出</div>
+          <div class="field-grid">
+            <label class="field">
+              图片格式
+              <select id="outputType">
+                <option value="image/jpeg">JPG</option>
+                <option value="image/png">PNG</option>
+                <option value="image/webp">WebP</option>
+              </select>
+            </label>
+            <label class="field">
+              JPG/WebP 质量 %
+              <input id="quality" type="number" min="60" max="100" value="92">
+            </label>
+          </div>
+          <div class="inline-actions">
+            <button id="processBtn" type="button">生成预览</button>
+            <button class="secondary" id="downloadAllBtn" type="button" disabled>下载全部</button>
+          </div>
+        </section>
+      </aside>
+
+      <section class="workspace">
+        <div class="panel toolbar">
+          <div class="status" id="statusText">请选择图片和裁切尺寸。</div>
+          <div class="inline-actions">
+            <button class="secondary" id="selectAllSizes" type="button">全选尺寸</button>
+            <button class="secondary" id="selectDefaultSizes" type="button">常用尺寸</button>
+          </div>
+        </div>
+        <div class="image-list" id="resultList"></div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const defaultSizes = [
+      { width: 800, height: 800, checked: true },
+      { width: 800, height: 1200, checked: true },
+      { width: 1200, height: 1200, checked: true },
+      { width: 750, height: 1200, checked: true },
+      { width: 1000, height: 1000, checked: false },
+      { width: 1200, height: 1600, checked: false }
+    ];
+
+    const state = {
+      files: [],
+      logo: null,
+      sizes: [...defaultSizes],
+      results: []
+    };
+    const MAX_SOURCE_IMAGES = 50;
+    const MAX_RESULTS = 120;
+    const MAX_PREVIEW_WIDTH = 420;
+    const MAX_PREVIEW_HEIGHT = 520;
+
+    const els = {
+      imageInput: document.getElementById("imageInput"),
+      logoInput: document.getElementById("logoInput"),
+      dropzone: document.getElementById("dropzone"),
+      logoDropzone: document.getElementById("logoDropzone"),
+      sizeGrid: document.getElementById("sizeGrid"),
+      customWidth: document.getElementById("customWidth"),
+      customHeight: document.getElementById("customHeight"),
+      addSize: document.getElementById("addSize"),
+      bodyMode: document.getElementById("bodyMode"),
+      edgeTolerance: document.getElementById("edgeTolerance"),
+      topGap: document.getElementById("topGap"),
+      bottomGap: document.getElementById("bottomGap"),
+      offsetX: document.getElementById("offsetX"),
+      offsetY: document.getElementById("offsetY"),
+      logoX: document.getElementById("logoX"),
+      logoY: document.getElementById("logoY"),
+      logoWidth: document.getElementById("logoWidth"),
+      logoOpacity: document.getElementById("logoOpacity"),
+      clearLogo: document.getElementById("clearLogo"),
+      clearImages: document.getElementById("clearImages"),
+      outputType: document.getElementById("outputType"),
+      quality: document.getElementById("quality"),
+      processBtn: document.getElementById("processBtn"),
+      downloadAllBtn: document.getElementById("downloadAllBtn"),
+      resultList: document.getElementById("resultList"),
+      statusText: document.getElementById("statusText"),
+      selectAllSizes: document.getElementById("selectAllSizes"),
+      selectDefaultSizes: document.getElementById("selectDefaultSizes")
+    };
+
+    function clamp(value, min, max) {
+      return Math.min(max, Math.max(min, value));
+    }
+
+    function safeNumber(input, fallback) {
+      const value = Number(input.value);
+      return Number.isFinite(value) ? value : fallback;
+    }
+
+    function renderSizes() {
+      els.sizeGrid.innerHTML = "";
+      state.sizes.forEach((size, index) => {
+        const label = document.createElement("label");
+        label.className = "check-tile";
+        label.innerHTML = `
+          <input type="checkbox" ${size.checked ? "checked" : ""} data-size-index="${index}">
+          <span>${size.width} × ${size.height}</span>
+        `;
+        els.sizeGrid.appendChild(label);
+      });
+    }
+
+    function selectedSizes() {
+      return state.sizes.filter(size => size.checked);
+    }
+
+    function updateStatus(message) {
+      const sizes = selectedSizes().length;
+      const logoText = state.logo ? "已添加 Logo" : "未添加 Logo";
+      els.statusText.textContent = message || `${state.files.length} 张图片，${sizes} 个尺寸，${logoText}`;
+      els.downloadAllBtn.disabled = state.results.length === 0;
+    }
+
+    function extensionFor(type) {
+      if (type === "image/png") return "png";
+      if (type === "image/webp") return "webp";
+      return "jpg";
+    }
+
+    function baseName(name) {
+      return name.replace(/\.[^.]+$/, "").replace(/[\\/:*?"<>|]+/g, "_");
+    }
+
+    function readImageFile(file) {
+      return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(file);
+        const image = new Image();
+        image.onload = () => {
+          URL.revokeObjectURL(url);
+          resolve(image);
+        };
+        image.onerror = () => {
+          URL.revokeObjectURL(url);
+          reject(new Error(`无法读取图片：${file.name}`));
+        };
+        image.src = url;
+      });
+    }
+
+    function colorDistance(a, b) {
+      const dr = a[0] - b[0];
+      const dg = a[1] - b[1];
+      const db = a[2] - b[2];
+      return Math.sqrt(dr * dr + dg * dg + db * db);
+    }
+
+    function median(values) {
+      const sorted = values.slice().sort((a, b) => a - b);
+      return sorted[Math.floor(sorted.length / 2)] || 0;
+    }
+
+    function estimateBackground(data, width, height) {
+      const samples = [];
+      const stepX = Math.max(1, Math.floor(width / 32));
+      const stepY = Math.max(1, Math.floor(height / 32));
+      for (let x = 0; x < width; x += stepX) {
+        samples.push(pixelAt(data, width, x, 0));
+        samples.push(pixelAt(data, width, x, height - 1));
+      }
+      for (let y = 0; y < height; y += stepY) {
+        samples.push(pixelAt(data, width, 0, y));
+        samples.push(pixelAt(data, width, width - 1, y));
+      }
+      return [
+        median(samples.map(item => item[0])),
+        median(samples.map(item => item[1])),
+        median(samples.map(item => item[2]))
+      ];
+    }
+
+    function pixelAt(data, width, x, y) {
+      const index = (y * width + x) * 4;
+      return [data[index], data[index + 1], data[index + 2], data[index + 3]];
+    }
+
+    function detectSubject(image, tolerance) {
+      const maxScan = 360;
+      const scale = Math.min(1, maxScan / Math.max(image.naturalWidth, image.naturalHeight));
+      const width = Math.max(1, Math.round(image.naturalWidth * scale));
+      const height = Math.max(1, Math.round(image.naturalHeight * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      ctx.drawImage(image, 0, 0, width, height);
+      const imageData = ctx.getImageData(0, 0, width, height);
+      const data = imageData.data;
+      const bg = estimateBackground(data, width, height);
+      const rowCount = new Array(height).fill(0);
+      const colCount = new Array(width).fill(0);
+      let minX = width;
+      let minY = height;
+      let maxX = -1;
+      let maxY = -1;
+      const alphaCutoff = 24;
+
+      for (let y = 0; y < height; y += 1) {
+        for (let x = 0; x < width; x += 1) {
+          const px = pixelAt(data, width, x, y);
+          if (px[3] <= alphaCutoff) continue;
+          const distance = colorDistance(px, bg);
+          const saturation = Math.max(px[0], px[1], px[2]) - Math.min(px[0], px[1], px[2]);
+          if (distance > tolerance || saturation > tolerance * 1.1) {
+            rowCount[y] += 1;
+            colCount[x] += 1;
+          }
+        }
+      }
+
+      const minRowPixels = Math.max(3, Math.round(width * 0.025));
+      const minColPixels = Math.max(3, Math.round(height * 0.025));
+      for (let y = 0; y < height; y += 1) {
+        if (rowCount[y] >= minRowPixels) {
+          minY = Math.min(minY, y);
+          maxY = Math.max(maxY, y);
+        }
+      }
+      for (let x = 0; x < width; x += 1) {
+        if (colCount[x] >= minColPixels) {
+          minX = Math.min(minX, x);
+          maxX = Math.max(maxX, x);
+        }
+      }
+
+      if (maxX <= minX || maxY <= minY) {
+        return {
+          x: image.naturalWidth * 0.15,
+          y: image.naturalHeight * 0.05,
+          width: image.naturalWidth * 0.7,
+          height: image.naturalHeight * 0.9,
+          confidence: "低"
+        };
+      }
+
+      const padX = Math.round(width * 0.012);
+      const padY = Math.round(height * 0.012);
+      minX = clamp(minX - padX, 0, width - 1);
+      minY = clamp(minY - padY, 0, height - 1);
+      maxX = clamp(maxX + padX, 0, width - 1);
+      maxY = clamp(maxY + padY, 0, height - 1);
+
+      return {
+        x: minX / scale,
+        y: minY / scale,
+        width: (maxX - minX + 1) / scale,
+        height: (maxY - minY + 1) / scale,
+        confidence: "正常"
+      };
+    }
+
+    function inferMode(box, image) {
+      const topRatio = box.y / image.naturalHeight;
+      const bottomGapRatio = (image.naturalHeight - box.y - box.height) / image.naturalHeight;
+      const heightRatio = box.height / image.naturalHeight;
+      if (heightRatio > 0.68 && topRatio < 0.2 && bottomGapRatio < 0.2) return "full";
+      if (topRatio < 0.18 && bottomGapRatio > 0.18) return "upper";
+      if (topRatio > 0.18 && bottomGapRatio < 0.18) return "lower";
+      return "full";
+    }
+
+    function computeCrop(image, target, subject, options) {
+      const imageW = image.naturalWidth;
+      const imageH = image.naturalHeight;
+      const ratio = target.width / target.height;
+      const mode = options.mode === "auto" ? inferMode(subject, image) : options.mode;
+      const topGap = mode === "lower" ? 0 : options.topGap;
+      const bottomGap = mode === "upper" ? 0 : options.bottomGap;
+      const protectedTop = Math.max(0, subject.y - topGap);
+      const protectedBottom = Math.min(imageH, subject.y + subject.height + bottomGap);
+      const protectedHeight = Math.max(1, protectedBottom - protectedTop);
+      const protectedWidth = Math.max(1, subject.width);
+      let cropW = Math.max(protectedWidth, protectedHeight * ratio);
+      let cropH = cropW / ratio;
+      if (cropH < protectedHeight) {
+        cropH = protectedHeight;
+        cropW = cropH * ratio;
+      }
+      cropW = Math.min(cropW, imageW);
+      cropH = Math.min(cropH, imageH);
+
+      if (cropW / cropH < ratio) {
+        cropH = cropW / ratio;
+      } else if (cropW / cropH > ratio) {
+        cropW = cropH * ratio;
+      }
+
+      let cropX = subject.x + subject.width / 2 - cropW / 2 + options.offsetX;
+      let cropY;
+      if (mode === "upper") {
+        cropY = protectedTop + options.offsetY;
+      } else if (mode === "lower") {
+        cropY = protectedBottom - cropH + options.offsetY;
+      } else {
+        cropY = (protectedTop + protectedBottom) / 2 - cropH / 2 + options.offsetY;
+      }
+
+      cropX = clamp(cropX, 0, imageW - cropW);
+      cropY = clamp(cropY, 0, imageH - cropH);
+
+      if (cropY > protectedTop) cropY = protectedTop;
+      if (cropY + cropH < protectedBottom) cropY = protectedBottom - cropH;
+      cropY = clamp(cropY, 0, imageH - cropH);
+
+      return {
+        x: cropX,
+        y: cropY,
+        width: cropW,
+        height: cropH,
+        mode,
+        topGap: Math.max(0, subject.y - cropY),
+        bottomGap: Math.max(0, cropY + cropH - subject.y - subject.height)
+      };
+    }
+
+    function drawLogo(ctx, target, logo, settings) {
+      if (!logo) return;
+      const logoW = Math.min(settings.width, target.width);
+      const scale = logoW / logo.naturalWidth;
+      const logoH = logo.naturalHeight * scale;
+      ctx.save();
+      ctx.globalAlpha = settings.opacity;
+      ctx.drawImage(logo, settings.x, settings.y, logoW, logoH);
+      ctx.restore();
+    }
+
+    function renderCrop(image, target, crop, logo, settings, scale = 1) {
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(target.width * scale));
+      canvas.height = Math.max(1, Math.round(target.height * scale));
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(image, crop.x, crop.y, crop.width, crop.height, 0, 0, canvas.width, canvas.height);
+      drawLogo(ctx, { width: canvas.width, height: canvas.height }, logo, {
+        x: settings.x * scale,
+        y: settings.y * scale,
+        width: settings.width * scale,
+        opacity: settings.opacity
+      });
+      return canvas;
+    }
+
+    function canvasToBlob(canvas, type, quality) {
+      return new Promise(resolve => {
+        canvas.toBlob(resolve, type, quality);
+      });
+    }
+
+    function triggerDownload(blob, fileName) {
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+    }
+
+    function resultCard(result) {
+      const card = document.createElement("article");
+      card.className = "image-card";
+      const targetText = `${result.target.width}×${result.target.height}`;
+      card.innerHTML = `
+        <div class="card-head">
+          <div class="file-name"></div>
+          <div class="badge">${targetText}</div>
+        </div>
+        <div class="preview-area"></div>
+        <div class="card-foot">
+          <div class="crop-meta">
+            <span>类型：${modeName(result.crop.mode)}</span>
+            <span>主体框：${result.confidence}</span>
+            <span>头部留白：${Math.round(result.crop.topGap)}px</span>
+            <span>下方留白：${Math.round(result.crop.bottomGap)}px</span>
+          </div>
+          <div class="download-row">
+            <button type="button">下载这张</button>
+          </div>
+        </div>
+      `;
+      const fileName = card.querySelector(".file-name");
+      fileName.textContent = result.sourceName;
+      fileName.title = result.sourceName;
+      const previewArea = card.querySelector(".preview-area");
+      result.previewCanvas.className = "preview";
+      previewArea.appendChild(result.previewCanvas);
+      card.querySelector("button").addEventListener("click", () => downloadResult(result));
+      return card;
+    }
+
+    function modeName(mode) {
+      return { full: "全身", upper: "上半身", lower: "下半身" }[mode] || "自动";
+    }
+
+    async function downloadResult(result) {
+      const type = els.outputType.value;
+      const quality = safeNumber(els.quality, 92) / 100;
+      const canvas = renderCrop(result.image, result.target, result.crop, result.logo, result.logoSettings, 1);
+      try {
+        const blob = await canvasToBlob(canvas, type, quality);
+        if (!blob) throw new Error("图片编码失败，请更换输出格式后重试。");
+        triggerDownload(blob, result.fileName);
+      } finally {
+        canvas.width = 0;
+        canvas.height = 0;
+      }
+    }
+
+    async function processImages() {
+      if (state.files.length === 0) {
+        updateStatus("请先选择图片。");
+        return;
+      }
+      const sizes = selectedSizes();
+      if (sizes.length === 0) {
+        updateStatus("请至少选择一个裁切尺寸。");
+        return;
+      }
+      if (state.files.length * sizes.length > MAX_RESULTS) {
+        updateStatus(`本批次最多生成 ${MAX_RESULTS} 张输出图，请减少原图或尺寸数量。`);
+        return;
+      }
+
+      els.processBtn.disabled = true;
+      state.results.forEach(result => {
+        result.previewCanvas.width = 0;
+        result.previewCanvas.height = 0;
+      });
+      state.results = [];
+      els.resultList.innerHTML = "";
+      updateStatus("正在生成预览...");
+
+      const options = {
+        mode: els.bodyMode.value,
+        tolerance: safeNumber(els.edgeTolerance, 30),
+        topGap: safeNumber(els.topGap, 30),
+        bottomGap: safeNumber(els.bottomGap, 20),
+        offsetX: safeNumber(els.offsetX, 0),
+        offsetY: safeNumber(els.offsetY, 0)
+      };
+      const logoSettings = {
+        x: safeNumber(els.logoX, 24),
+        y: safeNumber(els.logoY, 24),
+        width: safeNumber(els.logoWidth, 120),
+        opacity: clamp(safeNumber(els.logoOpacity, 100), 1, 100) / 100
+      };
+      const type = els.outputType.value;
+      const ext = extensionFor(type);
+
+      try {
+        for (const file of state.files) {
+          const image = await readImageFile(file);
+          const subject = detectSubject(image, options.tolerance);
+          for (const target of sizes) {
+            const crop = computeCrop(image, target, subject, options);
+            const previewScale = Math.min(1, MAX_PREVIEW_WIDTH / target.width, MAX_PREVIEW_HEIGHT / target.height);
+            const previewCanvas = renderCrop(image, target, crop, state.logo, logoSettings, previewScale);
+            const result = {
+              sourceName: file.name,
+              fileName: `${baseName(file.name)}_${target.width}x${target.height}.${ext}`,
+              target,
+              image,
+              logo: state.logo,
+              logoSettings: { ...logoSettings },
+              previewCanvas,
+              crop,
+              confidence: subject.confidence
+            };
+            state.results.push(result);
+            els.resultList.appendChild(resultCard(result));
+          }
+          updateStatus(`已处理 ${state.results.length} 张输出图...`);
+          await new Promise(resolve => setTimeout(resolve, 0));
+        }
+        updateStatus(`生成完成：${state.results.length} 张输出图。`);
+      } catch (error) {
+        updateStatus(error.message || "生成失败，请换一张图片重试。");
+      } finally {
+        els.processBtn.disabled = false;
+      }
+    }
+
+    async function downloadAll() {
+      if (state.results.length === 0) return;
+      els.downloadAllBtn.disabled = true;
+      for (const result of state.results) {
+        await downloadResult(result);
+        await new Promise(resolve => setTimeout(resolve, 150));
+      }
+      els.downloadAllBtn.disabled = false;
+    }
+
+    function handleImageFiles(files) {
+      const images = Array.from(files).filter(file => file.type.startsWith("image/"));
+      const remaining = Math.max(0, MAX_SOURCE_IMAGES - state.files.length);
+      state.files.push(...images.slice(0, remaining));
+      const skipped = Math.max(0, images.length - remaining);
+      updateStatus(skipped ? `已加入 ${state.files.length} 张图片，另有 ${skipped} 张超过上限未加入。` : `已加入 ${state.files.length} 张图片。`);
+    }
+
+    async function handleLogoFile(file) {
+      if (!file || !file.type.startsWith("image/")) return;
+      state.logo = await readImageFile(file);
+      updateStatus("Logo 已添加。");
+    }
+
+    function attachDropzone(zone, callback) {
+      zone.addEventListener("dragover", event => {
+        event.preventDefault();
+        zone.classList.add("dragover");
+      });
+      zone.addEventListener("dragleave", () => zone.classList.remove("dragover"));
+      zone.addEventListener("drop", event => {
+        event.preventDefault();
+        zone.classList.remove("dragover");
+        callback(event.dataTransfer.files);
+      });
+    }
+
+    renderSizes();
+    updateStatus();
+
+    els.sizeGrid.addEventListener("change", event => {
+      const index = Number(event.target.dataset.sizeIndex);
+      if (Number.isInteger(index) && state.sizes[index]) {
+        state.sizes[index].checked = event.target.checked;
+        updateStatus();
+      }
+    });
+
+    els.addSize.addEventListener("click", () => {
+      const width = Math.round(safeNumber(els.customWidth, 0));
+      const height = Math.round(safeNumber(els.customHeight, 0));
+      if (width < 100 || height < 100) {
+        updateStatus("自定义尺寸至少需要 100×100。");
+        return;
+      }
+      const exists = state.sizes.some(size => size.width === width && size.height === height);
+      if (!exists) state.sizes.push({ width, height, checked: true });
+      renderSizes();
+      updateStatus(`已添加 ${width}×${height}。`);
+    });
+
+    els.selectAllSizes.addEventListener("click", () => {
+      state.sizes.forEach(size => size.checked = true);
+      renderSizes();
+      updateStatus("已全选尺寸。");
+    });
+
+    els.selectDefaultSizes.addEventListener("click", () => {
+      state.sizes.forEach(size => {
+        size.checked = defaultSizes.slice(0, 4).some(item => item.width === size.width && item.height === size.height);
+      });
+      renderSizes();
+      updateStatus("已选择常用尺寸。");
+    });
+
+    els.imageInput.addEventListener("change", event => handleImageFiles(event.target.files));
+    els.logoInput.addEventListener("change", event => handleLogoFile(event.target.files[0]));
+    els.clearLogo.addEventListener("click", () => {
+      state.logo = null;
+      els.logoInput.value = "";
+      updateStatus("Logo 已移除。");
+    });
+    els.clearImages.addEventListener("click", () => {
+      state.files = [];
+      state.results.forEach(result => {
+        result.previewCanvas.width = 0;
+        result.previewCanvas.height = 0;
+      });
+      state.results = [];
+      els.imageInput.value = "";
+      els.resultList.innerHTML = "";
+      updateStatus("图片已清空。");
+    });
+    els.processBtn.addEventListener("click", processImages);
+    els.downloadAllBtn.addEventListener("click", downloadAll);
+
+    attachDropzone(els.dropzone, handleImageFiles);
+    attachDropzone(els.logoDropzone, files => handleLogoFile(files[0]));
+  </script>
+</body>
+</html>

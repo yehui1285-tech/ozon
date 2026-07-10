@@ -1,0 +1,285 @@
+﻿# CHANGELOG.md - Ozon 项目续接记录
+
+本文件记录从 2026-07-06 起的新对话续接、改动、验证和交付状态。更早的详细历史见：
+
+- `当前文件怎么用.md`
+- `OZON项目复现交接文档.md`
+
+## 2026-07-10 - P0-P2 全面升级优化
+
+### P0：安全与数据正确性
+
+- Worker 不再把 CORS 默认回退到 `*`，强制配置 `ALLOWED_ORIGIN`。
+- 新增 `SYNC_API_TOKEN` 请求头校验、1MB 请求上限、可选 `RATE_LIMITER`、安全错误返回。
+- 批量补全只接受 HTTPS 的 `ozon.ru` 及其子域名，阻止任意网址抓取。
+- 网页新增同步令牌输入并只保存在当前浏览器；同步和补全均携带令牌。
+- 五项必填字段必须全部完成才能同步；不完整行会列出缺失字段并阻止提交。
+- 网页和扩展运费规则统一到 `shared/freight-rules.json`；扩展升级为 0.5.7。
+
+### P1：可靠性、测试与发布
+
+- Worker 新增 `SYNC_CACHE` KV：请求结果保留 7 天，相同请求 ID 重试不会重复写入。
+- 新增 KV 去重索引和“重建去重索引”操作，索引就绪后不再每次扫描最多 10000 条飞书历史记录。
+- 自动保存增加 1000 行和约 4MB 保护；失败时页面明确提示，不再只写控制台。
+- 同步失败时保留本轮请求 ID，用户重试继续使用同一 ID。
+- 新增运费边界、核价公式/完整行、Worker 安全自动测试。
+- 新增 `tools/verify-project.ps1` 与 `tools/build-release.ps1`，自动构建网页、检查一致性并生成分发 zip。
+- 初始化有效 Git 仓库并新增 `.gitignore`。
+
+### P2：维护性与性能
+
+- 网页源码拆分为 `web-src/index.template.html`、`styles.css`、`pricing-core.js`、`app.js`，构建后仍输出单文件 `feishu.html`。
+- CSV 导出对公式型文本增加安全前缀，降低 Excel 公式注入风险。
+- 页面和 Worker 增加版本标识；Worker 新增 `/health`。
+- 扩展核价页地址更新为 `v=20260710`，减少旧缓存影响。
+- 裁图工具使用低分辨率预览，下载时临时生成高清图；单批限制 50 张原图、120 张输出图，并安全显示文件名。
+
+### 涉及文件
+
+```text
+feishu.html
+web-src\*
+shared\freight-rules.json
+tools\*
+ozon-feishu-sync\site\index.html
+ozon-feishu-sync\worker\worker.js
+ozon-feishu-sync\worker\wrangler.toml.example
+ozon-erp-collector-extension\*
+ozon-erp-collector-extension.zip
+local-crop-tool\index.html
+local-crop-tool.zip
+package.json
+.gitignore
+AGENTS.md
+PROJECT_STATUS.md
+CHANGELOG.md
+当前文件怎么用.md
+OZON项目复现交接文档.md
+```
+
+### 回滚备份
+
+```text
+C:\Users\Microsoft\Documents\Ozon\_备份_20260710_ozon_p0_p2_optimization_before
+```
+
+创建后已自动轮换最旧常规备份，常规 `_备份_...` 仍为 5 个。
+
+### 验证
+
+- 网页构建和根目录/站点文件一致性检查通过。
+- 运费规则同步检查及边界测试通过。
+- 核价公式、数字解析、完整行测试通过。
+- Worker 来源、令牌、内容类型和 Ozon 域名白名单测试通过。
+- 网页、扩展、Worker、裁图工具脚本语法检查通过。
+- 扩展和裁图工具 zip 已重新生成。
+
+### 部署/安装要求
+
+- 需要上传新版 `feishu.html`。
+- 需要在 Cloudflare 配置 `SYNC_API_TOKEN`、`SYNC_CACHE` KV 和严格 `ALLOWED_ORIGIN`，然后部署 Worker。
+- 需要重新加载 Chrome/Edge 扩展 0.5.7。
+- 首次启用 KV 后需要重建去重索引。
+
+## 2026-07-09 - 恢复“最多保留 5 个备份”轮换规则
+
+### 原因
+
+连续网页修改时创建了新备份，但交付前漏掉旧备份轮换，导致常规 `_备份_...` 目录从 5 个增加到 8 个。
+
+### 清理结果
+
+已删除以下 3 个最旧常规备份：
+
+```text
+_备份_20260706_ozon_web_freight_factor_0.5.6_before_fix
+_备份_20260706_ozon_open_feishu_button_before
+_备份_20260704_ozon_feishu_dedupe_before
+```
+
+清理后常规 `_备份_...` 目录恢复为最新 5 个。独立历史归档 `_旧文件备份_20260610` 未删除，也不计入常规备份上限。
+
+### 规则加固
+
+- 已将“创建新备份后立即轮换，常规 `_备份_...` 最多保留最新 5 个”加入 `AGENTS.md` 固定交付规则。
+- 已在 `AGENTS.md` 结束前检查项中增加备份数量检查。
+- 已同步更新 `PROJECT_STATUS.md`。
+
+### 部署/安装要求
+
+- 本次仅清理本地备份并更新文档。
+- 不需要上传 `feishu.html`、安装扩展、重新生成扩展 zip 或部署 Worker。
+
+## 2026-07-09 - 首个 Ozon 商品从第 1 行开始
+
+### 目的
+
+当核价明细只有一个空白首行时，第一件从 Ozon 详情页发送的商品应直接占用第 1 行，而不是新增到第 2 行。
+
+### 原因
+
+旧版页面可能已把示例运费 `37.44` 自动保存到首行，导致该行被判断为“已有核价内容”，首个商品因此新增到第 2 行。
+
+### 改动
+
+- 新增空白/历史占位行识别：完全空白，或仅含历史默认运费 `37.44` 的单行，均可由首个商品复用。
+- 恢复历史自动保存记录时，如果唯一一行只有默认运费 `37.44`，会自动清空该运费。
+- 第一行存在真实绿标、黑标、佣金、成本、SKU、链接等内容时保持原数据，后续商品仍新增到下一行。
+- CSV 导入也复用同一判断，避免历史默认占位行导致导入数据从第 2 行开始。
+- 根目录 `feishu.html` 与 `ozon-feishu-sync\site\index.html` 已保持完全一致。
+
+### 涉及文件
+
+```text
+C:\Users\Microsoft\Documents\Ozon\feishu.html
+C:\Users\Microsoft\Documents\Ozon\ozon-feishu-sync\site\index.html
+C:\Users\Microsoft\Documents\Ozon\PROJECT_STATUS.md
+C:\Users\Microsoft\Documents\Ozon\CHANGELOG.md
+```
+
+### 回滚备份
+
+```text
+C:\Users\Microsoft\Documents\Ozon\_备份_20260709_ozon_web_first_incoming_row_before
+```
+
+### 验证
+
+- 两个网页文件内容一致，内嵌脚本语法检查通过。
+- 分支测试确认：空行和仅含 `37.44` 的历史行可复用；存在手动成本或 SKU 的行不会被覆盖。
+- 分支测试确认首个模拟商品写入后只有 1 行，行号为 1。
+- 已在浏览器模拟保存仅含 `37.44` 的历史首行，重新加载后运费自动清空、已填写行数恢复为 0。
+- 浏览器控制台未发现运行错误。
+
+### 部署/安装要求
+
+- 需要上传新版根目录 `feishu.html` 到 GitHub Pages。
+- 未修改扩展，不需要重新安装扩展或重新生成 `ozon-erp-collector-extension.zip`。
+- 未修改 Worker，不需要部署 Cloudflare Worker。
+
+## 2026-07-09 - 清理核价明细空白首行默认内容
+
+### 目的
+
+打开核价页时，核价明细第一行应保持空白，不显示示例运费及由此产生的默认计算值。
+
+### 原因
+
+页面启动时会执行运费辅助测算，并用示例尺寸、重量自动把最低运费 `37.44` 回填到第一行，进而显示默认系数、贴单费、利润等计算内容。
+
+### 改动
+
+- 页面启动时仍展示运费辅助测算结果，但不再自动回填核价明细。
+- 空白行的真实售价、自动费用、定价、系数、贴单费、平台佣金、利润和利润率保持空白。
+- 用户填写任一核价字段后，计算列继续按原公式正常显示。
+- 修改运费测算参数或点击回填按钮时，仍会正常写入所选行。
+- 页面恢复已保存记录时，不再被启动示例运费覆盖。
+- 根目录 `feishu.html` 与 `ozon-feishu-sync\site\index.html` 已保持完全一致。
+
+### 涉及文件
+
+```text
+C:\Users\Microsoft\Documents\Ozon\feishu.html
+C:\Users\Microsoft\Documents\Ozon\ozon-feishu-sync\site\index.html
+C:\Users\Microsoft\Documents\Ozon\PROJECT_STATUS.md
+C:\Users\Microsoft\Documents\Ozon\CHANGELOG.md
+```
+
+### 回滚备份
+
+```text
+C:\Users\Microsoft\Documents\Ozon\_备份_20260709_ozon_web_blank_first_row_before
+```
+
+### 验证
+
+- 两个网页文件内容一致，内嵌脚本语法检查通过。
+- 已在全新本地浏览器站点打开页面，确认首行国际运费为空，所有计算单元格为空。
+- 已填写绿标、黑标数据并触发重新渲染，确认计算列恢复正常显示。
+- 新增的第二个空白行同样保持空白。
+- 浏览器控制台未发现运行错误。
+
+### 部署/安装要求
+
+- 需要上传新版根目录 `feishu.html` 到 GitHub Pages。
+- 未修改扩展，不需要重新安装扩展或重新生成 `ozon-erp-collector-extension.zip`。
+- 未修改 Worker，不需要部署 Cloudflare Worker。
+
+## 2026-07-09 - 核价明细自动保存与关闭恢复
+
+### 目的
+
+避免误关核价页、刷新页面或浏览器重启后丢失尚未导出或同步的核价记录。
+
+### 改动
+
+- 核价明细编辑、增删、CSV 导入和详情页新增记录后，自动保存到当前浏览器的本地存储。
+- 再次打开同一核价页时自动恢复最多 1000 行，并显示恢复行数和上次保存时间。
+- 页面关闭时立即补保存，降低最后一次编辑尚未写入的风险。
+- 新增“清空全部记录”按钮；只有确认后才清空，并同步覆盖自动保存的旧记录。
+- 根目录 `feishu.html` 与 `ozon-feishu-sync\site\index.html` 已保持完全一致。
+
+### 涉及文件
+
+```text
+C:\Users\Microsoft\Documents\Ozon\feishu.html
+C:\Users\Microsoft\Documents\Ozon\ozon-feishu-sync\site\index.html
+C:\Users\Microsoft\Documents\Ozon\PROJECT_STATUS.md
+C:\Users\Microsoft\Documents\Ozon\CHANGELOG.md
+```
+
+### 回滚备份
+
+```text
+C:\Users\Microsoft\Documents\Ozon\_备份_20260709_ozon_web_autosave_restore_before
+```
+
+备份包含修改前的两个网页文件、`PROJECT_STATUS.md` 和 `CHANGELOG.md`。
+
+### 验证
+
+- 两个网页文件 SHA-256 完全一致。
+- 已对网页内嵌脚本执行语法检查，结果通过。
+- 已在本地真实浏览器填写绿标价格与测试 SKU，关闭页面后重新打开，两个字段均成功恢复。
+- 已验证清空确认框：取消后数据保留，确认后回到一行空白记录并显示“核价记录已清空”。
+- 浏览器控制台未发现运行错误。
+
+### 部署/安装要求
+
+- 需要将新版根目录 `feishu.html` 上传到 GitHub Pages 仓库，线上用户才能使用自动恢复功能。
+- 未修改 Chrome/Edge 扩展，不需要重新安装扩展，也不需要重新生成 `ozon-erp-collector-extension.zip`。
+- 未修改 Worker，不需要重新部署 Cloudflare Worker。
+- 自动保存仅保存在当前浏览器、当前站点下；清理浏览器网站数据、更换浏览器或更换设备不会自动迁移记录，重要批次仍建议导出 CSV 或同步飞书。
+
+## 2026-07-06 - 建立新对话续接系统
+
+### 目的
+
+减少 Codex 对旧聊天上下文和自动压缩的依赖。以后新对话优先读取项目根目录里的固定续接文件，而不是重新扫描全部项目文件。
+
+### 新增文件
+
+```text
+C:\Users\Microsoft\Documents\Ozon\AGENTS.md
+C:\Users\Microsoft\Documents\Ozon\PROJECT_STATUS.md
+C:\Users\Microsoft\Documents\Ozon\CHANGELOG.md
+```
+
+### 内容
+
+- `AGENTS.md`：写给 Codex 的固定项目规则、开工顺序、关键文件、交付检查项。
+- `PROJECT_STATUS.md`：当前项目状态、重要版本、最近已知改动、下一次新对话开场白。
+- `CHANGELOG.md`：从现在开始记录每次续接和改动。
+
+### 验证
+
+- 已确认创建前根目录不存在同名文件，未覆盖旧文件。
+- 已读取项目根目录和现有说明文档，用于整理当前状态。
+
+### 后续使用
+
+新对话中直接说：
+
+```text
+请在 C:\Users\Microsoft\Documents\Ozon 继续 Ozon 项目。先阅读 AGENTS.md 和 PROJECT_STATUS.md，再根据我的新需求执行。不要重新扫描整个项目，除非任务需要。
+```

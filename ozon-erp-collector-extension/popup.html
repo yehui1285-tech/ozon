@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <style>
+    body {
+      width: 300px;
+      margin: 0;
+      padding: 14px;
+      font-family: "Microsoft YaHei", system-ui, sans-serif;
+      color: #172033;
+      background: #f7f9fc;
+    }
+    h1 { margin: 0 0 10px; font-size: 16px; }
+    p { margin: 8px 0; color: #64748b; font-size: 12px; line-height: 1.55; }
+    a { color: #1768d1; }
+    button {
+      width: 100%;
+      height: 34px;
+      margin-top: 8px;
+      border: 0;
+      border-radius: 8px;
+      background: #1768d1;
+      color: #fff;
+      font-weight: 800;
+      cursor: pointer;
+    }
+    button.secondary { background: #334155; }
+    button.stop { background: #b42318; }
+    #status { min-height: 18px; }
+  </style>
+</head>
+<body>
+  <h1>OZON ERP 详情采集</h1>
+  <p>为避免影响毛子ERP登录，插件默认不自动进入 OZON 页面。</p>
+  <button id="activate" type="button">启动当前页采集</button>
+  <button id="autoStart" class="secondary" type="button">开启本轮自动启动</button>
+  <button id="autoStop" class="stop" type="button" hidden>关闭本轮自动启动</button>
+  <p id="status"></p>
+  <p>打开 OZON 商品详情页，等毛子ERP加载后，可手动启动当前页；若已登录稳定，可开启本轮自动启动，后续新商品页会自动出现采集面板。</p>
+  <p>数据会填入：</p>
+  <p>绿标价格、SKU、佣金、国际运费、跟卖链接、备注。</p>
+  <p><a href="https://yehui1285-tech.github.io/ozon/feishu.html?v=20260710" target="_blank">打开核价页</a></p>
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+_备份_*/
+_旧文件备份_*/
+.agents/
+.codex/
+.libtv/
+.libtv-cli/
+*.log
+desktop-check.png

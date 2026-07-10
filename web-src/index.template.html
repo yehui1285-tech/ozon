@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OZON 本地核价表</title>
+  <style>
+__OZON_STYLES__
+</style>
+</head>
+<body>
+  <header>
+    <h1>OZON 本地核价表 <span id="appVersion" class="version-badge"></span></h1>
+    <p class="subtitle">按“最新定价表 agent.xlsx”重做：带 * 的列均为人工填写；真实售价、自动生成、定价、贴单费、平台佣金、利润、利润率自动计算。下方运费测算只是辅助，可一键填入当前行的“国际运费*”。</p>
+  </header>
+
+  <main>
+    <section class="summary" aria-live="polite">
+      <div class="metric"><span>完整核价行数</span><strong id="filledRows">0</strong></div>
+      <div class="metric"><span>达标行数</span><strong id="okRows">0</strong></div>
+      <div class="metric"><span>总利润</span><strong id="totalProfit">¥0.00</strong></div>
+      <div class="metric"><span>平均利润率</span><strong id="avgMargin">-</strong></div>
+    </section>
+
+    <section class="panel">
+      <div class="toolbar">
+        <h2>云端同步</h2>
+        <div class="actions">
+          <button type="button" id="syncCloud" class="primary">同步到飞书多维表格</button>
+          <button type="button" id="openFeishuBase">打开飞书多维表格</button>
+          <button type="button" id="rebuildDedupe">重建去重索引</button>
+        </div>
+      </div>
+      <div class="sync-panel">
+        <div>
+          <label for="submitter">提交人</label>
+          <input id="submitter" type="text" placeholder="填写你的名字">
+        </div>
+        <div>
+          <label for="syncNote">同步备注</label>
+          <input id="syncNote" type="text" placeholder="例如：6月9日第一批">
+        </div>
+        <div>
+          <label for="syncEndpoint">同步接口地址</label>
+          <input id="syncEndpoint" type="url" placeholder="https://你的-worker地址/sync">
+        </div>
+        <div>
+          <label for="syncToken">同步令牌</label>
+          <input id="syncToken" type="password" autocomplete="off" placeholder="仅保存在当前浏览器">
+        </div>
+        <div>
+          <button type="button" id="saveSyncSettings">保存设置</button>
+        </div>
+      </div>
+      <div id="syncStatus" class="sync-status">首次使用请填写提交人、同步接口地址和同步令牌，设置只保存在当前浏览器。</div>
+    </section>
+
+    <section class="panel">
+      <div class="toolbar">
+        <h2>核价明细</h2>
+        <div class="actions">
+          <button type="button" id="addRow">新增行</button>
+          <button type="button" id="deleteBlankRows">删除空白行</button>
+          <button type="button" id="clearAllRows">清空全部记录</button>
+          <button type="button" id="importCsv">导入 CSV</button>
+          <input id="csvFile" type="file" accept=".csv,text/csv" hidden>
+          <button type="button" id="exportCsv" class="primary">导出 CSV</button>
+        </div>
+      </div>
+      <div class="table-wrap pricing-table-wrap">
+        <table id="pricingTable">
+          <thead>
+            <tr>
+              <th class="index-col">序号</th>
+              <th class="index-col">操作</th>
+              <th class="manual compact">绿标价格*</th>
+              <th class="manual compact">黑标价格*</th>
+              <th class="manual compact">佣金*</th>
+              <th>真实售价</th>
+              <th>自动生成<br>不用填</th>
+              <th class="price-title">定价<br>低于真实售价</th>
+              <th class="soft-manual compact">手动<br>定价</th>
+              <th>系数</th>
+              <th class="soft-manual">手动系数</th>
+              <th class="manual compact">采购<br>成本*</th>
+              <th class="manual compact">国际运费*</th>
+              <th>贴单费</th>
+              <th>平台佣金</th>
+              <th>利润</th>
+              <th>利润率 ≥18%</th>
+              <th class="optional">SKU</th>
+              <th class="optional">跟卖链接</th>
+              <th class="optional">货源</th>
+              <th class="optional">备注</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <div class="note">公式：E=(C-B)*2.2+C；F=G*定价；J=3；K=G*佣金；L=G-H-I-J-K-F；M=L/(H+I)。系数默认 0.97；填写手动系数后，“系数”列会同步显示所填值。手动定价为空时使用自动定价，填写后仅覆盖当前行，并联动货值和运费。佣金按百分数填写，例如 8 表示 8%。</div>
+    </section>
+
+    <section class="panel">
+      <div class="toolbar">
+        <h2>国际运费辅助测算</h2>
+        <div class="actions">
+          <button type="button" id="fillFreight" class="primary">填入所选行国际运费*</button>
+        </div>
+      </div>
+      <div class="freight-grid">
+        <div>
+          <div class="form-grid">
+            <div class="field">
+              <label for="activeRow">回填行</label>
+              <select id="activeRow"></select>
+              <div class="note">默认最新一行；修改测算参数后会自动回填。</div>
+            </div>
+            <div class="field">
+              <label for="saleRub">货值 / 卢布</label>
+              <input id="saleRub" type="number" min="0" step="1" value="2000">
+              <div class="note">按所选行“定价低于真实售价”自动填：＜135 为 200，135≤定价≤600 为 2000，＞600 为 20000。</div>
+            </div>
+            <div class="field">
+              <label for="weight">实重 / kg</label>
+              <input id="weight" type="number" min="0" step="0.001" value="0.8">
+            </div>
+            <div class="field">
+              <label for="length">长 / cm</label>
+              <input id="length" type="number" min="0" step="0.1" value="30">
+            </div>
+            <div class="field">
+              <label for="width">宽 / cm</label>
+              <input id="width" type="number" min="0" step="0.1" value="20">
+            </div>
+            <div class="field">
+              <label for="height">高 / cm</label>
+              <input id="height" type="number" min="0" step="0.1" value="8">
+            </div>
+          </div>
+          <div class="field" style="margin-top: 10px;">
+            <label for="ozonText">页面数据识别</label>
+            <textarea id="ozonText" placeholder="例如：长宽高：560 x 480 x 130mm&#10;重量：1800g"></textarea>
+          </div>
+          <div class="actions">
+            <button type="button" id="parseOzon">识别尺寸重量</button>
+            <button type="button" id="clearOzon">清空</button>
+          </div>
+          <div id="parseStatus" class="note"></div>
+        </div>
+        <div>
+          <div id="freightSummary" class="note" style="margin: 0 0 10px;"></div>
+          <div id="routes" class="routes"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+__OZON_APP__
+</script>
+</body>
+</html>

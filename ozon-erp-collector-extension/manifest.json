@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "OZON ERP Detail Sender",
+  "version": "0.5.7",
+  "description": "Read Maozi ERP data on an OZON detail page and send it to the OZON pricing page.",
+  "permissions": ["storage", "activeTab", "tabs", "scripting"],
+  "host_permissions": [
+    "https://www.ozon.ru/*",
+    "https://yehui1285-tech.github.io/ozon/*"
+  ],
+  "action": {
+    "default_title": "OZON ERP Detail Sender",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://yehui1285-tech.github.io/ozon/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
