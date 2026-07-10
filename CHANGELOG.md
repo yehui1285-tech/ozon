@@ -35,6 +35,7 @@ C:\\Users\\Microsoft\\Documents\\Ozon\\_备份_20260710_ozon_worker_schema_check
 - 需将 Cloudflare Secret `FEISHU_BATCH_TABLE_ID` 更正为“同步批次”表 URL 的完整 `table=tbl...` 值后重新验证同步。
 - 更正并部署后，只读检查成功：两个数据表均没有缺失 Worker 所需字段，可进行实际同步验证。
 - 网页端实际同步验证成功：飞书新建 1 条核价明细并返回成功批次 ID，确认网页 → Worker → KV 去重索引 → 飞书多维表格链路可用。
+- Chrome 扩展管理页已确认 `OZON ERP Detail Sender 0.5.7` 已重新加载且处于启用状态。
 
 ### 部署/安装要求
 
