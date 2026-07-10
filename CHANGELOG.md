@@ -5,6 +5,40 @@
 - `当前文件怎么用.md`
 - `OZON项目复现交接文档.md`
 
+## 2026-07-10 - 飞书同步表结构只读检查
+
+### 改动
+
+- 新增受同步令牌保护的 `inspectSyncSchema` Worker 操作：仅查询“同步批次”和“核价明细”两个数据表的字段结构，不新增、修改或删除飞书记录。
+- 通过只读检查避免在同步失败时重复写入“同步批次”记录。
+
+### 涉及文件
+
+```text
+ozon-feishu-sync\\worker\\worker.js
+PROJECT_STATUS.md
+CHANGELOG.md
+```
+
+### 回滚备份
+
+```text
+C:\\Users\\Microsoft\\Documents\\Ozon\\_备份_20260710_ozon_worker_schema_check_before
+```
+
+创建新备份后已按规则删除最旧常规备份，常规 `_备份_...` 目录仍为 5 个。
+
+### 验证
+
+- Worker 语法检查通过并已部署，部署版本为 `f5d2ef59-3e2c-4ae7-a606-2175f91556ce`。
+- “核价明细”表可正常读取；“同步批次”表返回飞书 `1254004 (WrongTableId)`。
+- 需将 Cloudflare Secret `FEISHU_BATCH_TABLE_ID` 更正为“同步批次”表 URL 的完整 `table=tbl...` 值后重新验证同步。
+
+### 部署/安装要求
+
+- 本次 Worker 已部署；更正 Cloudflare Secret 后无需重新部署 Worker。
+- 未修改网页或扩展，不需要重新上传 `feishu.html`、重新安装扩展或重新生成扩展 zip。
+
 ## 2026-07-10 - 上传最新版网页至 GitHub Pages 源仓库
 
 ### 改动

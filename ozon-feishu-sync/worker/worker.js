@@ -221,6 +221,33 @@ async function createDetailRecords(env, token, rows) {
   }
 }
 
+const SYNC_BATCH_FIELD_NAMES = [
+  "批次ID", "同步时间", "提交人", "行数", "达标行数", "总利润", "平均利润率", "备注",
+];
+
+const SYNC_DETAIL_FIELD_NAMES = [
+  "批次ID", "提交人", "同步时间", "序号", "绿标价格", "黑标价格", "佣金", "真实售价",
+  "定价", "采购成本", "国际运费", "贴单费", "平台佣金", "利润", "利润率", "SKU", "货源",
+  "备注", "跟卖链接",
+];
+
+async function listTableFieldNames(env, token, tableId) {
+  const data = await feishuRequest(`/bitable/v1/apps/${env.FEISHU_APP_TOKEN}/tables/${tableId}/fields?page_size=100`, token);
+  return new Set((data.data?.items || []).map((field) => String(field.field_name || "").trim()).filter(Boolean));
+}
+
+async function inspectSyncSchema(env, token) {
+  const [batchNames, detailNames] = await Promise.all([
+    listTableFieldNames(env, token, env.FEISHU_BATCH_TABLE_ID),
+    listTableFieldNames(env, token, env.FEISHU_DETAIL_TABLE_ID),
+  ]);
+  return {
+    action: "inspectSyncSchema",
+    batchMissingFields: SYNC_BATCH_FIELD_NAMES.filter((name) => !batchNames.has(name)),
+    detailMissingFields: SYNC_DETAIL_FIELD_NAMES.filter((name) => !detailNames.has(name)),
+  };
+}
+
 function getTextField(fields, name) {
   const value = fields?.[name];
   if (value == null) return "";
@@ -672,7 +699,7 @@ export default {
       if (cached) return json({ ok: true, cached: true, ...cached }, 200, request, env);
       const token = await getTenantToken(env);
       const action = String(payload.action || "sync");
-      if (!["sync", "enrichLinks", "collectErpProducts", "rebuildDedupeIndex"].includes(action)) {
+      if (!["sync", "enrichLinks", "collectErpProducts", "rebuildDedupeIndex", "inspectSyncSchema"].includes(action)) {
         throw new Error("不支持的操作");
       }
       const data = action === "enrichLinks"
@@ -681,6 +708,8 @@ export default {
           ? await collectErpProducts(env, token, payload)
           : action === "rebuildDedupeIndex"
             ? await rebuildDedupeIndex(env, token)
+            : action === "inspectSyncSchema"
+              ? await inspectSyncSchema(env, token)
             : await syncPricingRows(env, token, payload);
       const result = { action, version: WORKER_VERSION, ...data };
       await cacheResponse(env, requestId, result);
