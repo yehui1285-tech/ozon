@@ -12,6 +12,7 @@
 - 仅在本仓库设置 Git 提交身份为 `yehui1285-tech <yehui1285@gmail.com>`，未修改电脑全局 Git 配置。
 - 远程仓库使用 `main` 分支且与本地项目历史独立；已安全合并历史，网页冲突保留本地 2026-07-10 已验证版 `feishu.html`。
 - 已推送合并提交 `f21d481` 到 GitHub `main`；GitHub 原始文件地址返回 HTTP 200，确认文件已上传。
+- 已访问 GitHub Pages 地址并确认 HTTP 200，页面包含 `2026.07.10` / `20260710` 新版标识，确认线上页面已生效。
 
 ### 涉及文件
 
@@ -23,7 +24,7 @@ CHANGELOG.md
 
 ### 部署/安装要求
 
-- GitHub Pages 可能需要短暂缓存刷新；访问 `https://yehui1285-tech.github.io/ozon/feishu.html?v=20260710` 验证新版页面。
+- 已验证 `https://yehui1285-tech.github.io/ozon/feishu.html?v=20260710` 为新版页面。
 - 未修改 Chrome/Edge 扩展，不需要重新生成 `ozon-erp-collector-extension.zip`。
 - 未重新部署 Worker；当前生产 Worker 与网页同步配置保持不变。
 
