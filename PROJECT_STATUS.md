@@ -5,7 +5,7 @@
 
 ## 一句话状态
 
-Ozon 核价/采集工具已完成 P0-P2 本地升级；Worker 已部署、健康检查通过且飞书去重索引已重建，当前等待上传网页、实际同步验证和重载扩展。
+Ozon 核价/采集工具已完成 P0-P2 本地升级；Worker 已部署、健康检查通过且飞书去重索引已重建，最新版网页已推送 GitHub，当前等待实际同步验证和重载扩展。
 
 ## 当前重要版本
 
@@ -27,6 +27,7 @@ Ozon 核价/采集工具已完成 P0-P2 本地升级；Worker 已部署、健康
 
 ## 最近已知改动
 
+- 2026-07-10：最新版 `feishu.html` 已合并远程 GitHub 历史并推送到 `main`；GitHub 原始文件地址返回 HTTP 200，等待 GitHub Pages 缓存刷新后即可在线使用。
 - 2026-07-10：Worker 已部署到生产环境，`/health` 已确认版本 `2026.07.10-p0p2`。重建去重索引请求被缺失的飞书配置项拦截：`FEISHU_APP_ID`、`FEISHU_APP_TOKEN`、`FEISHU_BATCH_TABLE_ID`、`FEISHU_DETAIL_TABLE_ID`。
 - 2026-07-10：补齐上述飞书变量并部署后，Worker 已不再报“缺少环境变量”，但重建索引仍返回“飞书服务调用失败”。需在 Cloudflare Worker 日志中查看飞书的具体错误码，重点核对 App ID/App Secret 是否配对，以及多维表格 Token、两个数据表 ID 与应用权限是否正确。
 - 2026-07-10：Cloudflare 的实时 Tail 日志需要付费计划，未启用。Worker 已改为在受同步令牌保护的失败响应中仅返回飞书 HTTP 状态与错误码，不返回原始响应或密钥；修正 `FEISHU_DETAIL_TABLE_ID` 后去重索引重建成功，已扫描 160 条明细并写入 317 个去重键。
@@ -52,7 +53,7 @@ Ozon 核价/采集工具已完成 P0-P2 本地升级；Worker 已部署、健康
 
 - 根目录 `feishu.html` 是网页上传 GitHub Pages 的目标文件。
 - `ozon-feishu-sync\site\index.html` 是网页源码侧文件；网页修改时通常需要与 `feishu.html` 保持一致。
-- 2026-07-10 本地两个网页文件已由 `web-src` 构建并同步；线上新功能需要上传新版 `feishu.html` 后才会生效。
+- 2026-07-10 本地两个网页文件已由 `web-src` 构建并同步；最新版 `feishu.html` 已推送至 GitHub `main`，线上 GitHub Pages 可能需要短暂缓存刷新。
 - `ozon-erp-collector-extension.zip` 是扩展分发包；扩展修改后必须重新生成。
 - `ozon-feishu-sync\\worker\\wrangler.toml` 是实际部署配置，包含公开来源限制和 `SYNC_CACHE` 的绑定 ID，不含任何密钥。
 - 常规 `_备份_...` 目录按日期、模块、版本命名，最多只保留最新 5 个；`_旧文件备份_...` 独立归档不计入。
@@ -65,7 +66,6 @@ Ozon 核价/采集工具已完成 P0-P2 本地升级；Worker 已部署、健康
 
 ## 当前待办
 
-- 上传根目录新版 `feishu.html` 到 GitHub Pages。
 - 在网页填写已配置的同步令牌并验证一次飞书同步。
 - 在 Chrome/Edge 扩展管理页重新加载 0.5.7；分发给其他电脑时使用已重新生成的 `ozon-erp-collector-extension.zip`。
 
