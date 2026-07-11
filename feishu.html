@@ -1141,6 +1141,18 @@ const routes = [
       };
     }
 
+    function todaySyncNote() {
+      const now = new Date();
+      const month = String(now.getMonth() + 1).padStart(2, "0");
+      const day = String(now.getDate()).padStart(2, "0");
+      return `${now.getFullYear()}-${month}-${day}`;
+    }
+
+    function ensureSyncNote() {
+      const note = $("syncNote");
+      if (!note.value.trim()) note.value = todaySyncNote();
+    }
+
     function saveSyncSettings() {
       localStorage.setItem("ozon_sync_submitter", $("submitter").value.trim());
       localStorage.setItem("ozon_sync_endpoint", $("syncEndpoint").value.trim());
@@ -1153,6 +1165,7 @@ const routes = [
       $("submitter").value = localStorage.getItem("ozon_sync_submitter") || "";
       $("syncEndpoint").value = localStorage.getItem("ozon_sync_endpoint") || "";
       $("syncToken").value = localStorage.getItem("ozon_sync_token") || "";
+      ensureSyncNote();
     }
 
     function openFeishuBase() {
@@ -1163,6 +1176,7 @@ const routes = [
       const button = $("syncCloud");
       const pendingKey = "ozon_pending_sync_request_id";
       try {
+        ensureSyncNote();
         saveSyncSettings();
         const requestId = sessionStorage.getItem(pendingKey) || newRequestId();
         sessionStorage.setItem(pendingKey, requestId);

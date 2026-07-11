@@ -5,6 +5,41 @@
 - `当前文件怎么用.md`
 - `OZON项目复现交接文档.md`
 
+## 2026-07-11 - 同步备注默认当天日期
+
+### 改动
+
+- 核价页加载时，如“同步备注”为空，自动填写当前浏览器本地日期，格式为 `YYYY-MM-DD`。
+- 用户手动填写的备注不会被覆盖；若备注被清空，点击同步前会自动补回当天日期。
+
+### 涉及文件
+
+```text
+web-src\\app.js
+feishu.html
+ozon-feishu-sync\\site\\index.html
+PROJECT_STATUS.md
+CHANGELOG.md
+```
+
+### 回滚备份
+
+```text
+C:\\Users\\Microsoft\\Documents\\Ozon\\_备份_20260711_ozon_sync_note_today_before
+```
+
+创建新备份后已按规则轮换，常规 `_备份_...` 目录保持 5 个。
+
+### 验证
+
+- `web-src/app.js` 语法检查、发布构建、网页构建检查、运费规则边界测试、核价公式/完整行测试、Worker 安全测试和脚本语法检查均通过。
+- 根目录 `feishu.html` 与 `ozon-feishu-sync\\site\\index.html` 已包含相同的默认日期逻辑。
+
+### 部署/安装要求
+
+- 需要推送新版根目录 `feishu.html` 到 GitHub Pages。
+- 未修改扩展或 Worker，不需要重新加载扩展或部署 Worker。
+
 ## 2026-07-11 - 核价页顶部说明单行优化
 
 ### 改动
