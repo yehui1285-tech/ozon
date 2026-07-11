@@ -5,6 +5,7 @@ const statusEl = document.getElementById("status");
 
 function setStatus(message, ok = true) {
   statusEl.textContent = message;
+  statusEl.dataset.state = ok ? "success" : "error";
   statusEl.style.color = ok ? "#067647" : "#b42318";
 }
 

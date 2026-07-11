@@ -5,6 +5,41 @@
 - `当前文件怎么用.md`
 - `OZON项目复现交接文档.md`
 
+## 2026-07-11 - 扩展轻量蓝紫工作台视觉改版
+
+### 改动
+
+- 弹窗改为浅雾背景、半透明卡片、柔和蓝紫主操作与折叠式使用提示，强化“启动当前页采集”和本轮自动启动状态。
+- OZON 商品页采集面板统一为蓝紫标题栏、轻量表单卡片、结果提示区与低干扰日志区。
+- 最近采集日志默认由 8 条调整为 3 条，完整日志仍保存在浏览器本地。
+- 本次不修改采集、核价发送、拖动、折叠、去重提醒或自动启动逻辑。
+
+### 涉及文件
+
+```text
+ozon-erp-collector-extension\\manifest.json
+ozon-erp-collector-extension\\popup.html
+ozon-erp-collector-extension\\popup.js
+ozon-erp-collector-extension\\content.js
+ozon-erp-collector-extension\\使用说明.md
+PROJECT_STATUS.md
+CHANGELOG.md
+```
+
+### 回滚备份
+
+```text
+C:\\Users\\Microsoft\\Documents\\Ozon\\_备份_20260711_ozon_extension_light_ui_before
+```
+
+创建新备份后已按规则轮换，常规 `_备份_...` 目录保持 5 个。
+
+### 部署/安装要求
+
+- 需要重新生成 `ozon-erp-collector-extension.zip`。
+- 需要在 Chrome/Edge 扩展管理页重新加载扩展 0.5.8。
+- 未修改网页或 Worker，不需要上传 `feishu.html` 或重新部署 Cloudflare Worker。
+
 ## 2026-07-10 - 飞书同步表结构只读检查
 
 ### 改动

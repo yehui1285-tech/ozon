@@ -268,9 +268,10 @@ function renderCollectionLog(entries) {
     container.textContent = "暂无记录";
     return;
   }
-  entries.slice(0, 8).forEach((entry) => {
+  entries.slice(0, 3).forEach((entry) => {
     const row = document.createElement("div");
-    row.style.cssText = `padding:5px 0;border-top:1px solid #e2e8f0;color:${entry.ok ? "#067647" : "#b42318"};`;
+    row.className = "ozon-log-row";
+    row.style.color = entry.ok ? "#237a5b" : "#b44b61";
     row.textContent = `${entry.time} ${entry.message}`;
     container.appendChild(row);
   });
@@ -527,8 +528,102 @@ function setPanelCollapsed(panel, collapsed) {
   }
 }
 
+function ensurePanelStyles() {
+  const styleId = "ozon-erp-detail-panel-style";
+  if (document.getElementById(styleId)) return;
+  const style = document.createElement("style");
+  style.id = styleId;
+  style.textContent = `
+    #${PANEL_ID} {
+      box-sizing: border-box !important;
+      width: 336px !important;
+      padding: 14px !important;
+      border: 1px solid rgba(255,255,255,.92) !important;
+      border-radius: 16px !important;
+      background: linear-gradient(145deg, rgba(250,252,255,.97), rgba(240,243,252,.95)) !important;
+      box-shadow: 0 18px 42px rgba(37,52,104,.18) !important;
+      color: #1d2942 !important;
+      backdrop-filter: blur(14px);
+    }
+    #${PANEL_ID} * { box-sizing: border-box; }
+    #${PANEL_ID} #ozon-panel-drag-handle {
+      margin: -5px -5px 11px !important;
+      padding: 10px !important;
+      border-radius: 12px !important;
+      color: #fff !important;
+      background: linear-gradient(135deg, #235aeb, #7c78dc) !important;
+      box-shadow: 0 8px 18px rgba(67,78,188,.22);
+    }
+    #${PANEL_ID} #ozon-panel-drag-handle small { color: rgba(255,255,255,.76) !important; }
+    #${PANEL_ID} #ozon-panel-drag-handle button {
+      border-color: rgba(255,255,255,.3) !important;
+      border-radius: 8px !important;
+      background: rgba(255,255,255,.15) !important;
+      color: #fff !important;
+    }
+    #${PANEL_ID} #ozon-panel-body { padding-right: 3px !important; scrollbar-width: thin; }
+    #${PANEL_ID} button { font-family: inherit; transition: transform .16s ease, box-shadow .16s ease, filter .16s ease; }
+    #${PANEL_ID} button:hover { filter: brightness(1.03); transform: translateY(-1px); }
+    #${PANEL_ID} #ozon-check-detail {
+      height: 36px !important;
+      border-color: #d9e1fb !important;
+      border-radius: 10px !important;
+      color: #3554bc !important;
+      background: rgba(255,255,255,.78) !important;
+      box-shadow: 0 4px 12px rgba(67,84,171,.07);
+    }
+    #${PANEL_ID} #ozon-editor {
+      margin-top: 10px !important;
+      padding: 11px !important;
+      border-color: rgba(221,227,248,.9) !important;
+      border-radius: 12px !important;
+      background: rgba(255,255,255,.72) !important;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.9);
+    }
+    #${PANEL_ID} #ozon-editor > div:first-child { color: #29375b; font-size: 12px; }
+    #${PANEL_ID} label { color: #65718d; font-size: 11px; font-weight: 700; }
+    #${PANEL_ID} input {
+      border-color: #dbe2f2 !important;
+      border-radius: 7px !important;
+      color: #243250 !important;
+      background: rgba(250,252,255,.95) !important;
+      outline: none;
+      transition: border-color .16s ease, box-shadow .16s ease;
+    }
+    #${PANEL_ID} input:focus { border-color: #7d86e8 !important; box-shadow: 0 0 0 3px rgba(112,122,224,.14); }
+    #${PANEL_ID} #ozon-edit-black { border-color: #d9cdf9 !important; background: #faf8ff !important; }
+    #${PANEL_ID} #ozon-edit-commission,
+    #${PANEL_ID} #ozon-edit-freight { color: #5e6790 !important; background: #eef1fb !important; }
+    #${PANEL_ID} #ozon-edit-route { padding: 7px 8px; border-radius: 8px; background: #f1f4fb; color: #687491 !important; }
+    #${PANEL_ID} #ozon-send-pricing {
+      height: 38px !important;
+      border-radius: 10px !important;
+      background: linear-gradient(135deg, #235aeb, #756fda) !important;
+      box-shadow: 0 8px 16px rgba(60,78,196,.22) !important;
+    }
+    #${PANEL_ID} #ozon-detail-status {
+      min-height: 36px;
+      padding: 8px 9px;
+      border-radius: 9px;
+      background: rgba(238,241,251,.82);
+      font-size: 11px;
+    }
+    #${PANEL_ID} #ozon-collection-log {
+      padding: 2px 8px;
+      border: 1px solid #e5e9f5;
+      border-radius: 9px;
+      background: rgba(255,255,255,.6);
+      color: #71809c !important;
+    }
+    #${PANEL_ID} .ozon-log-row { padding: 7px 0; border-top: 1px solid #edf0f8; font-size: 11px; }
+    #${PANEL_ID} #ozon-clear-log { border-color: #dce2f1 !important; border-radius: 7px !important; background: #fff !important; color: #69758f !important; }
+  `;
+  document.head.appendChild(style);
+}
+
 function installPanel() {
   if (document.getElementById(PANEL_ID)) return;
+  ensurePanelStyles();
   const panel = document.createElement("div");
   panel.id = PANEL_ID;
   panel.style.cssText = [

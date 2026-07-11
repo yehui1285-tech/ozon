@@ -5,11 +5,11 @@
 
 ## 一句话状态
 
-Ozon 核价/采集工具已完成 P0-P2 本地升级并完成线上交付验证：Worker 已部署、健康检查通过、飞书去重索引已重建且实际同步验证成功，最新版网页已上线，Chrome 扩展 0.5.7 已重载并启用。
+Ozon 核价/采集工具已完成 P0-P2 本地升级并完成线上交付验证：Worker 已部署、健康检查通过、飞书去重索引已重建且实际同步验证成功，最新版网页已上线；正在进行 Chrome 扩展 0.5.8 轻量蓝紫工作台视觉改版。
 
 ## 当前重要版本
 
-- Chrome/Edge 扩展：0.5.7
+- Chrome/Edge 扩展：0.5.8（视觉改版待重新加载验证）
 - 在线页面入口：`https://yehui1285-tech.github.io/ozon/feishu.html?v=20260710`
 - GitHub 仓库：`https://github.com/yehui1285-tech/ozon`
 - 飞书同步 Worker：`https://ozon-feishu-sync.yehui1285.workers.dev/`
@@ -27,6 +27,7 @@ Ozon 核价/采集工具已完成 P0-P2 本地升级并完成线上交付验证�
 
 ## 最近已知改动
 
+- 2026-07-11：扩展弹窗与 Ozon 商品页采集面板升级为浅色、蓝紫点缀的轻量工作台；统一状态、表单、主操作与日志视觉层级，功能逻辑保持不变。
 - 2026-07-10：最新版 `feishu.html` 已合并远程 GitHub 历史并推送到 `main`；GitHub 原始文件地址和 GitHub Pages 地址均返回 HTTP 200，线上页面已确认包含新版版本标识。
 - 2026-07-10：Worker 已部署到生产环境，`/health` 已确认版本 `2026.07.10-p0p2`。重建去重索引请求被缺失的飞书配置项拦截：`FEISHU_APP_ID`、`FEISHU_APP_TOKEN`、`FEISHU_BATCH_TABLE_ID`、`FEISHU_DETAIL_TABLE_ID`。
 - 2026-07-10：补齐上述飞书变量并部署后，Worker 已不再报“缺少环境变量”，但重建索引仍返回“飞书服务调用失败”。需在 Cloudflare Worker 日志中查看飞书的具体错误码，重点核对 App ID/App Secret 是否配对，以及多维表格 Token、两个数据表 ID 与应用权限是否正确。
@@ -69,7 +70,7 @@ Ozon 核价/采集工具已完成 P0-P2 本地升级并完成线上交付验证�
 
 ## 当前待办
 
-- 当前无阻塞待办；分发给其他电脑时使用已重新生成的 `ozon-erp-collector-extension.zip`，并在目标浏览器加载后确认版本为 0.5.7。
+- 运行发布构建、重新生成 `ozon-erp-collector-extension.zip`，然后在 Chrome/Edge 扩展管理页重新加载 0.5.8 并确认采集面板视觉与功能正常。
 
 ## 高风险注意
 

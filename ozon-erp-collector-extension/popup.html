@@ -3,44 +3,115 @@
 <head>
   <meta charset="utf-8">
   <style>
+    :root {
+      color: #15213a;
+      background: #f4f6fb;
+      font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; }
     body {
-      width: 300px;
+      width: 332px;
       margin: 0;
       padding: 14px;
-      font-family: "Microsoft YaHei", system-ui, sans-serif;
-      color: #172033;
-      background: #f7f9fc;
+      background:
+        radial-gradient(circle at 100% 0, rgba(126, 123, 227, .18), transparent 34%),
+        linear-gradient(145deg, #f8fbff 0%, #f2f4fb 100%);
     }
-    h1 { margin: 0 0 10px; font-size: 16px; }
-    p { margin: 8px 0; color: #64748b; font-size: 12px; line-height: 1.55; }
-    a { color: #1768d1; }
+    .app-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 4px 2px 13px;
+    }
+    .app-mark {
+      display: grid;
+      width: 34px;
+      height: 34px;
+      place-items: center;
+      border-radius: 12px;
+      color: #fff;
+      background: linear-gradient(135deg, #225aeb, #8179dc);
+      box-shadow: 0 8px 18px rgba(72, 87, 192, .25);
+      font-weight: 900;
+      letter-spacing: -.04em;
+    }
+    h1 { margin: 0; font-size: 15px; letter-spacing: .01em; }
+    .version { margin-left: 5px; color: #717b9f; font-size: 11px; font-weight: 600; }
+    .subtitle { margin: 3px 0 0; color: #69758e; font-size: 11px; line-height: 1.4; }
+    .surface {
+      padding: 12px;
+      border: 1px solid rgba(255, 255, 255, .9);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, .74);
+      box-shadow: 0 10px 24px rgba(44, 57, 105, .08);
+      backdrop-filter: blur(12px);
+    }
+    .eyebrow { margin: 0 0 5px; color: #6b71b5; font-size: 11px; font-weight: 800; letter-spacing: .08em; }
+    .surface-title { margin: 0; color: #1a2740; font-size: 13px; font-weight: 800; }
+    .surface-copy { margin: 5px 0 11px; color: #6d7891; font-size: 11px; line-height: 1.5; }
     button {
       width: 100%;
-      height: 34px;
-      margin-top: 8px;
-      border: 0;
-      border-radius: 8px;
-      background: #1768d1;
+      min-height: 36px;
+      border: 1px solid transparent;
+      border-radius: 10px;
       color: #fff;
+      background: linear-gradient(135deg, #225aeb, #736fda);
+      box-shadow: 0 7px 14px rgba(50, 83, 207, .2);
+      font: inherit;
+      font-size: 12px;
       font-weight: 800;
       cursor: pointer;
+      transition: transform .16s ease, box-shadow .16s ease, filter .16s ease;
     }
-    button.secondary { background: #334155; }
-    button.stop { background: #b42318; }
-    #status { min-height: 18px; }
+    button:hover { filter: brightness(1.04); transform: translateY(-1px); box-shadow: 0 9px 18px rgba(50, 83, 207, .25); }
+    button:active { transform: translateY(0); }
+    .control-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+    button.secondary { color: #445274; background: #eef1fb; border-color: #e0e5f7; box-shadow: none; }
+    button.stop { color: #a53b51; background: #fff0f2; border-color: #ffd9e0; box-shadow: none; }
+    #status {
+      min-height: 18px;
+      margin: 10px 2px 0;
+      padding: 8px 9px;
+      border-radius: 9px;
+      background: rgba(238, 241, 251, .78);
+      color: #59708f;
+      font-size: 11px;
+      line-height: 1.45;
+    }
+    #status:empty { display: none; }
+    .guide { margin-top: 10px; }
+    summary { color: #55627e; font-size: 11px; font-weight: 700; cursor: pointer; }
+    .guide p { margin: 7px 1px 0; color: #758099; font-size: 11px; line-height: 1.55; }
+    .footer-link { display: block; margin: 12px 2px 0; color: #445ed0; font-size: 11px; font-weight: 700; text-decoration: none; }
+    .footer-link:hover { color: #225aeb; }
   </style>
 </head>
 <body>
-  <h1>OZON ERP 详情采集</h1>
-  <p>为避免影响毛子ERP登录，插件默认不自动进入 OZON 页面。</p>
-  <button id="activate" type="button">启动当前页采集</button>
-  <button id="autoStart" class="secondary" type="button">开启本轮自动启动</button>
-  <button id="autoStop" class="stop" type="button" hidden>关闭本轮自动启动</button>
-  <p id="status"></p>
-  <p>打开 OZON 商品详情页，等毛子ERP加载后，可手动启动当前页；若已登录稳定，可开启本轮自动启动，后续新商品页会自动出现采集面板。</p>
-  <p>数据会填入：</p>
-  <p>绿标价格、SKU、佣金、国际运费、跟卖链接、备注。</p>
-  <p><a href="https://yehui1285-tech.github.io/ozon/feishu.html?v=20260710" target="_blank">打开核价页</a></p>
+  <header class="app-header">
+    <div class="app-mark">OZ</div>
+    <div>
+      <h1>OZON 采集助手 <span class="version">v0.5.8</span></h1>
+      <p class="subtitle">采集商品详情并发送至核价页</p>
+    </div>
+  </header>
+
+  <main class="surface">
+    <p class="eyebrow">当前工作区</p>
+    <p class="surface-title">从当前 OZON 页面开始</p>
+    <p class="surface-copy">Maozi ERP 加载完成后启动采集面板，确认数据后再发送。</p>
+    <button id="activate" type="button">启动当前页采集</button>
+    <div class="control-grid">
+      <button id="autoStart" class="secondary" type="button">开启本轮自动启动</button>
+      <button id="autoStop" class="stop" type="button" hidden>关闭自动启动</button>
+    </div>
+    <p id="status" aria-live="polite"></p>
+  </main>
+
+  <details class="guide">
+    <summary>使用提示</summary>
+    <p>手动启动只作用于当前页面；开启自动启动后，本轮新打开的 OZON 商品页会自动显示采集面板。</p>
+  </details>
+  <a class="footer-link" href="https://yehui1285-tech.github.io/ozon/feishu.html?v=20260710" target="_blank">打开核价页 ↗</a>
   <script src="popup.js"></script>
 </body>
 </html>
