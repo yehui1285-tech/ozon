@@ -5,6 +5,49 @@
 - `当前文件怎么用.md`
 - `OZON项目复现交接文档.md`
 
+## 2026-07-11 - 核价页轻量蓝紫工作台视觉改版
+
+### 改动
+
+- 核价页沿用扩展 0.5.8 的浅色、蓝紫点缀与半透明卡片风格，重做页头、指标卡、同步区、核价表、运费测算表单和线路卡片的视觉层级。
+- 新版强化主操作、成功/警告/失败状态、输入焦点和移动端布局；保留现有字段、按钮 ID、计算、自动保存、CSV、飞书同步与运费规则逻辑。
+- 网页版本标识更新为 `2026.07.11-ui`，扩展升级为 0.5.9，并将打开核价页的地址参数更新为 `v=20260711`，降低旧缓存影响。
+
+### 涉及文件
+
+```text
+web-src\\styles.css
+web-src\\app.js
+feishu.html
+ozon-feishu-sync\\site\\index.html
+ozon-erp-collector-extension\\background.js
+ozon-erp-collector-extension\\manifest.json
+ozon-erp-collector-extension\\popup.html
+ozon-erp-collector-extension\\使用说明.md
+PROJECT_STATUS.md
+CHANGELOG.md
+```
+
+### 回滚备份
+
+```text
+C:\\Users\\Microsoft\\Documents\\Ozon\\_备份_20260711_ozon_web_light_workspace_before
+```
+
+创建新备份后已按规则轮换，常规 `_备份_...` 目录保持 5 个。
+
+### 验证
+
+- 已执行网页构建、运费规则同步检查、运费边界测试、核价公式/完整行测试、Worker 安全测试与脚本语法检查，全部通过。
+- 根目录 `feishu.html` 与 `ozon-feishu-sync\\site\\index.html` 已由同一网页源码构建，版本标识为 `2026.07.11-ui`。
+- 当前环境禁止在浏览器自动化中打开本地 `file:` 页面，尚未完成真实浏览器视觉验收。
+
+### 部署/安装要求
+
+- 需要上传新版根目录 `feishu.html` 到 GitHub Pages，并访问 `https://yehui1285-tech.github.io/ozon/feishu.html?v=20260711` 做视觉验收。
+- 需要重新生成 `ozon-erp-collector-extension.zip`，并在 Chrome/Edge 重新加载 0.5.9。
+- 未修改 Worker，不需要重新部署 Cloudflare Worker。
+
 ## 2026-07-11 - 扩展轻量蓝紫工作台视觉改版
 
 ### 改动

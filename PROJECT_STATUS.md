@@ -5,12 +5,12 @@
 
 ## 一句话状态
 
-Ozon 核价/采集工具已完成 P0-P2 本地升级并完成线上交付验证：Worker 已部署、健康检查通过、飞书去重索引已重建且实际同步验证成功，最新版网页已上线，Chrome 扩展 0.5.8 轻量蓝紫工作台视觉改版已在真实 Ozon 商品页验证通过。
+Ozon 核价/采集工具已完成 P0-P2 本地升级并完成线上交付验证：Worker 已部署、健康检查通过、飞书去重索引已重建且实际同步验证成功；核价页正在升级为浅色蓝紫轻量工作台，等待推送线上并做真实页面视觉验收。
 
 ## 当前重要版本
 
-- Chrome/Edge 扩展：0.5.8（轻量蓝紫工作台，已重新加载并验证）
-- 在线页面入口：`https://yehui1285-tech.github.io/ozon/feishu.html?v=20260710`
+- Chrome/Edge 扩展：0.5.9（核价页新版入口待重新加载验证）
+- 在线页面入口：`https://yehui1285-tech.github.io/ozon/feishu.html?v=20260711`
 - GitHub 仓库：`https://github.com/yehui1285-tech/ozon`
 - 飞书同步 Worker：`https://ozon-feishu-sync.yehui1285.workers.dev/`
 - Ozon 详情采集 Worker：`https://ozon-erp-collector.yehui1285.workers.dev/`
@@ -27,6 +27,8 @@ Ozon 核价/采集工具已完成 P0-P2 本地升级并完成线上交付验证�
 
 ## 最近已知改动
 
+- 2026-07-11：核价页升级为与扩展一致的浅色、蓝紫点缀轻量工作台：重做页头、指标卡、同步区、表格、运费表单和线路卡片的视觉层级；计算、自动保存、CSV 与飞书同步逻辑不变。
+- 2026-07-11：扩展升级为 0.5.9，“打开核价页”和商品页发送流程改用 `v=20260711`，降低旧页面缓存影响。
 - 2026-07-11：扩展弹窗与 Ozon 商品页采集面板升级为浅色、蓝紫点缀的轻量工作台；统一状态、表单、主操作与日志视觉层级，功能逻辑保持不变。
 - 2026-07-11：新打开的真实 Ozon 商品页已确认显示扩展 v0.5.8；采集面板、编辑区、状态提示、最近日志与“检查本页数据”均正常。
 - 2026-07-10：最新版 `feishu.html` 已合并远程 GitHub 历史并推送到 `main`；GitHub 原始文件地址和 GitHub Pages 地址均返回 HTTP 200，线上页面已确认包含新版版本标识。
@@ -58,7 +60,7 @@ Ozon 核价/采集工具已完成 P0-P2 本地升级并完成线上交付验证�
 
 - 根目录 `feishu.html` 是网页上传 GitHub Pages 的目标文件。
 - `ozon-feishu-sync\site\index.html` 是网页源码侧文件；网页修改时通常需要与 `feishu.html` 保持一致。
-- 2026-07-10 本地两个网页文件已由 `web-src` 构建并同步；最新版 `feishu.html` 已推送至 GitHub `main`，线上 GitHub Pages 已验证生效。
+- 2026-07-11 本地两个网页文件已由 `web-src` 构建并同步为新版轻量工作台；待推送 `feishu.html` 至 GitHub `main` 后验证线上效果。
 - `ozon-erp-collector-extension.zip` 是扩展分发包；扩展修改后必须重新生成。
 - `ozon-feishu-sync\\worker\\wrangler.toml` 是实际部署配置，包含公开来源限制和 `SYNC_CACHE` 的绑定 ID，不含任何密钥。
 - 常规 `_备份_...` 目录按日期、模块、版本命名，最多只保留最新 5 个；`_旧文件备份_...` 独立归档不计入。
@@ -71,7 +73,8 @@ Ozon 核价/采集工具已完成 P0-P2 本地升级并完成线上交付验证�
 
 ## 当前待办
 
-- 当前无阻塞待办；分发给其他电脑时使用已重新生成的 `ozon-erp-collector-extension.zip`，并在目标浏览器加载后确认版本为 0.5.8。
+- 推送新版 `feishu.html` 至 GitHub Pages 并在真实浏览器验收核价页视觉与功能。
+- 重新生成 `ozon-erp-collector-extension.zip`，在 Chrome/Edge 重新加载扩展 0.5.9，确认打开的是 `v=20260711` 核价页。
 
 ## 高风险注意
 

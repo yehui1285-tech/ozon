@@ -1,4 +1,4 @@
-const TARGET_URL = "https://yehui1285-tech.github.io/ozon/feishu.html?v=20260710";
+const TARGET_URL = "https://yehui1285-tech.github.io/ozon/feishu.html?v=20260711";
 const TARGET_MATCH = "https://yehui1285-tech.github.io/ozon/feishu.html*";
 const AUTO_INJECT_KEY = "ozonAutoInjectEnabled";
 const AUTO_INJECT_DELAY_MS = 1000;

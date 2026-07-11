@@ -11,7 +11,7 @@ const routes = [
     const FEISHU_DETAIL_TABLE_URL = "https://www.feishu.cn/base/MnB1bj0OqaRYDAsHOQ5cW0SZnDe?table=tblrQj7Ux7DH6poQ";
     const PRICING_DRAFT_KEY = "ozon_pricing_draft_v1";
     const PRICING_DRAFT_VERSION = 1;
-    const APP_VERSION = "2026.07.10-p0p2";
+    const APP_VERSION = "2026.07.11-ui";
     const MAX_DRAFT_ROWS = 1000;
     const MAX_DRAFT_CHARS = 4_000_000;
     const PRICING_ROW_KEYS = ["green", "black", "commission", "factorOverride", "quoteOverride", "cost", "freight", "sku", "link", "source", "note"];
