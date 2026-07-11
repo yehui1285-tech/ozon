@@ -41,6 +41,7 @@ C:\\Users\\Microsoft\\Documents\\Ozon\\_备份_20260711_ozon_web_light_workspace
 - 已执行网页构建、运费规则同步检查、运费边界测试、核价公式/完整行测试、Worker 安全测试与脚本语法检查，全部通过。
 - 根目录 `feishu.html` 与 `ozon-feishu-sync\\site\\index.html` 已由同一网页源码构建，版本标识为 `2026.07.11-ui`。
 - 当前环境禁止在浏览器自动化中打开本地 `file:` 页面，尚未完成真实浏览器视觉验收。
+- 已推送 GitHub `main` 提交 `0b74849`，公开原始文件确认包含 `2026.07.11-ui`；GitHub Pages 检查时仍返回旧缓存版本，等待平台刷新后再验收。
 
 ### 部署/安装要求
 

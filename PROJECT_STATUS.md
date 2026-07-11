@@ -5,7 +5,7 @@
 
 ## 一句话状态
 
-Ozon 核价/采集工具已完成 P0-P2 本地升级并完成线上交付验证：Worker 已部署、健康检查通过、飞书去重索引已重建且实际同步验证成功；核价页正在升级为浅色蓝紫轻量工作台，等待推送线上并做真实页面视觉验收。
+Ozon 核价/采集工具已完成 P0-P2 本地升级并完成线上交付验证：Worker 已部署、健康检查通过、飞书去重索引已重建且实际同步验证成功；核价页浅色蓝紫轻量工作台已推送 GitHub，等待 GitHub Pages 刷新并做真实页面视觉验收。
 
 ## 当前重要版本
 
@@ -60,7 +60,7 @@ Ozon 核价/采集工具已完成 P0-P2 本地升级并完成线上交付验证�
 
 - 根目录 `feishu.html` 是网页上传 GitHub Pages 的目标文件。
 - `ozon-feishu-sync\site\index.html` 是网页源码侧文件；网页修改时通常需要与 `feishu.html` 保持一致。
-- 2026-07-11 本地两个网页文件已由 `web-src` 构建并同步为新版轻量工作台；待推送 `feishu.html` 至 GitHub `main` 后验证线上效果。
+- 2026-07-11 本地两个网页文件已由 `web-src` 构建并同步为新版轻量工作台；GitHub `main` 的原始文件已确认更新，GitHub Pages 正在等待缓存/发布刷新。
 - `ozon-erp-collector-extension.zip` 是扩展分发包；扩展修改后必须重新生成。
 - `ozon-feishu-sync\\worker\\wrangler.toml` 是实际部署配置，包含公开来源限制和 `SYNC_CACHE` 的绑定 ID，不含任何密钥。
 - 常规 `_备份_...` 目录按日期、模块、版本命名，最多只保留最新 5 个；`_旧文件备份_...` 独立归档不计入。
@@ -73,7 +73,7 @@ Ozon 核价/采集工具已完成 P0-P2 本地升级并完成线上交付验证�
 
 ## 当前待办
 
-- 推送新版 `feishu.html` 至 GitHub Pages 并在真实浏览器验收核价页视觉与功能。
+- 等待 GitHub Pages 刷新后，在真实浏览器访问 `https://yehui1285-tech.github.io/ozon/feishu.html?v=20260711` 验收核价页视觉与功能。
 - 重新生成 `ozon-erp-collector-extension.zip`，在 Chrome/Edge 重新加载扩展 0.5.9，确认打开的是 `v=20260711` 核价页。
 
 ## 高风险注意
