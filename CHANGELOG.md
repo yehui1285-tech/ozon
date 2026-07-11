@@ -5,6 +5,40 @@
 - `当前文件怎么用.md`
 - `OZON项目复现交接文档.md`
 
+## 2026-07-11 - 核价页顶部说明单行优化
+
+### 改动
+
+- 桌面端标题下方说明移除固定最大宽度并改为单行显示，减少无必要的两行占用。
+- 在宽度不超过 960px 的窄屏设备上自动恢复换行，保证小屏可读性。
+
+### 涉及文件
+
+```text
+web-src\\styles.css
+feishu.html
+ozon-feishu-sync\\site\\index.html
+PROJECT_STATUS.md
+CHANGELOG.md
+```
+
+### 回滚备份
+
+```text
+C:\\Users\\Microsoft\\Documents\\Ozon\\_备份_20260711_ozon_web_subtitle_singleline_before
+```
+
+创建新备份后已按规则轮换，常规 `_备份_...` 目录保持 5 个。
+
+### 验证
+
+- 发布构建、网页构建检查、运费规则边界测试、核价公式/完整行测试、Worker 安全测试和脚本语法检查均通过。
+
+### 部署/安装要求
+
+- 需要将新版根目录 `feishu.html` 推送到 GitHub Pages。
+- 未修改扩展源码或 Worker，不需要重新加载扩展或部署 Worker。
+
 ## 2026-07-11 - 核价页轻量蓝紫工作台视觉改版
 
 ### 改动

@@ -76,11 +76,12 @@ h1 {
 }
 
 .subtitle {
-  max-width: 1040px;
+  max-width: none;
   margin: 0;
   color: #66728d;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.65;
+  white-space: nowrap;
 }
 
 main { max-width: 1680px; margin: 0 auto; padding: 22px clamp(16px, 3vw, 40px) 36px; }
@@ -221,6 +222,7 @@ td textarea { min-width: 150px; min-height: 40px; height: 40px; padding: 9px; li
   .freight-grid, .form-grid { grid-template-columns: 1fr; }
   .toolbar { align-items: flex-start; flex-direction: column; }
   .pricing-table-wrap { max-height: 210px; }
+  .subtitle { white-space: normal; }
 }
 
 @media (max-width: 620px) {
