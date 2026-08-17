@@ -11,6 +11,7 @@ try {
   node tools/test-store-background-integration.mjs
   node tools/test-pricing-core.mjs
   node tools/test-worker-security.mjs
+  node tools/test-parsing-fixtures.mjs
   node --check ozon-erp-collector-extension/background.js
   node --check ozon-erp-collector-extension/content.js
   node --check ozon-erp-collector-extension/store-scanner-core.js

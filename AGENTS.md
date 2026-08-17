@@ -1,4 +1,4 @@
-﻿# AGENTS.md - Ozon 项目续接规则
+# AGENTS.md - Ozon 项目续接规则
 
 本文件给 Codex 使用。每次新对话继续 Ozon 项目时，先阅读本文件，再阅读 `PROJECT_STATUS.md`，必要时再查 `CHANGELOG.md` 和原有交接文档。
 
@@ -46,6 +46,7 @@ C:\Users\Microsoft\Documents\Ozon\tools\build-release.ps1
 C:\Users\Microsoft\Documents\Ozon\tools\verify-project.ps1
 C:\Users\Microsoft\Documents\Ozon\当前文件怎么用.md
 C:\Users\Microsoft\Documents\Ozon\OZON项目复现交接文档.md
+C:\Users\Microsoft\Documents\Ozon\真实浏览器验收清单.md
 ```
 
 ## 固定交付规则
@@ -84,3 +85,4 @@ C:\Users\Microsoft\Documents\Ozon\OZON项目复现交接文档.md
 - 是否重新生成了 `ozon-erp-collector-extension.zip`？
 - 是否需要部署 Cloudflare Worker？
 - 做过哪些验证？还有什么未验证？
+- 是否按 `真实浏览器验收清单.md` 完成了真实浏览器验收？

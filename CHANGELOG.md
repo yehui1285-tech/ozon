@@ -5,6 +5,37 @@
 - `当前文件怎么用.md`
 - `OZON项目复现交接文档.md`
 
+## 2026-08-15 - 解析样本回归测试库与真实浏览器验收清单
+
+### 改动
+
+- 新增 `tools/test-parsing-fixtures.mjs`：把历史上反复修复过的毛子 ERP 字段解析边界案例固化成 50 个样本，覆盖 `num`（货币符号/千分位/俄式小数逗号）、`normalizeText`、`parsePercents`、`parseDimensions`、`parseWeight`、`saleValue`、`competitorState`、`parseCardText`。
+- 样本统一放在 `fixtures` 数组里，新增案例只加一行、不改测试逻辑；已接入 `npm test` 与 `tools/verify-project.ps1`。
+- 测试通过 `vm` 提取 `content.js` 纯函数 + 复用 `store-scanner-core.js` 的 `parseCardText`/`competitorState`，不复制实现，避免测试与源码漂移。
+- 新增 `真实浏览器验收清单.md`：把历次版本「真实浏览器验收待做」固化成可重复执行的 checklist（扩展加载、详情采集、佣金边界、核价页、飞书、单店/批量扫描、清空批次、回归样本）。
+- `AGENTS.md` 关键文件与「结束前检查」加入验收清单引用。
+
+### 涉及文件
+
+```text
+tools/test-parsing-fixtures.mjs（新增）
+真实浏览器验收清单.md（新增）
+package.json
+tools/verify-project.ps1
+AGENTS.md
+PROJECT_STATUS.md
+CHANGELOG.md
+```
+
+### 验证
+
+- `npm test` 全链路通过，新增「解析样本回归测试通过：50 个样本」。
+- 回归样本覆盖：千分位/窄不换行空格/俄式小数逗号/点千分位、¥￥₽ 货币、rFBS 三档、mm/cm/克/千克换算、货值分档边界、跟卖最低价中英文冒号与无价格态、店铺卡片完整/斜杠佣金/无标签等。
+
+### 部署/安装要求
+
+- 本次未改动业务逻辑；无需上传 `feishu.html`、重载扩展或重部署 Worker。
+
 ## 2026-08-15 - 项目治理：补提交 git 与修复文档漂移
 
 ### 改动

@@ -12,6 +12,7 @@
     "test:store-background": "node tools/test-store-background-integration.mjs",
     "test:pricing": "node tools/test-pricing-core.mjs",
     "test:worker": "node tools/test-worker-security.mjs",
-    "test": "node tools/build-web.mjs --check && node tools/sync-freight-rules.mjs --check && node tools/test-freight-rules.mjs && node tools/test-commission-rules.mjs && node tools/test-store-scanner.mjs && node tools/test-store-background-integration.mjs && node tools/test-pricing-core.mjs && node tools/test-worker-security.mjs"
+    "test:parsing": "node tools/test-parsing-fixtures.mjs",
+    "test": "node tools/build-web.mjs --check && node tools/sync-freight-rules.mjs --check && node tools/test-freight-rules.mjs && node tools/test-commission-rules.mjs && node tools/test-store-scanner.mjs && node tools/test-store-background-integration.mjs && node tools/test-pricing-core.mjs && node tools/test-worker-security.mjs && node tools/test-parsing-fixtures.mjs"
   }
 }
