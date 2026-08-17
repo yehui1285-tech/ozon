@@ -2,13 +2,16 @@
   "name": "ozon-pricing-tools",
   "private": true,
   "type": "module",
-  "version": "2026.7.10",
+  "version": "2026.8.15",
   "scripts": {
     "build:web": "node tools/build-web.mjs",
     "sync:freight": "node tools/sync-freight-rules.mjs",
     "test:freight": "node tools/test-freight-rules.mjs",
+    "test:commission": "node tools/test-commission-rules.mjs",
+    "test:store": "node tools/test-store-scanner.mjs",
+    "test:store-background": "node tools/test-store-background-integration.mjs",
     "test:pricing": "node tools/test-pricing-core.mjs",
     "test:worker": "node tools/test-worker-security.mjs",
-    "test": "node tools/build-web.mjs --check && node tools/sync-freight-rules.mjs --check && node tools/test-freight-rules.mjs && node tools/test-pricing-core.mjs && node tools/test-worker-security.mjs"
+    "test": "node tools/build-web.mjs --check && node tools/sync-freight-rules.mjs --check && node tools/test-freight-rules.mjs && node tools/test-commission-rules.mjs && node tools/test-store-scanner.mjs && node tools/test-store-background-integration.mjs && node tools/test-pricing-core.mjs && node tools/test-worker-security.mjs"
   }
 }

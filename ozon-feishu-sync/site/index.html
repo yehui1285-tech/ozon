@@ -447,19 +447,19 @@ const OzonPricingCore = (() => {
 })();
 
 const routes = [
-  {"name":"CEL Economy Extra Small","cn":"经济超级轻小件","delivery":"21-26 天","feeText":"26元/kg + 3.12元/票","weightText":"0-0.5KG","valueText":"0-1500卢布","minValue":0,"maxValue":1500,"minWeightExclusive":0,"maxWeight":0.5,"maxSum":90,"maxSide":60,"usesVolume":false,"rate":26,"fixed":3.12},
-  {"name":"CEL Economy Budget","cn":"经济低客单价轻小件","delivery":"16-21 天","feeText":"17.68元/kg + 23.92元/票","weightText":"0.5-25KG","valueText":"0-1500卢布","minValue":0,"maxValue":1500,"minWeightExclusive":0.5,"maxWeight":25,"maxSum":150,"maxSide":60,"usesVolume":false,"rate":17.68,"fixed":23.92},
-  {"name":"CEL Economy Small","cn":"经济轻小件","delivery":"16-21 天","feeText":"26元/kg + 16.64元/票","weightText":"0-2KG","valueText":"1501-7000卢布","minValue":1500,"maxValue":7000,"minWeightExclusive":0,"maxWeight":2,"maxSum":150,"maxSide":60,"usesVolume":false,"rate":26,"fixed":16.64},
-  {"name":"CEL Economy Premium Small","cn":"经济高客单轻小件","delivery":"16-21 天","feeText":"26元/kg + 22.88元/票","weightText":"0-5KG","valueText":"7001-250000卢布","minValue":7000,"maxValue":250000,"minWeightExclusive":0,"maxWeight":5,"maxSum":250,"maxSide":150,"usesVolume":false,"rate":26,"fixed":22.88},
-  {"name":"CEL Economy Big","cn":"经济大件","delivery":"21-26 天","feeText":"17.68元/kg + 37.44元/票","weightText":"2.001-30KG","valueText":"1501-7000卢布","minValue":1500,"maxValue":7000,"minWeightExclusive":2,"maxWeight":30,"maxBillable":31,"maxSum":250,"maxSide":150,"usesVolume":true,"rate":17.68,"fixed":37.44},
-  {"name":"CEL Economy Premium Big","cn":"经济高客单大件","delivery":"21-26 天","feeText":"23.92元/kg + 64.48元/票","weightText":"5.001-25KG","valueText":"7001-250000卢布","minValue":7000,"maxValue":250000,"minWeightExclusive":5,"maxWeight":25,"maxBillable":80,"maxSum":310,"maxSide":150,"usesVolume":true,"rate":23.92,"fixed":64.48}
+  {"name":"CEL Economy Extra Small","cn":"经济超级轻小件","delivery":"21-26 天","feeText":"28.1元/kg + 3.4元/票","weightText":"0-0.5KG","valueText":"0-1500卢布","minValue":0,"maxValue":1500,"minWeightExclusive":0,"maxWeight":0.5,"maxSum":90,"maxSide":60,"usesVolume":false,"rate":28.1,"fixed":3.4},
+  {"name":"CEL Economy Budget","cn":"经济低客单价轻小件","delivery":"16-21 天","feeText":"19.1元/kg + 25.9元/票","weightText":"0.5-25KG","valueText":"0-1500卢布","minValue":0,"maxValue":1500,"minWeightExclusive":0.5,"maxWeight":25,"maxSum":150,"maxSide":60,"usesVolume":false,"rate":19.1,"fixed":25.9},
+  {"name":"CEL Economy Small","cn":"经济轻小件","delivery":"16-21 天","feeText":"28.1元/kg + 18.8元/票","weightText":"0-2KG","valueText":"1501-7000卢布","minValue":1500,"maxValue":7000,"minWeightExclusive":0,"maxWeight":2,"maxSum":150,"maxSide":60,"usesVolume":false,"rate":28.1,"fixed":18.8},
+  {"name":"CEL Economy Premium Small","cn":"经济高客单轻小件","delivery":"16-21 天","feeText":"28.1元/kg + 24.8元/票","weightText":"0-5KG","valueText":"7001-250000卢布","minValue":7000,"maxValue":250000,"minWeightExclusive":0,"maxWeight":5,"maxSum":250,"maxSide":150,"usesVolume":false,"rate":28.1,"fixed":24.8},
+  {"name":"CEL Economy Big","cn":"经济大件","delivery":"21-26 天","feeText":"19.1元/kg + 40.5元/票","weightText":"2.001-30KG","valueText":"1501-7000卢布","minValue":1500,"maxValue":7000,"minWeightExclusive":2,"maxWeight":30,"maxBillable":31,"maxSum":250,"maxSide":150,"usesVolume":true,"rate":19.1,"fixed":40.5},
+  {"name":"CEL Economy Premium Big","cn":"经济高客单大件","delivery":"21-26 天","feeText":"25.8元/kg + 69.7元/票","weightText":"5.001-25KG","valueText":"7001-250000卢布","minValue":7000,"maxValue":250000,"minWeightExclusive":5,"maxWeight":25,"maxBillable":80,"maxSum":310,"maxSide":150,"usesVolume":true,"rate":25.8,"fixed":69.7}
 ];
 
     const $ = (id) => document.getElementById(id);
     const FEISHU_DETAIL_TABLE_URL = "https://www.feishu.cn/base/MnB1bj0OqaRYDAsHOQ5cW0SZnDe?table=tblrQj7Ux7DH6poQ";
     const PRICING_DRAFT_KEY = "ozon_pricing_draft_v1";
     const PRICING_DRAFT_VERSION = 1;
-    const APP_VERSION = "2026.07.11-ui";
+    const APP_VERSION = "2026.07.20-freight";
     const MAX_DRAFT_ROWS = 1000;
     const MAX_DRAFT_CHARS = 4_000_000;
     const PRICING_ROW_KEYS = ["green", "black", "commission", "factorOverride", "quoteOverride", "cost", "freight", "sku", "link", "source", "note"];

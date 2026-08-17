@@ -6,10 +6,16 @@ try {
   node tools/sync-freight-rules.mjs --check
   node tools/build-web.mjs --check
   node tools/test-freight-rules.mjs
+  node tools/test-commission-rules.mjs
+  node tools/test-store-scanner.mjs
+  node tools/test-store-background-integration.mjs
   node tools/test-pricing-core.mjs
   node tools/test-worker-security.mjs
   node --check ozon-erp-collector-extension/background.js
   node --check ozon-erp-collector-extension/content.js
+  node --check ozon-erp-collector-extension/store-scanner-core.js
+  node --check ozon-erp-collector-extension/store-scanner.js
+  node --check ozon-erp-collector-extension/batch.js
   node --check ozon-erp-collector-extension/popup.js
   node --check ozon-feishu-sync/worker/worker.js
   node -e "const fs=require('fs');for(const f of ['feishu.html','local-crop-tool/index.html']){const h=fs.readFileSync(f,'utf8');for(const m of h.matchAll(/<script(?:[^>]*)>([\s\S]*?)<\/script>/g)){if(m[1].trim())new Function(m[1])}}"

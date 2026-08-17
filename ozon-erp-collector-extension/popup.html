@@ -90,16 +90,17 @@
   <header class="app-header">
     <div class="app-mark">OZ</div>
     <div>
-      <h1>OZON 采集助手 <span class="version">v0.5.9</span></h1>
-      <p class="subtitle">采集商品详情并发送至核价页</p>
+      <h1>OZON 采集助手 <span class="version">v0.6.7</span></h1>
+      <p class="subtitle">商品详情采集与店铺选品扫描</p>
     </div>
   </header>
 
   <main class="surface">
     <p class="eyebrow">当前工作区</p>
     <p class="surface-title">从当前 OZON 页面开始</p>
-    <p class="surface-copy">Maozi ERP 加载完成后启动采集面板，确认数据后再发送。</p>
+    <p class="surface-copy">商品页可采集并发送核价；店铺页切换到后台后仍会继续准确扫描并导出 Markdown。</p>
     <button id="activate" type="button">启动当前页采集</button>
+    <button id="batchManager" class="secondary" type="button" style="margin-top:8px;">打开批量店铺扫描</button>
     <div class="control-grid">
       <button id="autoStart" class="secondary" type="button">开启本轮自动启动</button>
       <button id="autoStop" class="stop" type="button" hidden>关闭自动启动</button>
@@ -109,9 +110,9 @@
 
   <details class="guide">
     <summary>使用提示</summary>
-    <p>手动启动只作用于当前页面；开启自动启动后，本轮新打开的 OZON 商品页会自动显示采集面板。</p>
+    <p>批量模式依次处理最多 50 家店铺；完成后可清空当前批次再开始新一轮，已下载文件和各店历史记录都会保留。</p>
   </details>
-  <a class="footer-link" href="https://yehui1285-tech.github.io/ozon/feishu.html?v=20260711" target="_blank">打开核价页 ↗</a>
+  <a class="footer-link" href="https://yehui1285-tech.github.io/ozon/feishu.html?v=20260720" target="_blank">打开核价页 ↗</a>
   <script src="popup.js"></script>
 </body>
 </html>

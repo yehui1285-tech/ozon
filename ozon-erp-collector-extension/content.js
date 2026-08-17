@@ -96,12 +96,12 @@ function parseWeight(raw) {
 }
 
 const routes = [
-  {"name":"CEL Economy Extra Small","minValue":0,"maxValue":1500,"minWeightExclusive":0,"maxWeight":0.5,"maxSum":90,"maxSide":60,"usesVolume":false,"rate":26,"fixed":3.12},
-  {"name":"CEL Economy Budget","minValue":0,"maxValue":1500,"minWeightExclusive":0.5,"maxWeight":25,"maxSum":150,"maxSide":60,"usesVolume":false,"rate":17.68,"fixed":23.92},
-  {"name":"CEL Economy Small","minValue":1500,"maxValue":7000,"minWeightExclusive":0,"maxWeight":2,"maxSum":150,"maxSide":60,"usesVolume":false,"rate":26,"fixed":16.64},
-  {"name":"CEL Economy Premium Small","minValue":7000,"maxValue":250000,"minWeightExclusive":0,"maxWeight":5,"maxSum":250,"maxSide":150,"usesVolume":false,"rate":26,"fixed":22.88},
-  {"name":"CEL Economy Big","minValue":1500,"maxValue":7000,"minWeightExclusive":2,"maxWeight":30,"maxBillable":31,"maxSum":250,"maxSide":150,"usesVolume":true,"rate":17.68,"fixed":37.44},
-  {"name":"CEL Economy Premium Big","minValue":7000,"maxValue":250000,"minWeightExclusive":5,"maxWeight":25,"maxBillable":80,"maxSum":310,"maxSide":150,"usesVolume":true,"rate":23.92,"fixed":64.48}
+  {"name":"CEL Economy Extra Small","minValue":0,"maxValue":1500,"minWeightExclusive":0,"maxWeight":0.5,"maxSum":90,"maxSide":60,"usesVolume":false,"rate":28.1,"fixed":3.4},
+  {"name":"CEL Economy Budget","minValue":0,"maxValue":1500,"minWeightExclusive":0.5,"maxWeight":25,"maxSum":150,"maxSide":60,"usesVolume":false,"rate":19.1,"fixed":25.9},
+  {"name":"CEL Economy Small","minValue":1500,"maxValue":7000,"minWeightExclusive":0,"maxWeight":2,"maxSum":150,"maxSide":60,"usesVolume":false,"rate":28.1,"fixed":18.8},
+  {"name":"CEL Economy Premium Small","minValue":7000,"maxValue":250000,"minWeightExclusive":0,"maxWeight":5,"maxSum":250,"maxSide":150,"usesVolume":false,"rate":28.1,"fixed":24.8},
+  {"name":"CEL Economy Big","minValue":1500,"maxValue":7000,"minWeightExclusive":2,"maxWeight":30,"maxBillable":31,"maxSum":250,"maxSide":150,"usesVolume":true,"rate":19.1,"fixed":40.5},
+  {"name":"CEL Economy Premium Big","minValue":7000,"maxValue":250000,"minWeightExclusive":5,"maxWeight":25,"maxBillable":80,"maxSum":310,"maxSide":150,"usesVolume":true,"rate":25.8,"fixed":69.7}
 ];
 
 function saleValue(price) {
@@ -135,9 +135,8 @@ function calcFreight(price, weight, length, width, height) {
 
 function pickCommission(price, values) {
   if (!values.length) return 0;
-  if (price < 135) return values[0] || 0;
-  if (price <= 600) return values[1] || values[0] || 0;
-  return values[2] || values[1] || values[0] || 0;
+  if (price <= 600) return values[1] || 0;
+  return values[2] || 0;
 }
 
 function isVisibleElement(el) {
@@ -235,7 +234,7 @@ function collectProduct() {
   if (!dims.lengthCm || !dims.widthCm || !dims.heightCm) notes.push("未识别到长宽高");
   if (!weight.weightKg) notes.push("未识别到重量");
   if (!freight.price) notes.push("未匹配到可用国际运费");
-  return {
+  const product = {
     link: location.href,
     sku,
     greenPrice,
@@ -251,6 +250,16 @@ function collectProduct() {
     ...dims,
     ...weight,
   };
+  enrichStoredStoreRecord(product);
+  return product;
+}
+
+function enrichStoredStoreRecord(product) {
+  const sku = String(product?.sku || "").trim();
+  const price = Number(product?.minCompetitorPrice || 0);
+  if (!sku || !(price > 0)) return;
+  const competitor = `¥${price.toFixed(2)}`;
+  chrome.runtime.sendMessage({ type: "enrichStoreProductBySku", sku, competitor }, () => void chrome.runtime.lastError);
 }
 
 function setStatus(message, ok = true) {
@@ -720,6 +729,6 @@ if (location.hostname === "yehui1285-tech.github.io") {
     sendResponse({ ok: true });
     return true;
   });
-} else {
+} else if (!/^\/seller\/[^/]+/i.test(location.pathname)) {
   installPanel();
 }

@@ -1,9 +1,809 @@
-﻿# CHANGELOG.md - Ozon 项目续接记录
+# CHANGELOG.md - Ozon 项目续接记录
 
 本文件记录从 2026-07-06 起的新对话续接、改动、验证和交付状态。更早的详细历史见：
 
 - `当前文件怎么用.md`
 - `OZON项目复现交接文档.md`
+
+## 2026-08-15 - 项目治理：补提交 git 与修复文档漂移
+
+### 改动
+
+- 把 0.5.8 → 0.6.7 期间全部未提交改动一次性提交到 git（扩展源码、批量扫描新增文件、网页/运费规则、测试脚本、分发 zip 与文档）。
+- 本地分支由 `master` 对齐为 `main` 并设置上游 `origin/main`（此前本地 `master` 与远程 `main` 指向同一提交但分支名不一致，存在误推隐患）。
+- 推送 GitHub `main`。
+- 修复 `OZON项目复现交接文档.md` 三处过时规则：佣金档位（≤600 取第2档、>600 取第3档、第1档弃用）、货值分档依据（按“定价低于真实售价”而非绿标价格）、运费公式表（更新为 2026-07-20 的 6 条经济线路新价格），并加注“以 PROJECT_STATUS / CHANGELOG / freight-rules 为准”。
+- 批量扫描导出数据 `HJ025_符合要求商品_截至20260814.md` 属导出数据，未纳入版本控制。
+
+### 涉及文件
+
+```text
+OZON项目复现交接文档.md
+PROJECT_STATUS.md
+CHANGELOG.md
+（以及 0.5.8→0.6.7 全部未提交的源码、文档与分发 zip，见本次 git 提交）
+```
+
+### 验证
+
+- 修复前以 `shared/freight-rules.json` 与扩展 `content.js` 的 `pickCommission`/`saleValue` 为准据，确认文档新值与当前实现一致。
+- 提交后 `git status` 除导出数据文件外干净；本地 `main` 与 `origin/main` 一致。
+
+### 部署/安装要求
+
+- 本次为治理提交，未改动任何业务逻辑；无需上传 `feishu.html`、重载扩展或重部署 Worker。
+
+## 2026-08-15 - 扩展0.6.7 安全清空当前批次
+
+### 改动
+
+- 批量扫描页左侧新增“清空当前批次”按钮；用于一轮扫描和导出完成后，清空链接输入、任务列表、汇总统计及运行状态，再开始下一轮搜款。
+- 清空前显示二次确认，并明确说明：电脑中已下载的Markdown/CSV文件和浏览器内各店铺历史采集记录都会保留。
+- 清空操作只删除批次状态键`ozonStoreBatchV1`；不会删除店铺索引、按店铺拆分的`ozonStoreQualifiedProductsV2:<店铺>`记录或任何下载文件。
+- 当前任务仍在运行、重试或等待切店时，清空会先停止店铺扫描、撤销后台切店计时与闹钟，并恢复扫描标签页的自动丢弃设置。
+- 清空请求携带当前批次ID；如果另一页面已建立新批次，旧页面的清空请求会被拒绝，避免误删新任务。
+- 清空操作与扫描进度、完成、暂停、跳过、删除等操作沿用同一个串行队列；删除状态后到达的旧进度消息会被拒绝，不会恢复旧任务。
+- 清空完成后，页面自动清空链接输入框、右侧列表和四项统计，并把光标放回链接输入框。
+- 扩展版本由0.6.6升级为0.6.7。
+
+### 涉及文件
+
+```text
+ozon-erp-collector-extension\background.js
+ozon-erp-collector-extension\batch.html
+ozon-erp-collector-extension\batch.js
+ozon-erp-collector-extension\manifest.json
+ozon-erp-collector-extension\popup.html
+ozon-erp-collector-extension\使用说明.md
+ozon-erp-collector-extension.zip
+tools\test-store-scanner.mjs
+tools\test-store-background-integration.mjs
+当前文件怎么用.md
+PROJECT_STATUS.md
+CHANGELOG.md
+```
+
+### 回滚备份
+
+```text
+C:\Users\Microsoft\Documents\Ozon\_备份_20260815_ozon_clear_batch_0.6.6_before
+```
+
+创建新备份后已删除超出上限的最旧常规备份，当前常规`_备份_...`目录保持5个。
+
+### 验证
+
+- 后台集成测试确认：运行中批次清空后任务状态键消失，两个店铺的独立历史记录逐字节保持不变。
+- 测试确认清空会向当前店铺页发送静默停止消息，迟到的旧批次进度返回拒绝，重复清空空状态可安全完成。
+- 静态测试覆盖后台消息入口、批次ID校验、仅删除批次键、界面按钮、保留数据提示和链接输入框清空。
+- 已运行`npm.cmd test`与`tools\build-release.ps1`；网页、运费、佣金、店铺扫描、后台集成、核价公式及Worker安全测试全部通过。
+- 已独立读取ZIP确认`manifest.json`版本为0.6.7，`manifest.json`、`background.js`、`store-scanner-core.js`、`store-scanner.js`、`batch.html`、`batch.js`和`content.js`与源码SHA-256逐一一致。
+- 发布包SHA-256：`9EDE4CC1AB8AB37264AC03B89A38851AEAE0257636E6C4807CE40BEDCC345B40`。
+- 真实Chrome/Edge的按钮显示、完成后清空和运行中清空仍待重新加载新版后验收。
+
+### 部署/安装要求
+
+- 需要在Chrome/Edge扩展管理页重新加载0.6.7。
+- 本次未修改网页业务逻辑，不需要上传`feishu.html`。
+- 本次未修改Worker，不需要重新部署Cloudflare Worker。
+
+## 2026-08-15 - 扩展0.6.6 大店扫描性能、扫描健康与500件零命中跳店
+
+### 改动
+
+- 批量任务新增零命中提前停止规则：当前店铺本轮去重查看达到500个、符合要求仍为0个时，自动结束该店；队列中还有店铺时，按原有8秒间隔进入下一家。
+- 原有“本轮查看达到1000个且符合要求少于3个”规则继续保留；两条规则按优先级统一判断，500件时已有至少1个符合要求商品不会触发新规则。
+- 新规则只在批量任务中生效；单店手动扫描不自动停止。已找到的记录仍保留并可导出。
+- 扫描器新增邻近视区商品集合，只处理当前屏幕及上下缓冲区域的商品链接；离开区域的链接不再参与每轮解析。
+- 已解析商品卡片按页面节点和内容签名缓存，卡片文本未变化时复用解析结果，减少大型店铺重复读取和解析整页卡片。
+- 商品节点被Ozon虚拟列表移除时同步取消观察，降低长时间扫描后的无效集合增长。
+- 店铺边界标题兼容中文“您可能喜欢”、俄文和英文；标题未出现时，连续无新增并稳定到达页面底部也会执行末尾确认。
+- 新增扫描健康数据：当前阶段、连续无新增屏数、最后新增/最后进度时间、页面重载次数和疑似卡住状态。
+- 批量管理页新增“扫描动态”列，直观显示正向扫描、末尾确认、反向复查、无新增屏数、重载次数和疑似卡住提示。
+- 扩展版本由0.6.5升级为0.6.6。
+
+### 涉及文件
+
+```text
+ozon-erp-collector-extension\background.js
+ozon-erp-collector-extension\store-scanner-core.js
+ozon-erp-collector-extension\store-scanner.js
+ozon-erp-collector-extension\batch.html
+ozon-erp-collector-extension\batch.js
+ozon-erp-collector-extension\manifest.json
+ozon-erp-collector-extension\popup.html
+ozon-erp-collector-extension\使用说明.md
+ozon-erp-collector-extension.zip
+tools\test-store-scanner.mjs
+tools\test-store-background-integration.mjs
+当前文件怎么用.md
+PROJECT_STATUS.md
+CHANGELOG.md
+```
+
+### 回滚备份
+
+```text
+C:\Users\Microsoft\Documents\Ozon\_备份_20260815_ozon_large_store_health_0.6.5_before
+```
+
+创建新备份后已按修改时间检查，常规`_备份_...`目录保持5个。
+
+### 验证
+
+- 规则单元测试覆盖：499/0不跳、500/0触发新规则、500/1不跳、999/2不跳、1000/2触发原规则、1000/3不跳。
+- 后台集成测试模拟两家店队列：第一家收到500个去重SKU且0命中后标记为已跳过，当前索引进入第二家并保存约8秒后的启动时间。
+- 静态测试覆盖邻近视区观察器、卡片缓存、移除节点清理、中俄英文末尾标题、页面底部兜底、扫描健康字段及批量页显示。
+- 已运行`npm.cmd test`和`tools\build-release.ps1`；网页、运费、佣金、店铺扫描、后台集成、核价公式与Worker安全测试全部通过。
+- 已独立读取ZIP确认`manifest.json`版本为0.6.6，`manifest.json`、`background.js`、`store-scanner-core.js`、`store-scanner.js`、`batch.html`、`batch.js`和`content.js`与源码SHA-256逐一一致。
+- 发布包SHA-256：`464BA971EF935F51AFB58BFF8FB622F7EBE7588416483D586C4ADDCF9F87E914`。
+- 真实Chrome/Edge大型店铺、页面底部兜底和500/0自动切店仍待重新加载新版后验收。
+
+### 部署/安装要求
+
+- 需要在Chrome/Edge扩展管理页重新加载0.6.6。正在运行的旧批次建议先暂停，升级并刷新批量管理页后点击“继续”。
+- 本次未修改网页业务逻辑，不需要上传`feishu.html`。
+- 本次未修改Worker，不需要重新部署Cloudflare Worker。
+
+## 2026-08-15 - 扩展0.6.5 可靠切店、增量SKU进度与条件式复查
+
+### 改动
+
+- 批量任务在等待下一家时保存明确的`nextRunAt`目标时间，不再把8秒切店只交给短周期扩展闹钟。
+- 店铺页面收到等待任务后设置8秒计时并主动通知后台；扩展后台同时设置8秒计时，任何一方先触发都可继续下一家。
+- 额外保留不早于30秒的`chrome.alarms`兜底，用于页面卸载、后台计时丢失、电脑休眠或浏览器延迟等情况；正常情况下仍按约8秒切店。
+- 页面通知、后台计时和闹钟兜底均携带批次ID和目标时间；提前到达会重新等待，重复或迟到信号会被忽略，不会重复增加尝试次数或跳过店铺。
+- 浏览器/扩展恢复时若仍处于切店间隔，按`nextRunAt`计算剩余时间并重新设定计时；若时间已到则立即继续。
+- 暂停、停止、关闭专用扫描页、删除全部店铺和开始新批次时同时撤销后台计时与兜底闹钟。等待期暂停或停止时不再向上一家已经停止的页面重复发送“停止扫描”，避免把完整记录误改为未完成。
+- 日常`storeScanProgress`消息只提交尚未确认的`attemptObservedSkuDelta`；后台继续与本轮SKU集合合并去重。消息失败时未确认SKU会在后续进度或完成消息中再次提交。
+- 页面刷新恢复当前尝试时仍一次性读取后台保存的完整本轮SKU列表，然后仅继续上报新增部分，保证随机排序和重复商品不会重复计数。
+- 店铺末尾通过原有时间、页面高度、商品链接数和SKU数稳定确认后，如果待复查为0，直接完成并省略整页反向复查；只有待复查大于0时才从底部向上复查。
+- 扩展版本由0.6.4升级为0.6.5。
+
+### 涉及文件
+
+```text
+ozon-erp-collector-extension\background.js
+ozon-erp-collector-extension\store-scanner.js
+ozon-erp-collector-extension\manifest.json
+ozon-erp-collector-extension\popup.html
+ozon-erp-collector-extension\使用说明.md
+ozon-erp-collector-extension.zip
+tools\test-store-scanner.mjs
+tools\test-store-background-integration.mjs
+当前文件怎么用.md
+PROJECT_STATUS.md
+CHANGELOG.md
+```
+
+### 回滚备份
+
+```text
+C:\Users\Microsoft\Documents\Ozon\_备份_20260815_ozon_cooldown_delta_review_0.6.4_before
+```
+
+创建新备份后已按修改时间轮换，常规`_备份_...`目录保持5个。
+
+### 验证
+
+- 单元/静态测试覆盖新增SKU字段、确认集合、页面切店计时、后台目标时间、30秒闹钟兜底和“待复查0直接完成”分支。
+- 后台集成测试覆盖：切店目标约8秒、页面收到计时任务、闹钟兜底不早于30秒、提前唤醒不切店、到时只启动一次、重复唤醒不重复增加尝试。
+- 原有旧数据迁移、分店隔离、刷新恢复、跟卖价保护、累计与本轮计数、自动跳店以及删除/迟到进度竞争测试继续通过。
+- 已运行完整`npm.cmd test`以及`tools\build-release.ps1`，网页、运费、佣金、店铺扫描、后台集成、核价公式和Worker安全测试全部通过。
+- 已独立检查zip内7个关键文件与源码SHA-256逐一一致；发布包SHA-256为`8956C6C99012D890131AB5FF1995A037C9099741A9385607143CF7E0C46E5C6E`。
+- 真实Chrome/Edge的约8秒切店和条件式复查仍待重新加载后验收。
+
+### 部署/安装要求
+
+- 需要在Chrome/Edge扩展管理页重新加载0.6.5。正在运行的旧批次建议先暂停，升级并刷新批量管理页后点击“继续”。
+- 本次未修改网页业务逻辑，不需要上传`feishu.html`。
+- 本次未修改Worker，不需要重新部署Cloudflare Worker。
+
+## 2026-08-15 - 扩展0.6.4 刷新续扫、批量状态防竞争与按店铺独立存储
+
+### 改动
+
+- 批量专用店铺页扫描中发生手动刷新、Ozon自动重载或白屏恢复时，后台将当前店标记为“刷新后恢复中”；页面完成加载后自动重新注入扫描器，从顶部继续当前店，不再要求人工“暂停/继续”。
+- 每次店铺尝试新增唯一尝试ID，并保存本轮已识别SKU集合；刷新续扫沿用同一尝试ID与集合，旧页面迟到的进度或完成消息不能写入新的店铺/新一轮尝试。
+- “已查看达到1000且符合要求少于3个”的自动提前跳过改按本轮去重SKU数判断；累计已查看仍用于历史记录和导出，商品随机重排、重复铺货或页面刷新不会把旧累计数直接当成本轮门槛。
+- 批量任务的进度、完成、暂停、继续、停止、跳过、逐店删除、标签页刷新/关闭和定时切店统一进入串行更新队列；每次保存增加修订号，避免同时操作时较旧整批状态覆盖较新状态。
+- 店铺结果从单个`ozonStoreQualifiedProductsV1`总表升级为`ozonStoreQualifiedProductsV2:<店铺标识>`独立记录，并用单独索引维护店铺列表。
+- 首次升级会读取旧总表，逐店合并到独立记录；独立记录写入后再次读取验证，全部成功才删除旧总表。迁移过程保留已查看SKU、待复查链接、符合要求商品和已有跟卖最低价。
+- 店铺页保存/读取、详情页按SKU补全跟卖最低价、批量Markdown/CSV汇总导出全部改由扩展后台按店铺处理；同一店铺内写入串行合并，已有非空跟卖价不会被迟到的空值覆盖。
+- 批量管理页新增“刷新后恢复中”状态；“已查看”继续显示累计数量，本轮存在进度时同时显示本轮去重数量。
+- 扩展版本由0.6.3升级为0.6.4。
+
+### 涉及文件
+
+```text
+ozon-erp-collector-extension\background.js
+ozon-erp-collector-extension\content.js
+ozon-erp-collector-extension\store-scanner-core.js
+ozon-erp-collector-extension\store-scanner.js
+ozon-erp-collector-extension\batch.js
+ozon-erp-collector-extension\manifest.json
+ozon-erp-collector-extension\popup.html
+ozon-erp-collector-extension\使用说明.md
+ozon-erp-collector-extension.zip
+tools\test-store-scanner.mjs
+tools\test-store-background-integration.mjs
+tools\verify-project.ps1
+package.json
+当前文件怎么用.md
+PROJECT_STATUS.md
+CHANGELOG.md
+```
+
+### 回滚备份
+
+```text
+C:\Users\Microsoft\Documents\Ozon\_备份_20260815_ozon_reliability_store_split_0.6.3_before
+```
+
+创建新备份后已按修改时间轮换，常规`_备份_...`目录保持5个。
+
+### 验证
+
+- 单元测试覆盖串行执行顺序、本轮SKU跨刷新合并去重、分店存储键隔离、店铺状态合并和已有非空跟卖价保护。
+- 新增模拟Chrome后台的集成测试：两家旧店总表迁移后分别落到独立记录并删除旧总表；更新一家不会污染另一家。
+- 集成测试覆盖累计已查看1152、本轮仅500时不自动跳过；同一尝试补齐到本轮1000且符合要求1个时自动跳过。
+- 集成测试覆盖“先删除当前店、后到达旧页面进度”的竞争顺序，确认旧进度被拒绝且不会把已删除店铺恢复到批次。
+- 集成测试覆盖扫描中页面刷新后进入`recovering`并保留恢复标记；静态检查覆盖加载完成后自动续扫、尝试ID校验、分店导出和详情最低价补全消息。
+- 已运行完整`npm.cmd test`，网页、运费、佣金、店铺扫描、后台集成、核价公式和Worker安全测试全部通过。
+- 已运行`tools\build-release.ps1`并独立检查zip内7个关键文件与源码SHA-256逐一一致；发布包SHA-256为`58E216F106984A498D2A06CCF897E1B2C6127A644E29EC244E8C2B621B5F8B76`。
+- 真实Chrome/Edge刷新续扫与旧数据迁移仍待用户重新加载后验收。
+
+### 部署/安装要求
+
+- 需要在Chrome/Edge扩展管理页重新加载0.6.4。建议先暂停正在运行的旧批次，重新加载扩展和批量管理页后点击“继续”。
+- 首次运行0.6.4会自动迁移当前浏览器内的旧店铺记录，不需要手动导入；Chrome与Edge仍各自保存各自的数据。
+- 本次未修改网页业务逻辑，不需要上传`feishu.html`。
+- 本次未修改Worker，不需要重新部署Cloudflare Worker。
+
+## 2026-08-15 - 扩展0.6.3 批量任务逐店删除
+
+### 改动
+
+- 批量任务表新增“操作”列，每一行店铺右侧提供“删除”按钮，可移除填错、重复判断后不需要或临时不想扫描的特定店铺链接。
+- 删除前显示二次确认；删除正在扫描的当前店时，提示将停止本店，并在原有8秒间隔后继续下一家。
+- 删除等待中、已完成、部分完成、失败或已跳过的非当前店铺时，不中断当前扫描。
+- 删除当前店、当前店之前的历史店铺或最后一家时，会重新计算`currentIndex`，保持剩余任务顺序正确；删除全部店铺后批次状态变为已完成。
+- 删除消息同时携带批次ID和店铺标识；批次已变化或店铺已不存在时拒绝操作，避免页面状态过期导致误删。
+- 删除只影响当前批次及该批次的Markdown/CSV汇总，不删除`ozonStoreQualifiedProductsV1`中已保存的店铺采集记录。
+- 扩展版本由0.6.2升级为0.6.3。
+
+### 涉及文件
+
+```text
+ozon-erp-collector-extension\background.js
+ozon-erp-collector-extension\store-scanner-core.js
+ozon-erp-collector-extension\batch.html
+ozon-erp-collector-extension\batch.js
+ozon-erp-collector-extension\manifest.json
+ozon-erp-collector-extension\popup.html
+ozon-erp-collector-extension\使用说明.md
+ozon-erp-collector-extension.zip
+tools\test-store-scanner.mjs
+当前文件怎么用.md
+PROJECT_STATUS.md
+CHANGELOG.md
+```
+
+### 回滚备份
+
+```text
+C:\Users\Microsoft\Documents\Ozon\_备份_20260815_ozon_delete_batch_store_0.6.2_before
+```
+
+创建新备份后已按修改时间轮换，常规`_备份_...`目录保持5个。
+
+### 验证
+
+- 单元测试覆盖删除当前店之前的店铺后索引前移、删除当前店后下一家保持当前、剩余店铺顺序不变。
+- 静态检查覆盖任务表“操作/删除”入口、删除消息、批次ID校验、空批次处理和正在扫描店铺停止逻辑。
+- `background.js`、`store-scanner-core.js`、`batch.js`等JavaScript语法检查通过。
+- 已运行`tools\build-release.ps1`；完整项目检查通过并重新生成0.6.3扩展zip。
+- 尚未在真实Chrome/Edge中分别删除等待中、已完成和正在扫描的店铺进行浏览器验收。
+
+### 部署/安装要求
+
+- 需要在Chrome/Edge扩展管理页重新加载0.6.3；旧批量任务会保留，刷新批量管理页后即可逐行删除。
+- 本次未修改网页业务逻辑，不需要上传`feishu.html`。
+- 本次未修改Worker，不需要重新部署Cloudflare Worker。
+
+## 2026-08-15 - 扩展0.6.2 统一结束当前店与阶段状态判断
+
+### 改动
+
+- 店铺浮窗和批量管理页统一使用“结束当前店，扫描下一家”，不再增加与“放弃本店”“跳过当前店铺”语义重复的第二个按钮。
+- 点击统一按钮时读取店铺页实时扫描阶段、是否确认到达店铺末尾、已查看/符合要求/待复查数量，再决定当前店铺状态。
+- 已确认到达店铺末尾、正在反向复查且待复查为0：记录为“已完成”，说明为“已完成（省略剩余反向复查）”，店铺本地记录也标记为完整扫描。
+- 仍有待复查商品：记录为“部分完成”，说明中保留待复查数量，可在批量管理页使用“重试失败店铺”重新处理。
+- 正向扫描尚未完成且没有待复查：记录为“已跳过”，保留所有已经找到的符合要求商品。
+- 店铺切换的8秒等待期间统一按钮自动禁用；后台再次校验任务必须处于正在打开或扫描状态，并核对店铺标识，防止延迟点击误跳过下一家。
+- “已查看达到1000且符合要求少于3个”的低产出自动规则保持为自动提前跳过，不会因正在反向复查而误记为完整完成。
+- 扩展版本由0.6.1升级为0.6.2。
+
+### 涉及文件
+
+```text
+ozon-erp-collector-extension\background.js
+ozon-erp-collector-extension\store-scanner-core.js
+ozon-erp-collector-extension\store-scanner.js
+ozon-erp-collector-extension\batch.html
+ozon-erp-collector-extension\batch.js
+ozon-erp-collector-extension\manifest.json
+ozon-erp-collector-extension\popup.html
+ozon-erp-collector-extension\使用说明.md
+ozon-erp-collector-extension.zip
+tools\test-store-scanner.mjs
+当前文件怎么用.md
+PROJECT_STATUS.md
+CHANGELOG.md
+```
+
+### 回滚备份
+
+```text
+C:\Users\Microsoft\Documents\Ozon\_备份_20260815_ozon_finish_current_store_0.6.1_before
+```
+
+创建新备份后已按修改时间轮换，常规`_备份_...`目录保持5个。
+
+### 验证
+
+- 状态分类单元测试覆盖：反向复查+已确认边界+待复查0为已完成；待复查2为部分完成；正向未完成且待复查0为已跳过。
+- 静态检查覆盖统一按钮文字、店铺页实时阶段上报、批量管理页来源标识、完整状态回写及防误跳保护。
+- 所有扩展JavaScript语法检查通过。
+- 已运行`tools\build-release.ps1`；完整项目检查通过并重新生成0.6.2扩展zip。
+- 尚未在真实Chrome/Edge中分别对三个阶段点击统一按钮做浏览器验收。
+
+### 部署/安装要求
+
+- 需要在Chrome/Edge扩展管理页重新加载0.6.2；正在运行的旧批量任务建议先暂停，重新加载并刷新批量管理页后点击“继续”。
+- 本次未修改网页业务逻辑，不需要上传`feishu.html`。
+- 本次未修改Worker，不需要重新部署Cloudflare Worker。
+
+## 2026-08-15 - 扩展0.6.1 低产出店铺提前跳过
+
+### 改动
+
+- 批量扫描中的店铺浮窗新增“放弃本店，扫描下一家”按钮；点击后停止当前店扫描，保留已采集商品，并按原8秒店铺间隔进入下一家。
+- 新增自动提前跳过规则：当前店铺“已查看”达到1000个，同时“符合要求”少于3个（0、1或2个）时自动跳过；达到3个或更多时继续正常扫描。
+- 手动或自动提前结束的店铺统一标记为“已跳过”，记录具体原因，不计入失败或自动重试；已找到商品继续包含在Markdown/CSV汇总中。
+- 自动规则只在批量扫描任务生效；单店独立扫描保持原行为。
+- 店铺页发起跳过时同时提交最新“已查看/符合要求/待复查”计数，并校验店铺标识，防止自动规则与手动点击同时发生时误跳过下一家。
+- 扩展版本由0.6.0升级为0.6.1。
+
+### 涉及文件
+
+```text
+ozon-erp-collector-extension\background.js
+ozon-erp-collector-extension\store-scanner-core.js
+ozon-erp-collector-extension\store-scanner.js
+ozon-erp-collector-extension\batch.html
+ozon-erp-collector-extension\manifest.json
+ozon-erp-collector-extension\popup.html
+ozon-erp-collector-extension\使用说明.md
+ozon-erp-collector-extension.zip
+tools\test-store-scanner.mjs
+当前文件怎么用.md
+PROJECT_STATUS.md
+CHANGELOG.md
+```
+
+### 回滚备份
+
+```text
+C:\Users\Microsoft\Documents\Ozon\_备份_20260815_ozon_batch_skip_0.6.0_before
+```
+
+创建新备份后已按修改时间轮换，常规`_备份_...`目录保持5个。
+
+### 验证
+
+- 自动规则边界测试通过：999/0不跳、1000/2自动跳、1000/3不跳、截图场景1120/1自动跳。
+- 静态检查确认店铺浮窗按钮、店铺标识防竞态校验、自动跳过原因和批量进度逻辑存在。
+- `background.js`、`store-scanner-core.js`、`store-scanner.js`等JavaScript语法检查通过。
+- 已运行`tools\build-release.ps1`；完整项目检查通过并重新生成0.6.1扩展zip。
+- 尚未在真实Chrome/Edge中验证正在运行的三店批次升级后手动跳过与自动阈值跳过。
+
+### 部署/安装要求
+
+- 需要在Chrome/Edge扩展管理页重新加载0.6.1；当前正在运行的0.6.0任务建议先暂停，重新加载扩展后点击“继续”。
+- 本次未修改网页业务逻辑，不需要上传`feishu.html`。
+- 本次未修改Worker，不需要重新部署Cloudflare Worker。
+
+## 2026-08-15 - 扩展0.6.0 批量店铺扫描与大型店铺增量处理
+
+### 改动
+
+- 新增独立“批量店铺扫描”管理页；每行输入一个Ozon店铺地址，自动规范化和去重，单批最多50家。
+- 使用一个专用Ozon标签页按输入顺序逐店扫描，完成一家后等待8秒再进入下一家，避免同时打开大量页面占用内存。
+- 单店未完成时自动重试2次；达到上限后标记为“部分完成”或“失败”并继续下一家，不阻塞整个批次。
+- 批量任务、当前店铺、尝试次数和进度保存在浏览器本地；支持暂停、继续、停止、跳过当前店铺，以及浏览器重新启动后恢复任务。
+- 新增汇总Markdown和CSV导出，按店铺顺序记录店铺状态及符合要求商品；CSV对公式开头文本增加防注入处理。
+- 默认开始新批次时清空对应店铺旧记录，确保结果来自本次扫描；管理页允许取消该选项以在旧记录基础上补扫。
+- 店铺扫描器不再每次轮询遍历整页全部`div`；改为维护商品链接集合，只解析当前视区附近与后续新增的商品卡片，并清理已离开DOM的链接。
+- 推荐区域边界改为增量登记；MutationObserver只监听新增节点，不再监听全页字符变化，降低400个以上商品店铺因主线程负担过大导致卡顿、白屏或重载的风险。
+- 保留0.5.15跟卖最低价加载等待和详情页反向补全、0.5.14后台看门狗与反向回查、0.5.11佣金档位、商品详情采集和发送核价能力。
+- 设备ID、随机密钥、到期和撤销授权仍按用户要求暂缓，本次没有加入授权限制。
+- 扩展版本由0.5.15升级为0.6.0。
+
+### 涉及文件
+
+```text
+ozon-erp-collector-extension\background.js
+ozon-erp-collector-extension\store-scanner-core.js
+ozon-erp-collector-extension\store-scanner.js
+ozon-erp-collector-extension\batch.html
+ozon-erp-collector-extension\batch.js
+ozon-erp-collector-extension\manifest.json
+ozon-erp-collector-extension\popup.html
+ozon-erp-collector-extension\popup.js
+ozon-erp-collector-extension\使用说明.md
+ozon-erp-collector-extension.zip
+tools\test-store-scanner.mjs
+tools\verify-project.ps1
+当前文件怎么用.md
+PROJECT_STATUS.md
+CHANGELOG.md
+```
+
+### 回滚备份
+
+```text
+C:\Users\Microsoft\Documents\Ozon\_备份_20260815_ozon_batch_scanner_0.5.15_before
+```
+
+创建新备份后已按修改时间轮换，常规`_备份_...`目录保持5个。
+
+### 验证
+
+- 新增店铺地址规范化、去重、无效地址、批量Markdown/CSV、CSV公式防注入和0.6.0版本测试。
+- 静态检查确认扫描器维护商品链接集合、监听新增节点、发送批量进度/完成消息，并且不再使用每轮全页`document.querySelectorAll("div")`或`characterData: true`。
+- 检查批量任务上限50家、失败重试2次、店铺间隔8秒、中断恢复和批量管理页导出入口。
+- `background.js`、`store-scanner-core.js`、`store-scanner.js`、`batch.js`、`popup.js`均通过JavaScript语法检查。
+- 已运行`tools\build-release.ps1`；网页一致性、运费、佣金档位、店铺扫描、核价公式、Worker安全及备份数量检查全部通过。
+- `ozon-erp-collector-extension.zip`已重新生成，并独立确认版本和批量扫描文件完整。
+- 尚未在真实Chrome/Edge中完成多店顺序切换、失败重试、中断恢复及400个以上商品店铺的浏览器验收。
+
+### 部署/安装要求
+
+- 需要在Chrome/Edge扩展管理页重新加载0.6.0；发给其他电脑时使用新版`ozon-erp-collector-extension.zip`并先解压。
+- 本次未修改网页业务逻辑，不需要上传`feishu.html`。
+- 本次未修改Worker，不需要重新部署Cloudflare Worker。
+
+## 2026-08-14 - 扩展0.5.15 跟卖最低价漏采修复
+
+### 改动
+
+- 修复符合要求商品在店铺扫描记录中缺少“跟卖最低价”，但进入详情页后毛子ERP已经显示价格的问题。
+- 根因是0.5.14的当前区域稳定判断只包含SKU、选品标签、rFBS佣金、尺寸和重量，没有把跟卖最低价作为加载完成条件；该字段晚于其他字段出现时，扩展可能提前滚过。
+- 跟卖最低价加入加载完成签名；字段标签或数值尚未完成时，该商品保持“待复查”，数值出现后自动清除待复查并更新保存记录。
+- 解析兼容中文/英文冒号、`¥`、`￥`、`₽`、空格、换行，以及 `无`、`暂无`、`没有跟卖`、`--` 等明确无价格状态。
+- 已保存的非空跟卖最低价不会被后续瞬时空值覆盖；后续读取到更新价格时仍可正常替换。
+- 商品详情页点击“检查本页数据”或发送前触发详情采集时，如果读取到跟卖最低价，会自动补全浏览器内相同SKU已有的店铺扫描记录。
+- 店铺扫描页监听本地记录变化，详情页补全后无需清空或重新扫描，返回店铺页即可使用新价格重新导出Markdown。
+- 原0.5.11佣金规则、0.5.14后台准确扫描、看门狗、反向回查和详情发送核价功能保持不变。
+- 扩展版本由0.5.14升级为0.5.15。
+
+### 涉及文件
+
+```text
+ozon-erp-collector-extension\store-scanner-core.js
+ozon-erp-collector-extension\store-scanner.js
+ozon-erp-collector-extension\content.js
+ozon-erp-collector-extension\manifest.json
+ozon-erp-collector-extension\popup.html
+ozon-erp-collector-extension\使用说明.md
+ozon-erp-collector-extension.zip
+tools\test-store-scanner.mjs
+PROJECT_STATUS.md
+CHANGELOG.md
+```
+
+### 回滚备份
+
+```text
+C:\Users\Microsoft\Documents\Ozon\_备份_20260814_ozon_store_competitor_price_0.5.14_before
+```
+
+创建新备份后已按修改时间轮换，常规 `_备份_...` 目录保持5个。
+
+### 验证
+
+- 店铺扫描测试覆盖 `¥201.65`、英文冒号与 `₽ 1 222,49`、明确 `暂无`、只有标签尚无数值、字段未就绪时保持待复查等情况。
+- 测试确认加载签名包含 `competitorReady`，非空价格覆盖保护和详情页反向补全代码存在。
+- `store-scanner-core.js`、`store-scanner.js`、`content.js`、`background.js`均通过JavaScript语法检查。
+- 已运行 `tools\build-release.ps1`；网页构建一致性、运费、佣金档位、店铺扫描、核价公式、Worker安全及备份数量检查全部通过。
+- `ozon-erp-collector-extension.zip` 已重新生成；独立读取确认版本为0.5.15，包含跟卖最低价等待、覆盖保护、详情页补全和原后台扫描脚本。
+- 尚未在Chrome/Edge重新加载0.5.15后用真实商品执行浏览器验收；SKU `4821128720`可作为验收样本，期望值为`¥122.49`。
+- 本次没有处理400个以上商品时全页面DOM遍历导致的性能/重载风险，该问题已记录在当前待办。
+
+### 部署/安装要求
+
+- 需要在Chrome/Edge扩展管理页重新加载0.5.15；发给其他电脑时使用新版 `ozon-erp-collector-extension.zip`。
+- 本次未修改网页业务逻辑，不需要上传 `feishu.html`。
+- 本次未修改Worker，不需要重新部署Cloudflare Worker。
+
+## 2026-08-14 - 扩展 0.5.14 切换标签页后继续后台扫描
+
+### 改动
+
+- 修复0.5.13在扫描期间切换到其他标签页后，Ozon/毛子 ERP 懒加载受到后台节流、可能只扫描首批商品就错误显示完成的问题。
+- 开始店铺扫描后，通过后台脚本将扫描标签页设为不可自动丢弃；停止、完成或离开页面后恢复标签页原来的自动丢弃设置。
+- 新增每30秒一次的 `chrome.alarms` 看门狗；内容脚本后台计时器长时间没有推进时，由扩展后台重新唤醒扫描轮询。
+- 切换标签页后扫描不暂停，自动使用后台参数：当前区域至少等待4秒、最长等待20秒、连续3次读取稳定才继续。
+- `您可能喜欢` 不再作为一次性完成信号。前台至少稳定确认12秒/3次，后台至少稳定确认30秒/5次，同时比较推荐区域位置、页面高度、店铺商品链接数和已识别SKU数。
+- 末尾确认期间若页面高度、商品数量或推荐区域位置发生变化，取消完成判断并继续向下扫描；确认稳定后再反向回查。
+- 面板在后台运行时显示“后台准确扫描”“后台反向复查”或“后台末尾确认”，方便区分当前状态。
+- 浏览器窗口完全最小化、电脑休眠、系统冻结浏览器进程或网络断开时仍可能延迟；恢复后看门狗继续推进，电脑休眠期间无法实际加载页面。
+- 原商品详情页采集、0.5.11佣金规则、编辑确认和发送核价功能保持不变。
+- 扩展版本由0.5.13升级为0.5.14，并新增 `alarms` 权限。
+
+### 涉及文件
+
+```text
+ozon-erp-collector-extension\background.js
+ozon-erp-collector-extension\store-scanner.js
+ozon-erp-collector-extension\manifest.json
+ozon-erp-collector-extension\popup.html
+ozon-erp-collector-extension\使用说明.md
+ozon-erp-collector-extension.zip
+tools\test-store-scanner.mjs
+PROJECT_STATUS.md
+CHANGELOG.md
+```
+
+### 回滚备份
+
+```text
+C:\Users\Microsoft\Documents\Ozon\_备份_20260814_ozon_store_scanner_background_0.5.13_before
+```
+
+创建新备份后已按修改时间轮换，常规 `_备份_...` 目录保持5个。
+
+### 验证
+
+- 店铺扫描测试新增0.5.14版本、`alarms` 权限、防自动丢弃、30秒看门狗、后台4秒/20秒等待、后台3次稳定及后台末尾30秒/5次确认检查。
+- `background.js`、`store-scanner.js`、`store-scanner-core.js`、原详情采集脚本均通过JavaScript语法检查。
+- 已运行 `tools\build-release.ps1`；网页构建一致性、运费、佣金档位、店铺扫描、核价公式、Worker安全及备份数量检查全部通过。
+- `ozon-erp-collector-extension.zip` 已重新生成；独立读取确认版本为0.5.14，包含 `alarms` 权限、后台末尾确认、看门狗、防自动丢弃和原 `content.js` 详情采集脚本。
+- 尚未在Chrome/Edge重新加载0.5.14后执行“扫描时切换标签页”的真实店铺验收。
+
+### 部署/安装要求
+
+- 需要在Chrome/Edge扩展管理页重新加载0.5.14；发给其他电脑时使用新版 `ozon-erp-collector-extension.zip`。
+- 本次未修改网页业务逻辑，不需要上传 `feishu.html`。
+- 本次未修改Worker，不需要重新部署Cloudflare Worker。
+
+## 2026-08-14 - 扩展 0.5.13 店铺准确扫描与反向回查
+
+### 改动
+
+- 修复 0.5.12 自动滚动速度快于毛子 ERP 信息加载、商品卡片可能尚未出现 SKU、rFBS 佣金和选品标签就被滚过的问题。
+- 扫描从固定约 1.1 秒滚动改为“当前区域加载稳定后再继续”：滚动后至少等待 1.5 秒，每 0.5 秒读取一次，当前区域连续 2 次结果一致才进入下一屏。
+- 单个区域最长等待 10 秒；尚未加载的商品链接加入“待复查”，不会静默当作已扫描完成。
+- 每次滚动距离调整为约 45% 屏幕高度，使相邻扫描区域保留重叠。
+- 到达 `您可能喜欢` 区域前后，自动切换为从底部向顶部的反向复查；只有确认到达店铺边界且待复查清零时，才把结果标记为完整扫描。
+- 店铺面板新增“待复查”计数，并在扫描状态中显示本屏已加载数量和稳定检查进度。
+- 增加连续无法下移和最大前进次数保护，避免页面异常时无限滚动。
+- 保留 0.5.11/0.5.12 的商品详情页采集、佣金档位计算、编辑确认和发送核价能力；只优化店铺页扫描模式。
+- 扩展版本由 0.5.12 升级为 0.5.13。
+
+### 涉及文件
+
+```text
+ozon-erp-collector-extension\store-scanner-core.js
+ozon-erp-collector-extension\store-scanner.js
+ozon-erp-collector-extension\manifest.json
+ozon-erp-collector-extension\popup.html
+ozon-erp-collector-extension\使用说明.md
+ozon-erp-collector-extension.zip
+tools\test-store-scanner.mjs
+PROJECT_STATUS.md
+CHANGELOG.md
+```
+
+### 回滚备份
+
+```text
+C:\Users\Microsoft\Documents\Ozon\_备份_20260814_ozon_store_scanner_accuracy_0.5.12_before
+```
+
+创建新备份后已按修改时间轮换，常规 `_备份_...` 目录保持 5 个。
+
+### 验证
+
+- 店铺扫描测试新增当前区域可见链接、已加载链接、待加载链接和稳定签名判断，并校验 1.5 秒初始等待、0.5 秒轮询、10 秒超时、连续 2 次稳定、45% 滚动及反向回查配置。
+- `store-scanner-core.js`、`store-scanner.js`、原详情采集脚本和后台脚本均通过 JavaScript 语法检查。
+- 已运行 `tools\build-release.ps1`；网页构建一致性、运费、佣金档位、店铺扫描、核价公式、Worker 安全及备份数量检查全部通过。
+- `ozon-erp-collector-extension.zip` 已重新生成；独立读取确认版本为 0.5.13，包含准确等待、反向回查和原 `content.js` 详情采集脚本。
+- 尚未在 Chrome/Edge 重新加载 0.5.13 后做真实店铺验收。
+
+### 部署/安装要求
+
+- 需要在 Chrome/Edge 扩展管理页重新加载 0.5.13；发给其他电脑时使用新版 `ozon-erp-collector-extension.zip`。
+- 本次未修改网页业务逻辑，不需要上传 `feishu.html`。
+- 本次未修改 Worker，不需要重新部署 Cloudflare Worker。
+
+## 2026-08-14 - 扩展 0.5.12 Ozon 店铺“符合要求”商品扫描
+
+### 改动
+
+- 在现有扩展中新增 Ozon 店铺页扫描模式，不另做第二个扩展。
+- 打开 `/seller/.../` 店铺页并启动扩展后，页面左侧显示“OZON 店铺扫描”面板。
+- 只收录毛子 ERP 商品卡片中明确显示 `符合要求` 标签的商品，并按 SKU 去重；不使用文字推断或其他标签代替。
+- 支持点击“开始自动扫描”后自动向下滚动，也支持用户手动滚动时持续识别和记录。
+- 以页面中的 `您可能喜欢` 标题作为店铺商品边界，到达并稳定后自动停止，推荐区域商品不计入结果。
+- 扫描记录按店铺保存在 `chrome.storage.local`，可停止后继续、刷新后恢复或清空本店记录。
+- 新增 Markdown 导出，包含商品名称、SKU、价格、rFBS 佣金、月销量、发货模式、尺寸、重量、跟卖最低价和商品链接，并标记扫描是否完整。
+- 商品详情页原有采集、佣金档位和发送核价功能保持不变；店铺页不会再显示详情采集面板。
+- 扩展版本由 0.5.11 升级为 0.5.12。
+
+### 涉及文件
+
+```text
+ozon-erp-collector-extension\store-scanner-core.js
+ozon-erp-collector-extension\store-scanner.js
+ozon-erp-collector-extension\background.js
+ozon-erp-collector-extension\content.js
+ozon-erp-collector-extension\manifest.json
+ozon-erp-collector-extension\popup.html
+ozon-erp-collector-extension\使用说明.md
+ozon-erp-collector-extension.zip
+tools\test-store-scanner.mjs
+tools\verify-project.ps1
+package.json
+PROJECT_STATUS.md
+CHANGELOG.md
+```
+
+### 回滚备份
+
+```text
+C:\Users\Microsoft\Documents\Ozon\_备份_20260814_ozon_store_scanner_0.5.11_before
+```
+
+创建新备份后已按修改时间轮换，常规 `_备份_...` 目录保持 5 个。
+
+### 验证
+
+- 店铺扫描核心测试通过，覆盖店铺 URL 识别、商品链接规范化、明确“符合要求”标签、SKU/价格/rFBS/尺寸/重量等字段解析、非符合商品排除及 Markdown 输出。
+- 新增脚本及扩展原有脚本均通过 JavaScript 语法检查。
+- 已运行 `tools\build-release.ps1`；网页构建一致性、运费、佣金档位、店铺扫描、核价公式、Worker 安全及备份数量检查全部通过。
+- `ozon-erp-collector-extension.zip` 已重新生成；独立读取确认压缩包版本为 0.5.12，并包含 `store-scanner-core.js` 和 `store-scanner.js`。
+- 尚未在重新加载 0.5.12 后对真实店铺做浏览器端验收，已列入当前待办。
+
+### 部署/安装要求
+
+- 需要在 Chrome/Edge 扩展管理页重新加载 0.5.12；发给其他电脑时应使用新版 `ozon-erp-collector-extension.zip`，解压后加载文件夹。
+- 本次未修改网页业务逻辑，不需要上传 `feishu.html`。
+- 本次未修改 Worker，不需要重新部署 Cloudflare Worker。
+
+## 2026-08-14 - 扩展 0.5.11 Chrome 真实浏览器验收
+
+### 验收结果
+
+- Chrome 商品页采集面板确认显示 `v0.5.11`。
+- 真实低价商品 SKU `4479204333`：绿标价格 `146.65`，毛子 ERP rFBS 三档为 `12% / 17% / 17%`，扩展自动填入第 2 档 `17%`。
+- 真实高价商品 SKU `3871914086`：绿标价格 `894.14`，毛子 ERP rFBS 三档为 `12% / 14% / 18%`，扩展自动填入第 3 档 `18%`。
+- 使用 SKU `3871914086` 的真实 rFBS 档位在扩展确认区复核边界：绿标价格 `600` 时自动填入第 2 档 `14%`，`600.01` 时自动切换为第 3 档 `18%`。
+- 边界复核后已将确认区绿标价格恢复为实际值 `894.14`，佣金恢复为 `18%`；本次没有发送到核价页或飞书。
+
+### 涉及文件
+
+```text
+PROJECT_STATUS.md
+CHANGELOG.md
+```
+
+### 交付说明
+
+- 本次仅做真实浏览器验收和文档记录，没有修改网页、扩展、运费规则或 Worker，因此未创建新的代码回滚备份。
+- 不需要上传 `feishu.html`，不需要重新生成或安装扩展 zip，也不需要部署 Cloudflare Worker。
+
+## 2026-08-12 - 扩展 0.5.11 佣金档位规则调整
+
+### 改动
+
+- 自动佣金不再使用毛子 ERP `rFBS佣金` 的第 1 个百分比。
+- 绿标价格小于或等于 600 时，只取第 2 个百分比；绿标价格大于 600 时，只取第 3 个百分比。
+- 如果对应的第 2 或第 3 个百分比未识别到，佣金保持空白，不向其他档位回退。
+- 修改扩展确认区中的绿标价格后，仍按上述规则实时重新计算佣金。
+- 扩展版本由 0.5.10 升级为 0.5.11。
+- 新增佣金档位自动测试，覆盖 0、135、600、600.01、对应档位缺失以及第 1 个百分比禁止回退等情况。
+
+### 涉及文件
+
+```text
+ozon-erp-collector-extension\content.js
+ozon-erp-collector-extension\manifest.json
+ozon-erp-collector-extension\popup.html
+ozon-erp-collector-extension\使用说明.md
+ozon-erp-collector-extension.zip
+tools\test-commission-rules.mjs
+tools\verify-project.ps1
+package.json
+PROJECT_STATUS.md
+CHANGELOG.md
+```
+
+### 回滚备份
+
+```text
+C:\Users\Microsoft\Documents\Ozon\_备份_20260812_ozon_commission_rule_0.5.10_before
+```
+
+创建新备份后已按修改时间轮换，常规 `_备份_...` 目录保持 5 个。
+
+### 验证
+
+- `tools\test-commission-rules.mjs` 通过，确认第 1 个百分比不会在任何价格档位被采用。
+- 已运行 `tools\build-release.ps1`；运费规则同步、网页构建一致性、运费规则、佣金档位、核价公式、Worker 安全和扩展脚本检查全部通过。
+- `ozon-erp-collector-extension.zip` 已重新生成并包含扩展 0.5.11。
+
+### 部署/安装要求
+
+- 需要在 Chrome/Edge 扩展管理页重新加载扩展 0.5.11。
+- 本次未修改网页业务逻辑，不需要重新上传 `feishu.html`。
+- 本次未修改 Worker，不需要重新部署 Cloudflare Worker。
+
+## 2026-07-20 - 运费价格测算表 260720 更新
+
+### 改动
+
+- 依据 `E:\Ozon\运费价格测算表260720.xlsx` 中可见的 6 条经济线路实际公式更新运费价格；隐藏的邮政、特快、标准和香港线路未纳入。
+- 六条线路的新公式分别为：
+  - 经济超级轻小件：`28.1 × 实重 + 3.4`
+  - 经济低客单价轻小件：`19.1 × 实重 + 25.9`
+  - 经济轻小件：`28.1 × 实重 + 18.8`
+  - 经济高客单轻小件：`28.1 × 实重 + 24.8`
+  - 经济大件：`19.1 × 计费重 + 40.5`
+  - 经济高客单大件：`25.8 × 计费重 + 69.7`
+- 仅更新价格参数；货值分档、实重范围、尺寸限制、大件体积重除数 `12000` 和当前计费重判断保持不变。
+- 网页版本更新为 `2026.07.20-freight`；扩展升级为 0.5.10，核价页入口更新为 `v=20260720`。
+- 新增六条代表性价格断言，防止后续同步或构建时回退到旧价格。
+
+### 涉及文件
+
+```text
+shared\freight-rules.json
+tools\test-freight-rules.mjs
+web-src\app.js
+feishu.html
+ozon-feishu-sync\site\index.html
+ozon-erp-collector-extension\manifest.json
+ozon-erp-collector-extension\background.js
+ozon-erp-collector-extension\content.js
+ozon-erp-collector-extension\popup.html
+ozon-erp-collector-extension\使用说明.md
+ozon-erp-collector-extension.zip
+package.json
+PROJECT_STATUS.md
+CHANGELOG.md
+```
+
+### 回滚备份
+
+```text
+C:\Users\Microsoft\Documents\Ozon\_备份_20260720_ozon_freight_rules_260720_before
+```
+
+创建新备份后已按修改时间轮换，常规 `_备份_...` 目录保持 5 个。
+
+### 验证
+
+- 已运行 `tools\build-release.ps1`，运费规则同步、网页构建一致性、运费边界与新价格、核价公式、Worker 安全和扩展语法检查全部通过。
+- 根目录 `feishu.html` 与 `ozon-feishu-sync\site\index.html` 已由同一网页源码重新生成。
+- `ozon-erp-collector-extension.zip` 已重新生成并包含扩展 0.5.10。
+
+### 部署/安装要求
+
+- 需要上传新版根目录 `feishu.html` 到 GitHub Pages，并使用 `v=20260720` 地址验收。
+- 需要在 Chrome/Edge 扩展管理页重新加载 0.5.10。
+- 未修改 Worker，不需要重新部署 Cloudflare Worker。
 
 ## 2026-07-11 - 同步备注默认当天日期
 

@@ -1,4 +1,5 @@
 const activateButton = document.getElementById("activate");
+const batchManagerButton = document.getElementById("batchManager");
 const autoStartButton = document.getElementById("autoStart");
 const autoStopButton = document.getElementById("autoStop");
 const statusEl = document.getElementById("status");
@@ -32,6 +33,16 @@ activateButton.addEventListener("click", () => {
       return;
     }
     setStatus("已启动，回到页面左侧查看采集面板。");
+  });
+});
+
+batchManagerButton.addEventListener("click", () => {
+  chrome.runtime.sendMessage({ type: "openBatchManager" }, (response) => {
+    if (chrome.runtime.lastError || !response?.ok) {
+      setStatus(chrome.runtime.lastError?.message || response?.error || "无法打开批量扫描页", false);
+      return;
+    }
+    window.close();
   });
 });
 
