@@ -47,6 +47,7 @@ C:\Users\Microsoft\Documents\Ozon\tools\verify-project.ps1
 C:\Users\Microsoft\Documents\Ozon\当前文件怎么用.md
 C:\Users\Microsoft\Documents\Ozon\OZON项目复现交接文档.md
 C:\Users\Microsoft\Documents\Ozon\真实浏览器验收清单.md
+C:\Users\Microsoft\Documents\Ozon\黑标价自动填充方案.md
 ```
 
 ## 固定交付规则
