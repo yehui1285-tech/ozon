@@ -18,6 +18,7 @@ const BATCH_RETRY_LIMIT = 2;
 const BATCH_COOLDOWN_MS = 8000;
 const BATCH_ALARM_FALLBACK_MS = 30000;
 const BATCH_START_DELAY_MS = 2500;
+const BATCH_RELOAD_SKIP_LIMIT = 2;
 const ZERO_MATCH_OBSERVED_THRESHOLD = 500;
 const AUTO_SKIP_OBSERVED_THRESHOLD = 1000;
 const AUTO_SKIP_QUALIFIED_LIMIT = 3;
@@ -755,8 +756,19 @@ async function markBatchTabReloading(tabId) {
   task.status = "recovering";
   task.needsRecovery = true;
   task.reloadCount = (Number(task.reloadCount) || 0) + 1;
+  if (task.reloadCount >= BATCH_RELOAD_SKIP_LIMIT) {
+    task.status = "skipped";
+    task.phase = "skipped";
+    task.needsRecovery = false;
+    task.error = "";
+    task.note = `页面连续刷新${BATCH_RELOAD_SKIP_LIMIT}次，已自动跳过当前店铺（保留已找到商品）。`;
+    task.completedAt = new Date().toISOString();
+    await chrome.tabs.sendMessage(tabId, { type: "stopStoreScan", silent: true }).catch(() => null);
+    await scheduleBatchNext(batch, false, `第 ${batch.currentIndex + 1}/${batch.stores.length} 家店铺页面连续刷新${BATCH_RELOAD_SKIP_LIMIT}次，已自动跳过，等待 ${BATCH_COOLDOWN_MS / 1000} 秒后扫描下一家。`);
+    return;
+  }
   task.phase = "recovering";
-  batch.message = `第 ${batch.currentIndex + 1}/${batch.stores.length} 家店铺页面正在重新加载，完成后会自动续扫。`;
+  batch.message = `第 ${batch.currentIndex + 1}/${batch.stores.length} 家店铺页面正在重新加载（第 ${task.reloadCount}/${BATCH_RELOAD_SKIP_LIMIT} 次），完成后会自动续扫。`;
   await saveBatch(batch);
 }
 

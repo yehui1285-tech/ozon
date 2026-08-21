@@ -66,6 +66,8 @@ C:\Users\Microsoft\Documents\Ozon\黑标价自动填充方案.md
 - 不要把 App Secret、账号密码、token、cookie 写入公开文档或 GitHub。
 - 网页、扩展或运费规则修改后，交付前运行 `powershell -ExecutionPolicy Bypass -File tools\build-release.ps1`，由脚本同步规则、构建网页、执行测试并重新生成 zip。
 - `web-src` 是网页源码；根目录 `feishu.html` 与 `ozon-feishu-sync\site\index.html` 是构建产物，不要只改构建产物。
+- 每次版本迭代完成后，必须只暂存本次确认的项目文件，创建简洁明确的 Git 提交并推送到 GitHub `origin/main`；不得把导出数据、备份目录、账号凭据或其他无关文件混入提交。
+- 推送后必须实时读取远端 `main`，确认远端提交与本地 `HEAD` 一致；只有提交、推送和远端核对全部成功，才能说明“已更新 GitHub”。推送被拒绝时先检查远端差异并安全 rebase，禁止强制推送覆盖远端历史。
 
 ## 常用判断
 
@@ -87,3 +89,4 @@ C:\Users\Microsoft\Documents\Ozon\黑标价自动填充方案.md
 - 是否需要部署 Cloudflare Worker？
 - 做过哪些验证？还有什么未验证？
 - 是否按 `真实浏览器验收清单.md` 完成了真实浏览器验收？
+- 是否已提交并推送本次版本到 GitHub `origin/main`，且确认远端 `main` 与本地 `HEAD` 一致？

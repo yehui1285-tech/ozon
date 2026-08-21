@@ -5,6 +5,68 @@
 - `当前文件怎么用.md`
 - `OZON项目复现交接文档.md`
 
+## 2026-08-21 - 固化版本迭代自动同步 GitHub 规则
+
+### 规则
+
+- 每次版本迭代完成后，只暂存本次确认的项目文件，创建清晰的 Git 提交并推送到 `origin/main`。
+- 推送后实时读取 GitHub 远端 `main`，确认其提交与本地 `HEAD` 一致，之后才能声明“已更新 GitHub”。
+- 导出数据、回滚备份、账号凭据和其他无关文件不得混入提交；远端存在新提交时先检查差异并安全 rebase，禁止强制推送覆盖远端历史。
+
+### 本次执行范围
+
+- 将扩展 0.6.8“同一店铺连续刷新两次自动跳过”的源码、测试、发布 ZIP、使用说明、验收清单和交接文档提交并推送到 GitHub `main`。
+- 本地导出数据 `HJ025_符合要求商品_截至20260814.md` 保持未跟踪，不纳入提交。
+
+### 涉及文件
+
+```text
+AGENTS.md
+PROJECT_STATUS.md
+CHANGELOG.md
+```
+
+## 2026-08-20 - 批量扫描连续两次刷新自动跳店（扩展 0.6.8）
+
+### 改动
+
+- 批量扫描中，同一家店铺扫描页第 1 次刷新维持原有“刷新后自动恢复”行为；第 2 次刷新时，停止当前扫描并将该店标记为“已跳过”。
+- 自动跳过会保留当前店已经找到的商品，随后按原有 8 秒间隔进入下一家，避免超大或加载困难页面反复占用批量任务。
+- 单店手动扫描不受此规则影响。
+- 后台集成测试新增覆盖：第 1 次刷新恢复、第 2 次刷新跳过、切换到下一家和 8 秒等待。
+
+### 涉及文件
+
+```text
+ozon-erp-collector-extension\\background.js
+ozon-erp-collector-extension\\manifest.json
+ozon-erp-collector-extension\\使用说明.md
+tools\\test-store-background-integration.mjs
+tools\\test-store-scanner.mjs
+PROJECT_STATUS.md
+CHANGELOG.md
+真实浏览器验收清单.md
+```
+
+### 回滚备份
+
+```text
+C:\\Users\\Microsoft\\Documents\\Ozon\\_备份_20260820_ozon_batch_reload_skip_0.6.7_before
+```
+
+创建备份后已按规则删除最旧常规备份 `_备份_20260815_ozon_delete_batch_store_0.6.2_before`，常规 `_备份_...` 目录保持 5 个。
+
+### 验证
+
+- `npm.cmd test` 全链路通过：网页构建/规则检查、运费边界、佣金档位、店铺扫描、后台集成、核价、Worker 安全、50个解析样本均通过。
+- 按项目发布脚本重新生成扩展 ZIP，并独立读取确认 `manifest.json` 为 0.6.8，`background.js`、`store-scanner-core.js`、`store-scanner.js`、`batch.js`、`batch.html`、`content.js` 与源码一致；ZIP SHA-256：`C4901410FB93BA285C1FD11EF74F0947527886D9767C9866EC3CBBB92AE8C265`。
+- 真实 Chrome/Edge 验收待重新加载 0.6.8 后完成。
+
+### 部署/安装要求
+
+- 需要重新生成并安装或刷新 `ozon-erp-collector-extension.zip` / 解压后的扩展目录。
+- 未修改网页或 Worker，不需要上传 `feishu.html` 或部署 Cloudflare Worker。
+
 ## 2026-08-15 - 解析样本回归测试库与真实浏览器验收清单
 
 ### 改动

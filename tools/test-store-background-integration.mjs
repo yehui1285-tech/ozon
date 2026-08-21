@@ -96,7 +96,29 @@ storageData.ozonStoreBatchV1 = {
 await context.markBatchTabReloading(7);
 assert.equal(storageData.ozonStoreBatchV1.stores[0].status, "recovering");
 assert.equal(storageData.ozonStoreBatchV1.stores[0].needsRecovery, true);
+assert.equal(storageData.ozonStoreBatchV1.stores[0].reloadCount, 1);
+const batchTestAfterFirstReload = JSON.parse(JSON.stringify(storageData.ozonStoreBatchV1));
 
+storageData.ozonStoreBatchV1 = {
+  id: "batch-reload-loop",
+  revision: 0,
+  status: "running",
+  currentIndex: 0,
+  tabId: 7,
+  stores: [
+    { sellerKey: "alpha", url: "https://www.ozon.ru/seller/alpha/", status: "scanning", phase: "scanning", attemptId: "attempt-reload", attemptObservedSkus: [], observedCount: 12, qualifiedCount: 1, pendingCount: 0, reloadCount: 1 },
+    { sellerKey: "beta", url: "https://www.ozon.ru/seller/beta/", status: "pending", phase: "pending", attemptId: "", attemptObservedSkus: [], observedCount: 0, qualifiedCount: 0, pendingCount: 0, reloadCount: 0 },
+  ],
+};
+await context.markBatchTabReloading(7);
+assert.equal(storageData.ozonStoreBatchV1.stores[0].status, "skipped");
+assert.equal(storageData.ozonStoreBatchV1.stores[0].phase, "skipped");
+assert.equal(storageData.ozonStoreBatchV1.stores[0].reloadCount, 2);
+assert.match(storageData.ozonStoreBatchV1.stores[0].note, /页面连续刷新2次/);
+assert.equal(storageData.ozonStoreBatchV1.currentIndex, 1);
+assert.ok(storageData.ozonStoreBatchV1.nextRunAt >= Date.now() + 7900);
+
+storageData.ozonStoreBatchV1 = batchTestAfterFirstReload;
 storageData.ozonStoreBatchV1.stores[0].status = "scanning";
 const firstRunSkus = Array.from({ length: 500 }, (_, index) => String(index + 1));
 await context.updateBatchProgress({
