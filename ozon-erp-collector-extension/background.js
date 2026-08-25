@@ -24,6 +24,8 @@ const BATCH_RELOAD_SKIP_LIMIT = 2;
 const ZERO_MATCH_OBSERVED_THRESHOLD = 500;
 const AUTO_SKIP_OBSERVED_THRESHOLD = 1000;
 const AUTO_SKIP_QUALIFIED_LIMIT = 3;
+const MAIN_IMAGE_METADATA_TIMEOUT_MS = 3500;
+const MAIN_IMAGE_TAB_TIMEOUT_MS = 6000;
 const autoInjectedTabs = new Set();
 const temporaryProductTabs = new Set();
 const enqueueBatchOperation = storeScannerCore.createSerializedExecutor();
@@ -280,8 +282,14 @@ function probeMainImageCandidates() {
 async function readMainImageAsSoonAsAvailable(tabId, timeoutMs = 6000) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
+    const remainingMs = timeoutMs - (Date.now() - startedAt);
     try {
-      const results = await chrome.scripting.executeScript({ target: { tabId }, func: probeMainImageCandidates });
+      let timer = null;
+      const results = await Promise.race([
+        chrome.scripting.executeScript({ target: { tabId }, func: probeMainImageCandidates }),
+        new Promise((resolve) => { timer = setTimeout(() => resolve(null), Math.min(2000, Math.max(100, remainingMs))); }),
+      ]).finally(() => clearTimeout(timer));
+      if (!results) return null;
       const selected = mainImageCore.chooseBestCandidate(results?.[0]?.result || []);
       if (selected?.url) return { ...selected, elapsedMs: Date.now() - startedAt };
     } catch {
@@ -292,17 +300,63 @@ async function readMainImageAsSoonAsAvailable(tabId, timeoutMs = 6000) {
   return null;
 }
 
+async function readHtmlHead(response, maxCharacters = 512000) {
+  if (!response.body?.getReader) return response.text();
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let html = "";
+  try {
+    while (html.length < maxCharacters) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      html += decoder.decode(value, { stream: true });
+      if (/<\/head\s*>/i.test(html)) break;
+    }
+    html += decoder.decode();
+    return html;
+  } finally {
+    await reader.cancel().catch(() => null);
+  }
+}
+
+async function readMainImageFromMetadata(url, timeoutMs = MAIN_IMAGE_METADATA_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      credentials: "include",
+      cache: "no-store",
+      redirect: "follow",
+      headers: { Accept: "text/html,application/xhtml+xml" },
+      signal: controller.signal,
+    });
+    if (!response.ok) return null;
+    const html = await readHtmlHead(response);
+    return mainImageCore.chooseBestCandidate(mainImageCore.metadataImageCandidates(html));
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function readMainImageFromProductUrl(rawUrl) {
   const url = blackPriceCore.normalizeProductUrl(rawUrl);
   if (!url) throw new Error("Ozon商品链接无效，主图未补齐。");
+  const startedAt = Date.now();
+  const metadataImage = await readMainImageFromMetadata(url);
+  if (metadataImage?.url) {
+    return { ok: true, imageUrl: metadataImage.url, source: metadataImage.source, route: "metadata-fetch", elapsedMs: Date.now() - startedAt, url };
+  }
   let tab = null;
   try {
     tab = await chrome.tabs.create({ url, active: false });
     temporaryProductTabs.add(tab.id);
     await chrome.tabs.update(tab.id, { autoDiscardable: false }).catch(() => null);
-    const image = await readMainImageAsSoonAsAvailable(tab.id, 6000);
-    if (!image?.url) throw new Error("6秒内未读取到Ozon商品主图，可稍后重试或手工补齐。");
-    return { ok: true, imageUrl: image.url, source: image.source, elapsedMs: image.elapsedMs, url };
+    const image = await readMainImageAsSoonAsAvailable(tab.id, MAIN_IMAGE_TAB_TIMEOUT_MS);
+    if (!image?.url) throw new Error("元数据直读失败，后台页也未在硬超时内读取到主图，可稍后重试。");
+    return { ok: true, imageUrl: image.url, source: image.source, route: "tab-fallback", elapsedMs: Date.now() - startedAt, url };
   } finally {
     if (tab?.id) {
       temporaryProductTabs.delete(tab.id);

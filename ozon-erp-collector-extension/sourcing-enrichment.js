@@ -57,7 +57,7 @@ function renderRows() {
   if (!tasks.length) {
     const row = document.createElement("tr");
     const empty = cell("尚未导入任务。", "muted");
-    empty.colSpan = 8;
+    empty.colSpan = 9;
     row.append(empty);
     rowsElement.append(row);
     updateStats();
@@ -86,6 +86,8 @@ function renderRows() {
     const state = taskState(task);
     const stateLabels = { pending: "等待", running: "读取中", completed: "成功", failed: "失败" };
     row.append(cell(stateLabels[state] || state, state === "completed" ? "ok" : state === "failed" ? "bad" : "muted"));
+    const routeLabels = { "metadata-fetch": "元数据直读", "tab-fallback": "标签页兜底" };
+    row.append(cell(routeLabels[task.enrichment?.mainImageRoute] || "-", "muted"));
     row.append(cell(task.enrichment?.mainImageElapsedMs ? `${(task.enrichment.mainImageElapsedMs / 1000).toFixed(1)}秒` : "-", "muted"));
     const linkCell = document.createElement("td");
     if (isOzonProductUrl(task.ozon?.productUrl)) {
@@ -149,6 +151,7 @@ async function runEnrichment() {
       const response = await sendMessage({ type: "readMainImageFromProductUrl", url: task.ozon.productUrl });
       task.enrichment.mainImageUrl = response.imageUrl;
       task.enrichment.mainImageSource = response.source;
+      task.enrichment.mainImageRoute = response.route;
       task.enrichment.mainImageElapsedMs = Number(response.elapsedMs || 0);
       task.enrichment.mainImageFetchedAt = new Date().toISOString();
       task.enrichment.mainImageStatus = "completed";

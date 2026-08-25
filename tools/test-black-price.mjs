@@ -50,7 +50,7 @@ const contentSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/c
 const backgroundSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/background.js", import.meta.url), "utf8");
 const manifest = JSON.parse(fs.readFileSync(new URL("../ozon-erp-collector-extension/manifest.json", import.meta.url), "utf8"));
 
-assert.equal(manifest.version, "0.6.12");
+assert.equal(manifest.version, "0.6.13");
 assert.match(contentSource, /span\.pdp_h0b/);
 assert.match(contentSource, /#mz-black-price-tag/);
 assert.match(contentSource, /readBlackPriceFromProductUrl/);

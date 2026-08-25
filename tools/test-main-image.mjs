@@ -31,18 +31,36 @@ const gallerySelected = core.chooseBestCandidate([
 assert.equal(gallerySelected.url, "https://ir.ozone.ru/s3/multimedia-b/wc1200/large.jpg");
 assert.equal(core.chooseBestCandidate([{ url: "https://example.com/image.jpg", source: "og:image" }]), null);
 
+const metadataCandidates = core.metadataImageCandidates(`
+<!doctype html><html><head>
+  <meta content="https://ir.ozone.ru/s3/multimedia-1-e/c600/main.jpg?x=1&amp;y=2" property="og:image">
+  <meta name='twitter:image' content='https://ir.ozone.ru/s3/multimedia-1-e/wc1000/twitter.jpg'>
+</head></html>`);
+assert.equal(metadataCandidates.length, 2);
+assert.equal(metadataCandidates[0].url, "https://ir.ozone.ru/s3/multimedia-1-e/c600/main.jpg?x=1&y=2");
+assert.equal(metadataCandidates[0].source, "og:image");
+assert.equal(core.metadataImageCandidates('<meta property="description" content="no image">').length, 0);
+
 const backgroundSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/background.js", import.meta.url), "utf8");
 const popupSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/popup.js", import.meta.url), "utf8");
 const enrichmentSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/sourcing-enrichment.js", import.meta.url), "utf8");
 const manifest = JSON.parse(fs.readFileSync(new URL("../ozon-erp-collector-extension/manifest.json", import.meta.url), "utf8"));
 
-assert.equal(manifest.version, "0.6.12");
+assert.equal(manifest.version, "0.6.13");
 assert.match(backgroundSource, /probeMainImageCandidates/);
-assert.match(backgroundSource, /readMainImageAsSoonAsAvailable\(tab\.id, 6000\)/);
+assert.match(backgroundSource, /readMainImageFromMetadata\(url\)/);
+assert.match(backgroundSource, /metadata-fetch/);
+assert.match(backgroundSource, /tab-fallback/);
+assert.match(backgroundSource, /new AbortController\(\)/);
+assert.match(backgroundSource, /response\.body\.getReader\(\)/);
+assert.match(backgroundSource, /<\\\/head\\s\*>/);
+assert.match(backgroundSource, /Promise\.race\(\[/);
+assert.match(backgroundSource, /readMainImageAsSoonAsAvailable\(tab\.id, MAIN_IMAGE_TAB_TIMEOUT_MS\)/);
 assert.match(backgroundSource, /message\?\.type === "readMainImageFromProductUrl"/);
 assert.match(backgroundSource, /chrome\.tabs\.remove\(tab\.id\)/);
 assert.match(popupSource, /openSourcingEnrichment/);
 assert.match(enrichmentSource, /mainImageStatus = "completed"/);
+assert.match(enrichmentSource, /mainImageRoute = response\.route/);
 assert.match(enrichmentSource, /mainImageError/);
 assert.match(enrichmentSource, /replaceChildren/);
 assert.doesNotMatch(enrichmentSource, /\.innerHTML\s*=/);

@@ -41,5 +41,33 @@
     return [...unique.values()].sort((a, b) => b.score - a.score)[0] || null;
   }
 
-  root.OzonMainImageCore = { normalizedImageUrl, chooseBestCandidate };
+  function decodeHtmlEntities(value) {
+    const named = { amp: "&", quot: '"', apos: "'", lt: "<", gt: ">" };
+    return String(value || "")
+      .replace(/&(#x[0-9a-f]+|#\d+|amp|quot|apos|lt|gt);/gi, (match, entity) => {
+        if (entity[0] === "#") {
+          const hexadecimal = entity[1]?.toLowerCase() === "x";
+          const codePoint = Number.parseInt(entity.slice(hexadecimal ? 2 : 1), hexadecimal ? 16 : 10);
+          return Number.isInteger(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : match;
+        }
+        return named[entity.toLowerCase()] || match;
+      });
+  }
+
+  function metadataImageCandidates(html) {
+    const candidates = [];
+    const metaTags = String(html || "").match(/<meta\b[^>]*>/gi) || [];
+    for (const tag of metaTags) {
+      const attributes = {};
+      for (const match of tag.matchAll(/([:\w-]+)\s*=\s*(["'])([\s\S]*?)\2/g)) {
+        attributes[match[1].toLowerCase()] = decodeHtmlEntities(match[3].trim());
+      }
+      const key = String(attributes.property || attributes.name || "").toLowerCase();
+      if (!["og:image", "og:image:url", "twitter:image", "twitter:image:src"].includes(key)) continue;
+      if (attributes.content) candidates.push({ url: attributes.content, source: key === "og:image:url" ? "og:image" : key, visible: true });
+    }
+    return candidates;
+  }
+
+  root.OzonMainImageCore = { normalizedImageUrl, chooseBestCandidate, metadataImageCandidates };
 })(globalThis);

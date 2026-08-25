@@ -52,7 +52,7 @@
         <h1>Ozon 找品详情补全</h1>
         <p class="subtitle">导入本地找品任务JSON后，扩展会逐件在后台打开Ozon商品页，读取主图URL并立即关闭临时页。</p>
       </div>
-      <span class="version">扩展 v0.6.12 · 主图阶段</span>
+      <span class="version">扩展 v0.6.13 · 主图提速</span>
     </header>
     <main class="panel">
       <div class="toolbar">
@@ -61,7 +61,7 @@
         <button id="stop" class="stop" type="button" disabled>处理完当前件后停止</button>
         <button id="download" class="secondary" type="button" disabled>下载补齐后的JSON</button>
       </div>
-      <p class="notice">只保存主图链接，不会下载图片。单件最多等待6秒；失败项保留并可再次点击“自动补齐主图”重试。</p>
+      <p class="notice">优先直接读取商品页元数据，不打开标签页；仅在直读失败时打开一个后台临时页兜底。只保存主图链接，不下载图片。</p>
       <p id="status" aria-live="polite">请先选择 `batch-...-sample-10.json`。</p>
       <section class="stats" aria-label="处理统计">
         <div class="stat"><span>任务总数</span><strong id="totalCount">0</strong></div>
@@ -71,8 +71,8 @@
       </section>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>#</th><th>主图</th><th>SKU</th><th>商品名称</th><th>店铺</th><th>状态</th><th>耗时</th><th>商品页</th></tr></thead>
-          <tbody id="taskRows"><tr><td colspan="8" class="muted">尚未导入任务。</td></tr></tbody>
+          <thead><tr><th>#</th><th>主图</th><th>SKU</th><th>商品名称</th><th>店铺</th><th>状态</th><th>读取方式</th><th>耗时</th><th>商品页</th></tr></thead>
+          <tbody id="taskRows"><tr><td colspan="9" class="muted">尚未导入任务。</td></tr></tbody>
         </table>
       </div>
     </main>
