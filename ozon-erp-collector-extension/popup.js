@@ -1,5 +1,6 @@
 const activateButton = document.getElementById("activate");
 const batchManagerButton = document.getElementById("batchManager");
+const sourcingEnrichmentButton = document.getElementById("sourcingEnrichment");
 const autoStartButton = document.getElementById("autoStart");
 const autoStopButton = document.getElementById("autoStop");
 const statusEl = document.getElementById("status");
@@ -40,6 +41,16 @@ batchManagerButton.addEventListener("click", () => {
   chrome.runtime.sendMessage({ type: "openBatchManager" }, (response) => {
     if (chrome.runtime.lastError || !response?.ok) {
       setStatus(chrome.runtime.lastError?.message || response?.error || "无法打开批量扫描页", false);
+      return;
+    }
+    window.close();
+  });
+});
+
+sourcingEnrichmentButton.addEventListener("click", () => {
+  chrome.runtime.sendMessage({ type: "openSourcingEnrichment" }, (response) => {
+    if (chrome.runtime.lastError || !response?.ok) {
+      setStatus(chrome.runtime.lastError?.message || response?.error || "无法打开找品详情补全页", false);
       return;
     }
     window.close();

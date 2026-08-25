@@ -8,6 +8,8 @@ try {
   node tools/test-freight-rules.mjs
   node tools/test-commission-rules.mjs
   node tools/test-black-price.mjs
+  node tools/test-main-image.mjs
+  node tools/test-sourcing-queue.mjs
   node tools/test-store-scanner.mjs
   node tools/test-store-background-integration.mjs
   node tools/test-pricing-core.mjs
@@ -15,11 +17,13 @@ try {
   node tools/test-parsing-fixtures.mjs
   node --check ozon-erp-collector-extension/background.js
   node --check ozon-erp-collector-extension/black-price-core.js
+  node --check ozon-erp-collector-extension/main-image-core.js
   node --check ozon-erp-collector-extension/content.js
   node --check ozon-erp-collector-extension/store-scanner-core.js
   node --check ozon-erp-collector-extension/store-scanner.js
   node --check ozon-erp-collector-extension/batch.js
   node --check ozon-erp-collector-extension/popup.js
+  node --check ozon-erp-collector-extension/sourcing-enrichment.js
   node --check ozon-feishu-sync/worker/worker.js
   node -e "const fs=require('fs');for(const f of ['feishu.html','local-crop-tool/index.html']){const h=fs.readFileSync(f,'utf8');for(const m of h.matchAll(/<script(?:[^>]*)>([\s\S]*?)<\/script>/g)){if(m[1].trim())new Function(m[1])}}"
 

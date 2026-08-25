@@ -17,6 +17,7 @@ C:\Users\Microsoft\Documents\Ozon
 - 扩展分发压缩包：`ozon-erp-collector-extension.zip`
 - 飞书同步源码与 Worker：`ozon-feishu-sync`
 - 本地裁图工具：`local-crop-tool`
+- 找品任务队列与Ozon详情补全：`sourcing-agent`、扩展内`sourcing-enrichment.html`
 
 ## 新对话开工顺序
 
@@ -37,6 +38,9 @@ C:\Users\Microsoft\Documents\Ozon\ozon-erp-collector-extension\background.js
 C:\Users\Microsoft\Documents\Ozon\ozon-erp-collector-extension\content.js
 C:\Users\Microsoft\Documents\Ozon\ozon-erp-collector-extension\popup.html
 C:\Users\Microsoft\Documents\Ozon\ozon-erp-collector-extension\popup.js
+C:\Users\Microsoft\Documents\Ozon\ozon-erp-collector-extension\main-image-core.js
+C:\Users\Microsoft\Documents\Ozon\ozon-erp-collector-extension\sourcing-enrichment.html
+C:\Users\Microsoft\Documents\Ozon\ozon-erp-collector-extension\sourcing-enrichment.js
 C:\Users\Microsoft\Documents\Ozon\ozon-erp-collector-extension.zip
 C:\Users\Microsoft\Documents\Ozon\shared\freight-rules.json
 C:\Users\Microsoft\Documents\Ozon\web-src\app.js
@@ -48,6 +52,9 @@ C:\Users\Microsoft\Documents\Ozon\当前文件怎么用.md
 C:\Users\Microsoft\Documents\Ozon\OZON项目复现交接文档.md
 C:\Users\Microsoft\Documents\Ozon\真实浏览器验收清单.md
 C:\Users\Microsoft\Documents\Ozon\黑标价自动填充方案.md
+C:\Users\Microsoft\Documents\Ozon\sourcing-agent\queue-core.mjs
+C:\Users\Microsoft\Documents\Ozon\sourcing-agent\build-queue.mjs
+C:\Users\Microsoft\Documents\Ozon\sourcing-agent\README.md
 ```
 
 ## 固定交付规则

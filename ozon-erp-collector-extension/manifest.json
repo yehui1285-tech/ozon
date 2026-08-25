@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "OZON ERP Detail Sender",
-  "version": "0.6.11",
-  "description": "Collect OZON pricing data with paired black-price lookup, plus resilient sequential store scanning, resume, auto-skip, and exports.",
+  "version": "0.6.12",
+  "description": "Collect OZON pricing data and main images, plus resilient sequential store scanning and sourcing-task enrichment.",
   "permissions": ["storage", "activeTab", "tabs", "scripting", "alarms"],
   "host_permissions": [
     "https://www.ozon.ru/*",

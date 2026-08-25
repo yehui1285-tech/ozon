@@ -5,6 +5,66 @@
 - `当前文件怎么用.md`
 - `OZON项目复现交接文档.md`
 
+## 2026-08-25 - 找品任务自动补齐Ozon主图（扩展 0.6.12）
+
+### 目标
+
+- 导入10件代表样本JSON后，自动逐件取得Ozon商品主图URL，避免人工打开商品页并复制图片。
+- 只保存URL，不下载图片；失败项可重试，原始队列文件不被覆盖。
+
+### 改动
+
+- 新增“找品详情补全”独立管理页，可从扩展弹窗打开并选择本地任务JSON。
+- 后台每次只打开一个非激活Ozon商品页，从`og:image`、Product结构化数据和可见商品图库收集候选，经过Ozon图片域名/路径白名单和清晰度评分后选取主图。
+- 商品主图出现后立即返回并关闭临时页；单件最多等待6秒，任务间隔250毫秒，降低批量开页压力。
+- 队列记录`mainImageUrl`、来源、读取耗时、完成时间或失败原因；完成后下载新的`*-main-images.json`。
+- 后台临时商品页不会触发扩展的普通自动注入，避免出现采集面板干扰；黑标价临时页同时纳入这一保护。
+- 扩展版本由0.6.11升级为0.6.12。
+
+### 涉及文件
+
+```text
+AGENTS.md
+package.json
+ozon-erp-collector-extension\manifest.json
+ozon-erp-collector-extension\background.js
+ozon-erp-collector-extension\main-image-core.js
+ozon-erp-collector-extension\sourcing-enrichment.html
+ozon-erp-collector-extension\sourcing-enrichment.js
+ozon-erp-collector-extension\popup.html
+ozon-erp-collector-extension\popup.js
+ozon-erp-collector-extension\使用说明.md
+sourcing-agent\README.md
+tools\test-main-image.mjs
+tools\test-black-price.mjs
+tools\test-store-scanner.mjs
+tools\verify-project.ps1
+PROJECT_STATUS.md
+CHANGELOG.md
+真实浏览器验收清单.md
+ozon-erp-collector-extension.zip
+```
+
+### 回滚备份
+
+```text
+C:\Users\Microsoft\Documents\Ozon\_备份_20260825_sourcing_main_image_0.6.11_before
+```
+
+- 创建后已删除最旧常规备份`_备份_20260815_ozon_large_store_health_0.6.5_before`，常规`_备份_...`仍为5个；旧目录本身已删除。
+
+### 验证
+
+- 主图核心测试覆盖Ozon图片域名/路径白名单、无效协议、不同来源优先级、缩略图与高清图选择及无有效候选场景。
+- 静态接线测试覆盖6秒后台读取、临时页关闭、消息入口、补全状态/错误记录、弹窗入口和避免使用`innerHTML`渲染导入数据。
+- `npm.cmd test`完整通过，原有黑标价、队列解析、店铺扫描、后台集成、核价、Worker安全与50个解析样本均未回归。
+- 发布构建和项目检查通过；扩展ZIP共14项，7个关键文件与源码一致，SHA-256为`92E7090AADBBEC34F351D24BEB4AF42D5D94432AF5343452C4C601E7A05E95C3`。
+- 当前Chrome仍加载0.6.11，10件真实样本的成功率与耗时待用户重新加载0.6.12后验收。
+
+### 部署/安装要求
+
+- 需要在Chrome/Edge扩展管理页重新加载0.6.12后测试；本次不修改网页业务逻辑和Worker，不需要上传`feishu.html`或部署Worker。
+
 ## 2026-08-25 - 批量扫描Markdown转找品任务队列（schema v1）
 
 ### 目标

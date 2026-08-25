@@ -1,6 +1,7 @@
-importScripts("black-price-core.js", "store-scanner-core.js");
+importScripts("black-price-core.js", "main-image-core.js", "store-scanner-core.js");
 
 const blackPriceCore = globalThis.OzonBlackPriceCore;
+const mainImageCore = globalThis.OzonMainImageCore;
 const storeScannerCore = globalThis.OzonStoreScannerCore;
 const TARGET_URL = "https://yehui1285-tech.github.io/ozon/feishu.html?v=20260720";
 const TARGET_MATCH = "https://yehui1285-tech.github.io/ozon/feishu.html*";
@@ -24,6 +25,7 @@ const ZERO_MATCH_OBSERVED_THRESHOLD = 500;
 const AUTO_SKIP_OBSERVED_THRESHOLD = 1000;
 const AUTO_SKIP_QUALIFIED_LIMIT = 3;
 const autoInjectedTabs = new Set();
+const temporaryProductTabs = new Set();
 const enqueueBatchOperation = storeScannerCore.createSerializedExecutor();
 const enqueueStoreOperation = storeScannerCore.createSerializedExecutor();
 let batchCooldownTimer = null;
@@ -207,12 +209,105 @@ async function readBlackPriceFromProductUrl(rawUrl) {
   let tab = null;
   try {
     tab = await chrome.tabs.create({ url, active: false });
+    temporaryProductTabs.add(tab.id);
     await chrome.tabs.update(tab.id, { autoDiscardable: false }).catch(() => null);
     const blackPrice = await readOriginalBlackPriceAsSoonAsAvailable(tab.id, 8000);
     if (!(blackPrice > 0)) throw new Error("8秒内未读取到跟卖商品页原始黑价，已保留手工填写。");
     return { ok: true, blackPrice, url };
   } finally {
-    if (tab?.id) await chrome.tabs.remove(tab.id).catch(() => null);
+    if (tab?.id) {
+      temporaryProductTabs.delete(tab.id);
+      await chrome.tabs.remove(tab.id).catch(() => null);
+    }
+  }
+}
+
+function probeMainImageCandidates() {
+  const candidates = [];
+  const add = (url, source, image = null, visible = true) => {
+    if (!url) return;
+    const rect = image?.getBoundingClientRect?.() || { width: 0, height: 0 };
+    candidates.push({
+      url: String(url),
+      source,
+      width: Math.round(rect.width || 0),
+      height: Math.round(rect.height || 0),
+      naturalWidth: Number(image?.naturalWidth || 0),
+      naturalHeight: Number(image?.naturalHeight || 0),
+      visible,
+    });
+  };
+  const addImageValue = (value, source) => {
+    if (Array.isArray(value)) value.forEach((entry) => addImageValue(entry, source));
+    else if (typeof value === "string") add(value, source);
+    else if (value && typeof value === "object") addImageValue(value.url || value.contentUrl, source);
+  };
+  const visitJson = (value) => {
+    if (Array.isArray(value)) return value.forEach(visitJson);
+    if (!value || typeof value !== "object") return;
+    const type = Array.isArray(value["@type"]) ? value["@type"] : [value["@type"]];
+    if (type.some((entry) => /product/i.test(String(entry || "")))) addImageValue(value.image, "jsonld");
+    Object.values(value).forEach((entry) => {
+      if (entry && typeof entry === "object") visitJson(entry);
+    });
+  };
+
+  add(document.querySelector('meta[property="og:image"]')?.content, "og:image");
+  for (const script of document.querySelectorAll('script[type="application/ld+json"]')) {
+    try { visitJson(JSON.parse(script.textContent || "null")); } catch { /* Ignore incomplete structured data. */ }
+  }
+  const likelyProductImage = (candidate) => /^https:\/\/(?:[^./]+\.)*(?:ozone|ozon)\.ru\/s3\/multimedia-/i.test(String(candidate?.url || ""));
+  if (candidates.some(likelyProductImage)) return candidates;
+
+  const galleryImages = [...document.querySelectorAll('[data-widget="webGallery"] img, [data-widget*="gallery" i] img')];
+  const imagePool = galleryImages.length ? galleryImages : [...document.images].slice(0, 120);
+  for (const image of imagePool) {
+    const rect = image.getBoundingClientRect();
+    const style = getComputedStyle(image);
+    const visible = rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden";
+    const inGallery = Boolean(image.closest('[data-widget="webGallery"], [data-widget*="gallery" i]'));
+    const source = inGallery ? "gallery" : "image";
+    add(image.currentSrc || image.src, source, image, visible);
+    const srcset = String(image.getAttribute("srcset") || "");
+    srcset.split(",").forEach((entry) => add(entry.trim().split(/\s+/)[0], inGallery ? "gallery" : "picture", image, visible));
+    for (const pictureSource of image.closest("picture")?.querySelectorAll("source[srcset]") || []) {
+      String(pictureSource.getAttribute("srcset") || "").split(",").forEach((entry) => add(entry.trim().split(/\s+/)[0], inGallery ? "gallery" : "picture", image, visible));
+    }
+  }
+  return candidates;
+}
+
+async function readMainImageAsSoonAsAvailable(tabId, timeoutMs = 6000) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      const results = await chrome.scripting.executeScript({ target: { tabId }, func: probeMainImageCandidates });
+      const selected = mainImageCore.chooseBestCandidate(results?.[0]?.result || []);
+      if (selected?.url) return { ...selected, elapsedMs: Date.now() - startedAt };
+    } catch {
+      // The tab may still be switching from the initial document to Ozon.
+    }
+    await wait(150);
+  }
+  return null;
+}
+
+async function readMainImageFromProductUrl(rawUrl) {
+  const url = blackPriceCore.normalizeProductUrl(rawUrl);
+  if (!url) throw new Error("Ozon商品链接无效，主图未补齐。");
+  let tab = null;
+  try {
+    tab = await chrome.tabs.create({ url, active: false });
+    temporaryProductTabs.add(tab.id);
+    await chrome.tabs.update(tab.id, { autoDiscardable: false }).catch(() => null);
+    const image = await readMainImageAsSoonAsAvailable(tab.id, 6000);
+    if (!image?.url) throw new Error("6秒内未读取到Ozon商品主图，可稍后重试或手工补齐。");
+    return { ok: true, imageUrl: image.url, source: image.source, elapsedMs: image.elapsedMs, url };
+  } finally {
+    if (tab?.id) {
+      temporaryProductTabs.delete(tab.id);
+      await chrome.tabs.remove(tab.id).catch(() => null);
+    }
   }
 }
 
@@ -228,6 +323,7 @@ async function getAutoInject() {
 
 async function autoInjectOzonTab(tabId, url) {
   if (!/^https:\/\/www\.ozon\.ru\//.test(url || "")) return;
+  if (temporaryProductTabs.has(tabId)) return;
   const stored = await chrome.storage.session.get(AUTO_INJECT_KEY);
   if (!stored[AUTO_INJECT_KEY]) return;
   autoInjectedTabs.add(tabId);
@@ -884,11 +980,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   else if (message?.type === "getAutoInject") operation = getAutoInject();
   else if (message?.type === "sendProductToPricing") operation = sendToPricing(message.product || {});
   else if (message?.type === "readBlackPriceFromProductUrl") operation = readBlackPriceFromProductUrl(message.url);
+  else if (message?.type === "readMainImageFromProductUrl") operation = readMainImageFromProductUrl(message.url);
   else if (message?.type === "getStoreScanState") operation = getStoreScanState(message);
   else if (message?.type === "saveStoreScanState") operation = saveStoreScanState(message);
   else if (message?.type === "enrichStoreProductBySku") operation = enrichStoreProductBySku(message);
   else if (message?.type === "getBatchStoreResults") operation = getBatchStoreResults(message);
   else if (message?.type === "openBatchManager") operation = chrome.tabs.create({ url: chrome.runtime.getURL("batch.html") }).then(() => ({ ok: true }));
+  else if (message?.type === "openSourcingEnrichment") operation = chrome.tabs.create({ url: chrome.runtime.getURL("sourcing-enrichment.html") }).then(() => ({ ok: true }));
   else if (message?.type === "getStoreBatchState") operation = batchOperation(() => getBatch().then((batch) => ({ ok: true, batch })));
   else if (message?.type === "startStoreBatch") operation = batchOperation(() => startStoreBatch(message));
   else if (message?.type === "pauseStoreBatch") operation = batchOperation(() => pauseStoreBatch());
@@ -921,6 +1019,7 @@ chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   autoInjectedTabs.delete(tabId);
+  temporaryProductTabs.delete(tabId);
   setStoreScanProtection(tabId, false).catch(() => {
     chrome.alarms.clear(`${STORE_SCAN_ALARM_PREFIX}${tabId}`);
   });

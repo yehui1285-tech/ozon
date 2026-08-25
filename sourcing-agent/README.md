@@ -1,6 +1,6 @@
 # Ozon 找品任务队列
 
-本模块把扩展导出的“批量店铺符合要求”Markdown转换为结构化JSON/CSV任务队列。它只负责找品流程的输入层，暂不调用拼多多模拟器或云端AI。
+本模块把扩展导出的“批量店铺符合要求”Markdown转换为结构化JSON/CSV任务队列。扩展0.6.12已能读取该JSON并自动补齐Ozon主图URL；暂未调用拼多多模拟器或云端AI。
 
 ## 生成队列
 
@@ -16,9 +16,18 @@ npm.cmd run build:sourcing-queue -- --input "C:\Users\Microsoft\Downloads\Ozon�
 
 `sourcing-agent\data\`已加入`.gitignore`。扫描原文件、生成队列、后续候选链接、采购成本和AI判断都属于本地业务数据，不提交GitHub。
 
+## 自动补齐Ozon主图
+
+1. 在扩展管理页重新加载0.6.12。
+2. 点击扩展图标 → “打开找品详情补全”。
+3. 选择`*-sample-10.json`，点击“自动补齐主图”。
+4. 完成后下载`*-main-images.json`。
+
+扩展每次只处理一件，单件最多等待6秒；读取到主图URL后立即关闭临时页。失败项可再次重试，原始JSON不会被覆盖。
+
 ## 当前任务状态
 
-新任务统一从`pending_ozon_enrichment`开始。主图、原始黑价、国际运费和18%利润率下的最高采购成本尚未补齐前，不进入拼多多找品。
+新任务统一从`pending_ozon_enrichment`开始。主图现在可以自动补齐；原始黑价、国际运费和18%利润率下的最高采购成本尚未补齐前，不进入拼多多找品。
 
 后续阶段依次为：
 
