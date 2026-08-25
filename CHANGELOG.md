@@ -5,6 +5,153 @@
 - `当前文件怎么用.md`
 - `OZON项目复现交接文档.md`
 
+## 2026-08-25 - Case 2价格出现即读取（扩展 0.6.11）
+
+### 问题与原因
+
+- 0.6.10真实测试已经打开跟卖浮层并取得最低价链接，但后台临时页最终提示“跟卖商品页加载超时”。
+- 原实现先等待标签页进入`complete`，上限20秒，再开始读取价格；实测最低价SKU `5382620664`整页完成加载约29.4秒。
+- 目标价格区域不依赖整页完成：该页绿价为`253.85`，原始黑价为`266.36`，现有位置兜底解析已确认能正确得到`266.36`。
+
+### 改动
+
+- 后台临时页创建后立即尝试执行价格探针，不再调用20秒整页完成等待。
+- 页面仍在切换初始文档或发生跳转时短间隔重试；每次进入页面后在价格区域内快速轮询，读到黑价立即返回并关闭临时页。
+- 临时页设为不可自动丢弃；整段读取设置8秒硬上限，超时后保留手工填写，不再长时间等待。
+- 扩展版本升级为0.6.11，弹窗版本同步更新。
+
+### 涉及文件
+
+```text
+ozon-erp-collector-extension\background.js
+ozon-erp-collector-extension\manifest.json
+ozon-erp-collector-extension\popup.html
+ozon-erp-collector-extension\使用说明.md
+tools\test-black-price.mjs
+tools\test-store-scanner.mjs
+PROJECT_STATUS.md
+CHANGELOG.md
+真实浏览器验收清单.md
+黑标价自动填充方案.md
+```
+
+### 回滚备份
+
+继续使用本轮回滚备份：
+
+```text
+C:\Users\Microsoft\Documents\Ozon\_备份_20260825_ozon_black_price_0.6.8_before
+```
+
+### 验证
+
+- `npm.cmd test`完整通过，包含快速读取接线、禁止回退到20秒整页等待及原有网页、运费、佣金、店铺扫描、后台集成、核价、Worker安全和50个解析样本测试。
+- 已运行`tools\build-release.ps1`，项目检查和发布构建通过；ZIP版本为0.6.11，共11项，6个关键文件与源码一致，SHA-256为`7C61E863A43C4307DC0F39B175CCC99EC2C4A4B5978EAB22470152A45FD07B7F`。
+- 用户重新加载0.6.11后复测SKU `4984098622`，确认Case 2快速读取与黑价回填表现完美；真实Chrome验收通过，具体秒数未单独记录。
+
+### 部署/安装要求
+
+- 需要重新加载0.6.11扩展后复测；本次不修改网页和Worker。
+
+## 2026-08-25 - Case 2 跟卖悬停入口热修复（扩展 0.6.10）
+
+### 问题与原因
+
+- 真实商品SKU `4984098622`进入Case 2后提示“未能从跟卖列表取得最低价商品链接”。
+- 当前Chrome只读检查确认：程序按最短文本排序时误选了灰色标签“跟卖列表：”，而真正触发Ant Design浮层的是右侧带下划线的“Крупные ...等9个卖家”。
+- 真实悬停后已读取9行表格；最低价`253.85`对应SKU `5382620664`与`5382629103`，商品链接位于第4列、价格位于第5列，原表格读取逻辑无需改动。
+
+### 改动
+
+- 跟卖入口改为必须包含“等/共 N 个卖家”，并且计算样式为可点击或带下划线；灰色“跟卖列表：”标签不再符合条件。
+- 把入口判断下沉到黑标核心规则，并新增真实结构回归用例，覆盖错误标签、正确入口及只有卖家名的子节点。
+- 扩展版本升级为0.6.10，弹窗显示版本同步为0.6.10。
+
+### 涉及文件
+
+```text
+ozon-erp-collector-extension\black-price-core.js
+ozon-erp-collector-extension\content.js
+ozon-erp-collector-extension\manifest.json
+ozon-erp-collector-extension\popup.html
+ozon-erp-collector-extension\使用说明.md
+tools\test-black-price.mjs
+tools\test-store-scanner.mjs
+PROJECT_STATUS.md
+CHANGELOG.md
+真实浏览器验收清单.md
+黑标价自动填充方案.md
+```
+
+### 回滚备份
+
+继续使用本轮开始时创建的：
+
+```text
+C:\Users\Microsoft\Documents\Ozon\_备份_20260825_ozon_black_price_0.6.8_before
+```
+
+### 验证
+
+- 已完成真实Chrome页面结构诊断和真实鼠标悬停读取，确认修复目标及跟卖表格结构。
+- `npm.cmd test`完整通过，包含新增跟卖入口回归用例及原有网页、运费、佣金、店铺扫描、后台集成、核价、Worker安全和50个解析样本测试。
+- 已运行`tools\build-release.ps1`，项目检查和发布构建通过；重新生成的ZIP版本为0.6.10，共11项，6个关键文件与源码一致，SHA-256为`C56EAA4E8A88C162AAE0885950F637263A8584F2E18D08EA5734E991712ECB47`。
+- 重新加载0.6.10后的Case 2完整回填仍待用户复测。
+
+### 部署/安装要求
+
+- 需要在Chrome/Edge扩展管理页重新加载0.6.10后复测；本次不修改网页和Worker。
+
+## 2026-08-25 - 黑标价按绿标来源自动读取（扩展 0.6.9）
+
+### 改动
+
+- 商品详情页点击“检查本页数据”后自动读取原始黑价，不再默认只能手工填写。
+- 最终绿标价来自页面绿底价时，在当前商品页的 `webPrice` 区域读取对应原始黑价；明确排除毛子 ERP 注入的公式黑标标签。
+- 最终绿标价来自跟卖最低价时，程序化触发跟卖列表，按目标最低价选择对应商品链接，在后台临时标签页读取该商品的原始黑价，完成后自动关闭临时页。
+- 跟卖商品链接仅允许 `https://www.ozon.ru/product/...`；任一步失败都留空并提示手工填写，不阻塞原有核价发送。
+- 自动读取完成前点击“发送到核价页”会等待本轮读取结束；用户已经手工填写时保留手工值，不被迟到的自动结果覆盖。
+- 扩展版本由0.6.8升级为0.6.9。
+
+### 涉及文件
+
+```text
+ozon-erp-collector-extension\black-price-core.js
+ozon-erp-collector-extension\background.js
+ozon-erp-collector-extension\content.js
+ozon-erp-collector-extension\manifest.json
+ozon-erp-collector-extension\使用说明.md
+tools\test-black-price.mjs
+tools\test-store-scanner.mjs
+tools\verify-project.ps1
+package.json
+PROJECT_STATUS.md
+CHANGELOG.md
+真实浏览器验收清单.md
+黑标价自动填充方案.md
+```
+
+### 回滚备份
+
+```text
+C:\Users\Microsoft\Documents\Ozon\_备份_20260825_ozon_black_price_0.6.8_before
+```
+
+- 创建后已轮换删除最旧常规备份，常规 `_备份_...` 目录仍为5个。
+
+### 验证
+
+- 黑标价核心与接线测试通过，覆盖价格解析、来源判断、跟卖行选择、商品链接白名单、后台接线和0.6.9版本。
+- `npm.cmd test` 完整通过：网页构建一致性、运费、佣金、黑标价、店铺扫描、后台集成、核价公式、Worker安全及50个解析样本均通过。
+- 已运行`tools\build-release.ps1`并重新生成扩展ZIP；独立确认版本为0.6.9，包含`black-price-core.js`，5个关键文件与源码一致；ZIP SHA-256：`6069B33C6108C05F409D183B5817E2A5A259A92F6B55B362C8F93555E4394571`。
+- 真实Chrome/Edge验收待重新加载0.6.9后完成，重点验证当前页路径、跟卖跨页路径和失败手工兜底。
+
+### 部署/安装要求
+
+- 需要在Chrome/Edge扩展管理页重新加载0.6.9；分发时使用重新生成的`ozon-erp-collector-extension.zip`。
+- 本次未修改网页业务逻辑，不需要上传`feishu.html`。
+- 本次未修改Worker，不需要重新部署Cloudflare Worker。
+
 ## 2026-08-21 - 固化版本迭代自动同步 GitHub 规则
 
 ### 规则

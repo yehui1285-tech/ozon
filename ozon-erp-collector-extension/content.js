@@ -7,6 +7,7 @@ const EXTENSION_VERSION = chrome.runtime.getManifest().version;
 const MAX_LOG_ENTRIES = 50;
 const MAX_SENT_PRODUCTS = 500;
 const TARGET_ORIGIN = "https://yehui1285-tech.github.io";
+const blackPriceCore = globalThis.OzonBlackPriceCore || null;
 
 function textOf(node) {
   return (node?.innerText || node?.textContent || "").replace(/\s+/g, " ").trim();
@@ -216,6 +217,106 @@ function pageGreenPrice() {
   return candidates[0]?.value || 0;
 }
 
+function isDisplayedElement(element) {
+  if (!(element instanceof Element)) return false;
+  const rect = element.getBoundingClientRect();
+  const style = getComputedStyle(element);
+  return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden";
+}
+
+function readOriginalBlackPrice(pageGreen = 0) {
+  const widgets = [...document.querySelectorAll('[data-widget="webPrice"]')].filter(isDisplayedElement);
+  for (const widget of widgets) {
+    const direct = [...widget.querySelectorAll("span.pdp_h0b")]
+      .filter((element) => isDisplayedElement(element) && !element.closest("#mz-black-price-tag"))
+      .map((element) => num(textOf(element)))
+      .find((value) => value > 0);
+    if (direct) return direct;
+    const prices = [...widget.querySelectorAll("span")]
+      .filter((element) => isDisplayedElement(element) && !element.closest("#mz-black-price-tag"))
+      .map((element) => ({ element, value: num(textOf(element)) }))
+      .filter((entry) => entry.value > 0 && /[¥￥₽]/.test(textOf(entry.element)));
+    let greenIndex = prices.findIndex((entry) => hasGreenPriceStyle(entry.element));
+    if (greenIndex < 0 && pageGreen > 0) greenIndex = prices.findIndex((entry) => Math.abs(entry.value - pageGreen) <= 0.02);
+    if (greenIndex >= 0) {
+      const black = prices.slice(greenIndex + 1).find((entry) => !hasGreenPriceStyle(entry.element));
+      if (black) return black.value;
+    }
+  }
+  return 0;
+}
+
+async function waitForOriginalBlackPrice(pageGreen, timeoutMs = 4500) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const value = readOriginalBlackPrice(pageGreen);
+    if (value > 0) return value;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  return 0;
+}
+
+function findCompetitorHoverTrigger() {
+  if (!blackPriceCore?.competitorTriggerScore) return null;
+  return [...document.querySelectorAll("span, button, a, div")]
+    .filter(isDisplayedElement)
+    .map((element) => {
+      const style = getComputedStyle(element);
+      return {
+        element,
+        score: blackPriceCore.competitorTriggerScore({
+          text: textOf(element),
+          cursor: style.cursor,
+          textDecorationLine: style.textDecorationLine,
+        }),
+      };
+    })
+    .filter((entry) => Number.isFinite(entry.score))
+    .sort((a, b) => a.score - b.score)[0]?.element || null;
+}
+
+function hoverElement(element) {
+  for (const type of ["pointerover", "pointerenter", "mouseover", "mouseenter"]) {
+    const EventType = type.startsWith("pointer") && typeof PointerEvent === "function" ? PointerEvent : MouseEvent;
+    element.dispatchEvent(new EventType(type, { bubbles: true, cancelable: true, view: window }));
+  }
+}
+
+function visibleCompetitorRows() {
+  return [...document.querySelectorAll("tr.ant-table-row")]
+    .filter(isDisplayedElement)
+    .map((row) => {
+      const cells = [...row.querySelectorAll("td.ant-table-cell")];
+      const link = cells[3]?.querySelector('a[href*="/product/"]') || row.querySelector('a[href*="/product/"]');
+      const priceText = cells[4] ? textOf(cells[4]) : textOf(row);
+      return { url: link?.href || "", price: num(priceText) };
+    });
+}
+
+async function findLowestCompetitorProduct(product, timeoutMs = 5500) {
+  if (!blackPriceCore) return null;
+  const trigger = findCompetitorHoverTrigger();
+  if (!trigger) return null;
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    hoverElement(trigger);
+    const selected = blackPriceCore.chooseCompetitorRow(visibleCompetitorRows(), product.minCompetitorPrice);
+    if (selected) return selected;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  return null;
+}
+
+function requestRemoteBlackPrice(url) {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage({ type: "readBlackPriceFromProductUrl", url }, (response) => {
+      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+      else if (!response?.ok) reject(new Error(response?.error || "跟卖商品页黑标价读取失败"));
+      else resolve(response);
+    });
+  });
+}
+
 function collectProduct() {
   const raw = erpText();
   const dims = parseDimensions(raw);
@@ -306,6 +407,60 @@ function editorNumber(id) {
 }
 
 let currentProduct = null;
+let blackPriceLookupPromise = null;
+let blackPriceLookupId = 0;
+
+function setBlackPriceStatus(message, ok = true) {
+  const element = document.getElementById("ozon-edit-black-status");
+  if (!element) return;
+  element.textContent = message;
+  element.style.color = ok ? "#067647" : "#b42318";
+}
+
+function startBlackPriceLookup(product) {
+  const requestId = ++blackPriceLookupId;
+  const source = blackPriceCore?.chooseSource(product.pageGreenPrice, product.minCompetitorPrice) || "none";
+  const sourceText = source === "competitor" ? "跟卖最低价商品页" : "当前商品页";
+  setBlackPriceStatus(source === "none" ? "缺少绿标价格来源，请手动填写黑标价。" : `正在从${sourceText}读取原始黑价…`, source !== "none");
+  blackPriceLookupPromise = (async () => {
+    try {
+      let blackPrice = 0;
+      let sourceUrl = location.href;
+      if (source === "page") {
+        blackPrice = await waitForOriginalBlackPrice(product.pageGreenPrice);
+      } else if (source === "competitor") {
+        const competitor = await findLowestCompetitorProduct(product);
+        if (!competitor?.url) throw new Error("未能从跟卖列表取得最低价商品链接");
+        sourceUrl = competitor.url;
+        const response = await requestRemoteBlackPrice(competitor.url);
+        blackPrice = Number(response.blackPrice || 0);
+      } else {
+        throw new Error("没有可用的绿标价格来源");
+      }
+      if (!(blackPrice > 0)) throw new Error(`${sourceText}没有读取到原始黑价`);
+      if (requestId !== blackPriceLookupId) return null;
+      const input = document.getElementById("ozon-edit-black");
+      const manualValue = num(input?.value);
+      const previousAuto = num(input?.dataset.autoValue);
+      if (manualValue > 0 && Math.abs(manualValue - previousAuto) > 0.001) {
+        setBlackPriceStatus(`已自动读到 ${blackPrice.toFixed(2)}，但保留你手动填写的 ${manualValue.toFixed(2)}。`);
+        return { blackPrice: manualValue, source: "manual", sourceUrl };
+      }
+      input.value = blackPrice.toFixed(2);
+      input.dataset.autoValue = input.value;
+      currentProduct = { ...(currentProduct || product), blackPrice, blackPriceSource: source, blackPriceSourceUrl: sourceUrl };
+      setBlackPriceStatus(`已自动填入 ${blackPrice.toFixed(2)}（${sourceText}）。`);
+      addCollectionLog(`黑标价自动读取成功：${blackPrice.toFixed(2)}（${sourceText}）`);
+      return { blackPrice, source, sourceUrl };
+    } catch (error) {
+      if (requestId !== blackPriceLookupId) return null;
+      setBlackPriceStatus(`自动读取失败：${error.message || error}。请手动填写。`, false);
+      addCollectionLog(`黑标价自动读取失败：${error.message || error}`, false);
+      return null;
+    }
+  })();
+  return blackPriceLookupPromise;
+}
 
 function recalculateEditor() {
   const price = editorNumber("ozon-edit-green");
@@ -325,7 +480,7 @@ function fillEditor(product) {
   const values = {
     "ozon-edit-sku": product.sku,
     "ozon-edit-green": product.greenPrice,
-    "ozon-edit-black": "",
+    "ozon-edit-black": product.blackPrice || "",
     "ozon-edit-length": product.lengthCm,
     "ozon-edit-width": product.widthCm,
     "ozon-edit-height": product.heightCm,
@@ -336,6 +491,10 @@ function fillEditor(product) {
   Object.entries(values).forEach(([id, value]) => {
     document.getElementById(id).value = value || "";
   });
+  const blackInput = document.getElementById("ozon-edit-black");
+  delete blackInput.dataset.autoValue;
+  if (product.blackPrice) blackInput.dataset.autoValue = String(product.blackPrice);
+  setBlackPriceStatus(product.blackPrice ? `已填入黑标价 ${Number(product.blackPrice).toFixed(2)}。` : "等待自动读取；失败时可手动填写。", true);
   document.getElementById("ozon-edit-route").textContent = product.freightRoute || "未匹配到可用运费渠道";
   document.getElementById("ozon-editor").hidden = false;
 }
@@ -363,6 +522,7 @@ function productFromEditor() {
   const missing = [];
   if (!product.sku) missing.push("SKU");
   if (!product.greenPrice) missing.push("绿标价格");
+  if (!product.blackPrice) missing.push("黑标价格");
   if (!lengthCm || !widthCm || !heightCm) missing.push("尺寸");
   if (!weightKg) missing.push("重量");
   if (missing.length) product.note = [product.note, `发送前仍缺少：${missing.join("、")}`].filter(Boolean).join("; ");
@@ -424,8 +584,13 @@ function sendConfirmedProduct(product) {
   });
 }
 
-function sendToPricingPage() {
-  if (!currentProduct) fillEditor(collectProduct());
+async function sendToPricingPage() {
+  if (!currentProduct) {
+    const product = collectProduct();
+    fillEditor(product);
+    startBlackPriceLookup(product);
+  }
+  if (blackPriceLookupPromise) await blackPriceLookupPromise;
   const product = productFromEditor();
   if (!product.sku && !product.greenPrice) {
     setStatus("没有读到ERP数据，请等毛子ERP加载后再点。", false);
@@ -665,7 +830,8 @@ function installPanel() {
         <div style="margin-bottom:6px;font-weight:700;">发送前确认，可直接修改</div>
         <label style="display:grid;grid-template-columns:72px 1fr;align-items:center;gap:6px;margin-top:5px;">SKU<input id="ozon-edit-sku" type="text" style="min-width:0;height:26px;border:1px solid #cbd5e1;border-radius:5px;padding:0 6px;"></label>
         <label style="display:grid;grid-template-columns:72px 1fr;align-items:center;gap:6px;margin-top:5px;">绿标价格<input id="ozon-edit-green" type="number" step="0.01" min="0" style="min-width:0;height:26px;border:1px solid #cbd5e1;border-radius:5px;padding:0 6px;"></label>
-        <label style="display:grid;grid-template-columns:72px 1fr;align-items:center;gap:6px;margin-top:5px;">黑标价格<input id="ozon-edit-black" type="number" step="0.01" min="0" placeholder="手动填写" style="min-width:0;height:26px;border:1px solid #f59e0b;border-radius:5px;padding:0 6px;background:#fffbeb;"></label>
+        <label style="display:grid;grid-template-columns:72px 1fr;align-items:center;gap:6px;margin-top:5px;">黑标价格<input id="ozon-edit-black" type="number" step="0.01" min="0" placeholder="自动读取失败时手动填写" style="min-width:0;height:26px;border:1px solid #f59e0b;border-radius:5px;padding:0 6px;background:#fffbeb;"></label>
+        <div id="ozon-edit-black-status" style="margin-top:4px;color:#64748b;line-height:1.35;">等待自动读取；失败时可手动填写。</div>
         <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;margin-top:6px;">
           <label>长cm<input id="ozon-edit-length" type="number" step="0.01" min="0" style="box-sizing:border-box;width:100%;height:26px;margin-top:2px;border:1px solid #cbd5e1;border-radius:5px;padding:0 5px;"></label>
           <label>宽cm<input id="ozon-edit-width" type="number" step="0.01" min="0" style="box-sizing:border-box;width:100%;height:26px;margin-top:2px;border:1px solid #cbd5e1;border-radius:5px;padding:0 5px;"></label>
@@ -704,6 +870,11 @@ function installPanel() {
   ["ozon-edit-green", "ozon-edit-length", "ozon-edit-width", "ozon-edit-height", "ozon-edit-weight"].forEach((id) => {
     document.getElementById(id).addEventListener("input", recalculateEditor);
   });
+  document.getElementById("ozon-edit-black").addEventListener("input", (event) => {
+    const value = num(event.currentTarget.value);
+    if (value > 0) setBlackPriceStatus(`已手动填写 ${value.toFixed(2)}；发送时以该值为准。`);
+    else setBlackPriceStatus("黑标价为空，核价结果将不完整。", false);
+  });
   document.getElementById("ozon-clear-log").addEventListener("click", () => {
     chrome.storage.local.remove(COLLECTION_LOG_KEY, () => renderCollectionLog([]));
   });
@@ -718,6 +889,7 @@ function installPanel() {
     if (!p.lengthCm || !p.widthCm || !p.heightCm) missing.push("尺寸");
     if (!p.weightKg) missing.push("重量");
     addCollectionLog(missing.length ? `检查完成，缺少：${missing.join("、")}` : `检查成功：SKU ${p.sku}`, !missing.length);
+    startBlackPriceLookup(p);
     console.table([p]);
   });
 }

@@ -1,5 +1,6 @@
-importScripts("store-scanner-core.js");
+importScripts("black-price-core.js", "store-scanner-core.js");
 
+const blackPriceCore = globalThis.OzonBlackPriceCore;
 const storeScannerCore = globalThis.OzonStoreScannerCore;
 const TARGET_URL = "https://yehui1285-tech.github.io/ozon/feishu.html?v=20260720";
 const TARGET_MATCH = "https://yehui1285-tech.github.io/ozon/feishu.html*";
@@ -54,7 +55,7 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function waitForTabLoaded(tabId, timeoutMs = 15000) {
+function waitForTabLoaded(tabId, timeoutMs = 15000, label = "核价页") {
   return new Promise((resolve, reject) => {
     let settled = false;
     const cleanup = () => {
@@ -75,13 +76,13 @@ function waitForTabLoaded(tabId, timeoutMs = 15000) {
       }
     };
     const removedListener = (removedTabId) => {
-      if (removedTabId === tabId) finish(new Error("核价页在加载完成前被关闭。"));
+      if (removedTabId === tabId) finish(new Error(`${label}在加载完成前被关闭。`));
     };
-    const timer = setTimeout(() => finish(new Error("核价页加载超时，请检查网络后重试。")), timeoutMs);
+    const timer = setTimeout(() => finish(new Error(`${label}加载超时，请检查网络后重试。`)), timeoutMs);
     chrome.tabs.onUpdated.addListener(listener);
     chrome.tabs.onRemoved.addListener(removedListener);
     chrome.tabs.get(tabId, (tab) => {
-      if (chrome.runtime.lastError) finish(new Error("无法读取核价页状态。"));
+      if (chrome.runtime.lastError) finish(new Error(`无法读取${label}状态。`));
       else if (tab?.status === "complete") finish();
     });
   });
@@ -111,9 +112,108 @@ async function injectCurrentOzonTab() {
   }
   await chrome.scripting.executeScript({
     target: { tabId: tab.id },
-    files: ["content.js", "store-scanner-core.js", "store-scanner.js"],
+    files: ["black-price-core.js", "content.js", "store-scanner-core.js", "store-scanner.js"],
   });
   return { ok: true };
+}
+
+async function probeOriginalBlackPrice(timeoutMs) {
+  const parseNumber = (value) => {
+    let text = String(value || "").replace(/[¥￥₽%]/g, "").replace(/[\u00a0\u202f]/g, " ").trim();
+    const match = text.match(/-?[\d\s.,]+/);
+    if (!match) return 0;
+    text = match[0].replace(/\s+/g, "");
+    const comma = text.lastIndexOf(",");
+    const dot = text.lastIndexOf(".");
+    if (comma >= 0 && dot >= 0) {
+      const decimal = comma > dot ? "," : ".";
+      text = text.replace(new RegExp(`\\${decimal === "," ? "." : ","}`, "g"), "").replace(decimal, ".");
+    } else if (/^-?\d{1,3}(,\d{3})+$/.test(text)) text = text.replace(/,/g, "");
+    else if (comma >= 0) text = text.replace(",", ".");
+    const result = Number(text);
+    return Number.isFinite(result) ? result : 0;
+  };
+  const isVisible = (element) => {
+    if (!(element instanceof Element)) return false;
+    const rect = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden";
+  };
+  const isGreen = (element) => {
+    for (let node = element, depth = 0; node && depth < 5; node = node.parentElement, depth += 1) {
+      const style = getComputedStyle(node);
+      for (const value of [style.color, style.backgroundColor]) {
+        const rgb = String(value || "").match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+        if (!rgb) continue;
+        const [r, g, b] = rgb.slice(1).map(Number);
+        if (g >= 120 && g > r * 1.25 && g > b * 1.15) return true;
+      }
+    }
+    return false;
+  };
+  const readOnce = () => {
+    const widgets = [...document.querySelectorAll('[data-widget="webPrice"]')].filter(isVisible);
+    for (const widget of widgets) {
+      const direct = [...widget.querySelectorAll("span.pdp_h0b")]
+        .filter((element) => isVisible(element) && !element.closest("#mz-black-price-tag"))
+        .map((element) => parseNumber(element.textContent))
+        .find((value) => value > 0);
+      if (direct) return direct;
+      const prices = [...widget.querySelectorAll("span")]
+        .filter((element) => isVisible(element) && !element.closest("#mz-black-price-tag"))
+        .map((element) => ({ element, value: parseNumber(element.textContent) }))
+        .filter((entry) => entry.value > 0 && /[¥￥₽]/.test(entry.element.textContent || ""));
+      const greenIndex = prices.findIndex((entry) => isGreen(entry.element));
+      if (greenIndex >= 0) {
+        const black = prices.slice(greenIndex + 1).find((entry) => !isGreen(entry.element));
+        if (black) return black.value;
+      }
+    }
+    return 0;
+  };
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const value = readOnce();
+    if (value > 0) return value;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+  return 0;
+}
+
+async function readOriginalBlackPriceAsSoonAsAvailable(tabId, timeoutMs = 8000) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const remainingMs = timeoutMs - (Date.now() - startedAt);
+    try {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: probeOriginalBlackPrice,
+        args: [Math.min(900, Math.max(250, remainingMs))],
+      });
+      const blackPrice = Number(results?.[0]?.result || 0);
+      if (blackPrice > 0) return blackPrice;
+    } catch {
+      // The new tab may still be switching from its initial document to Ozon.
+      // Retry immediately instead of waiting for the whole page to finish loading.
+    }
+    await wait(120);
+  }
+  return 0;
+}
+
+async function readBlackPriceFromProductUrl(rawUrl) {
+  const url = blackPriceCore.normalizeProductUrl(rawUrl);
+  if (!url) throw new Error("跟卖商品链接无效，黑标价已留空。");
+  let tab = null;
+  try {
+    tab = await chrome.tabs.create({ url, active: false });
+    await chrome.tabs.update(tab.id, { autoDiscardable: false }).catch(() => null);
+    const blackPrice = await readOriginalBlackPriceAsSoonAsAvailable(tab.id, 8000);
+    if (!(blackPrice > 0)) throw new Error("8秒内未读取到跟卖商品页原始黑价，已保留手工填写。");
+    return { ok: true, blackPrice, url };
+  } finally {
+    if (tab?.id) await chrome.tabs.remove(tab.id).catch(() => null);
+  }
 }
 
 async function setAutoInject(enabled) {
@@ -137,7 +237,7 @@ async function autoInjectOzonTab(tabId, url) {
     if (!tab?.id || tab.url !== url || !autoInjectedTabs.has(tabId)) return false;
     const result = await chrome.scripting.executeScript({
       target: { tabId },
-      files: ["content.js", "store-scanner-core.js", "store-scanner.js"],
+      files: ["black-price-core.js", "content.js", "store-scanner-core.js", "store-scanner.js"],
     }).then(() => true).catch(() => false);
     if (result) autoInjectedTabs.delete(tabId);
     return result;
@@ -406,7 +506,7 @@ async function launchBatchScanner(tabId, url) {
   if (!batch || batch.status !== "running" || batch.tabId !== tabId) return;
   if (batch.nextRunAt) {
     if (/^https:\/\/www\.ozon\.ru\/seller\//.test(url || "")) {
-      await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js", "store-scanner-core.js", "store-scanner.js"] }).catch(() => null);
+      await chrome.scripting.executeScript({ target: { tabId }, files: ["black-price-core.js", "content.js", "store-scanner-core.js", "store-scanner.js"] }).catch(() => null);
       await armBatchCooldown(batch);
     }
     return;
@@ -418,7 +518,7 @@ async function launchBatchScanner(tabId, url) {
   const pendingLaunchTask = latest?.stores?.[latest.currentIndex];
   if (!latest || latest.status !== "running" || latest.tabId !== tabId || latest.currentIndex !== batch.currentIndex || (!pendingLaunchTask?.needsRecovery && !["loading", "recovering"].includes(pendingLaunchTask?.status))) return;
   try {
-    await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js", "store-scanner-core.js", "store-scanner.js"] });
+    await chrome.scripting.executeScript({ target: { tabId }, files: ["black-price-core.js", "content.js", "store-scanner-core.js", "store-scanner.js"] });
     const latestTask = latest.stores[latest.currentIndex];
     const response = await chrome.tabs.sendMessage(tabId, {
       type: "startStoreScan",
@@ -783,6 +883,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   else if (message?.type === "setAutoInject") operation = setAutoInject(message.enabled);
   else if (message?.type === "getAutoInject") operation = getAutoInject();
   else if (message?.type === "sendProductToPricing") operation = sendToPricing(message.product || {});
+  else if (message?.type === "readBlackPriceFromProductUrl") operation = readBlackPriceFromProductUrl(message.url);
   else if (message?.type === "getStoreScanState") operation = getStoreScanState(message);
   else if (message?.type === "saveStoreScanState") operation = saveStoreScanState(message);
   else if (message?.type === "enrichStoreProductBySku") operation = enrichStoreProductBySku(message);
