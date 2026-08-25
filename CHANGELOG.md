@@ -5,6 +5,54 @@
 - `当前文件怎么用.md`
 - `OZON项目复现交接文档.md`
 
+## 2026-08-25 - 批量扫描Markdown转找品任务队列（schema v1）
+
+### 目标
+
+- 把扩展“批量店铺扫描”导出的符合要求商品清单，转换为后续Ozon详情补全、拼多多找同款、AI判断和核价可共同使用的结构化任务队列。
+- 第一阶段先抽取10件代表性商品跑通流程，不直接对50件全量执行外部平台操作。
+
+### 改动
+
+- 新增批量Markdown解析器，规范化页面价、跟卖最低价、最终绿标价、佣金档位、尺寸、重量、店铺与Ozon商品链接。
+- 新增任务schema v1，预留Ozon主图、同源黑标价、国际运费、18%利润率最高采购成本、拼多多候选、AI判断、人工复核与最终核价字段。
+- 新增队列生成命令，可同时输出全量JSON、代表样本JSON和便于人工查看的CSV。
+- 样本选择优先覆盖不同店铺和不同商品名称；CSV增加公式注入防护并使用UTF-8 BOM，便于Windows表格软件直接打开中文。
+- `sourcing-agent\data`加入Git忽略；用户导出的Markdown、生成的任务队列及后续采购候选均作为本地业务数据，不进入GitHub。
+
+### 实际数据验证
+
+- 读取本机下载目录中的`Ozon批量店铺符合要求_2026-08-15.md`，成功解析50件有效商品、4家店铺。
+- 生成10件代表样本，覆盖全部4家店铺；全部任务状态为`pending_ozon_enrichment`。
+- CSV经电子表格引擎读取为11行、21列；中文、SKU、数值、Ozon链接与空白待补字段结构正常。
+
+### 涉及文件
+
+```text
+.gitignore
+package.json
+sourcing-agent\README.md
+sourcing-agent\queue-core.mjs
+sourcing-agent\build-queue.mjs
+tools\test-sourcing-queue.mjs
+PROJECT_STATUS.md
+CHANGELOG.md
+```
+
+### 回滚备份
+
+```text
+C:\Users\Microsoft\Documents\Ozon\_备份_20260825_sourcing_queue_before
+```
+
+- 创建后已删除最旧的常规回滚目录，常规`_备份_...`仍为5个。
+
+### 验证与部署
+
+- 新增解析回归测试，覆盖逗号小数、最低绿价、600卢布佣金边界、kg转g、占位行跳过、Ozon链接规范化、跨店铺样本选择、CSV输出和缺失表格报错。
+- 本次未修改扩展、网页、运费规则或Worker，因此不需要重新生成扩展ZIP、上传`feishu.html`、刷新扩展或部署Worker。
+- 下一步先补齐10件样本的Ozon详情数据，再接入拼多多模拟器与云端AI。
+
 ## 2026-08-25 - Case 2价格出现即读取（扩展 0.6.11）
 
 ### 问题与原因

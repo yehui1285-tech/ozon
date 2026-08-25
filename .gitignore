@@ -6,3 +6,4 @@ _旧文件备份_*/
 .libtv-cli/
 *.log
 desktop-check.png
+sourcing-agent/data/
