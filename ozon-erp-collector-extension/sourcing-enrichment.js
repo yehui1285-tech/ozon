@@ -108,7 +108,11 @@ function sendMessage(message) {
   return new Promise((resolve, reject) => {
     chrome.runtime.sendMessage(message, (response) => {
       if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
-      if (!response?.ok) return reject(new Error(response?.error || "扩展后台未返回结果"));
+      if (!response?.ok) {
+        const error = new Error(response?.error || "扩展后台未返回结果");
+        error.elapsedMs = Number(response?.elapsedMs || 0) || null;
+        return reject(error);
+      }
       resolve(response);
     });
   });
@@ -158,7 +162,7 @@ async function runEnrichment() {
     } catch (error) {
       task.enrichment.mainImageStatus = "failed";
       task.enrichment.mainImageError = error.message || String(error);
-      task.enrichment.mainImageElapsedMs = null;
+      task.enrichment.mainImageElapsedMs = Number(error?.elapsedMs || 0) || null;
     }
     task.audit = task.audit && typeof task.audit === "object" ? task.audit : {};
     task.audit.updatedAt = new Date().toISOString();

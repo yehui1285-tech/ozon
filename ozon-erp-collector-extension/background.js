@@ -286,10 +286,13 @@ async function readMainImageAsSoonAsAvailable(tabId, timeoutMs = 6000) {
     try {
       let timer = null;
       const results = await Promise.race([
-        chrome.scripting.executeScript({ target: { tabId }, func: probeMainImageCandidates }),
+        chrome.scripting.executeScript({ target: { tabId }, func: probeMainImageCandidates, injectImmediately: true }),
         new Promise((resolve) => { timer = setTimeout(() => resolve(null), Math.min(2000, Math.max(100, remainingMs))); }),
       ]).finally(() => clearTimeout(timer));
-      if (!results) return null;
+      // A single injection can be delayed while Ozon switches documents. Keep
+      // the overall hard deadline, but do not turn that transient delay into a
+      // failure for the whole product.
+      if (!results) continue;
       const selected = mainImageCore.chooseBestCandidate(results?.[0]?.result || []);
       if (selected?.url) return { ...selected, elapsedMs: Date.now() - startedAt };
     } catch {
@@ -355,7 +358,11 @@ async function readMainImageFromProductUrl(rawUrl) {
     temporaryProductTabs.add(tab.id);
     await chrome.tabs.update(tab.id, { autoDiscardable: false }).catch(() => null);
     const image = await readMainImageAsSoonAsAvailable(tab.id, MAIN_IMAGE_TAB_TIMEOUT_MS);
-    if (!image?.url) throw new Error("元数据直读失败，后台页也未在硬超时内读取到主图，可稍后重试。");
+    if (!image?.url) {
+      const error = new Error("元数据直读失败，后台页也未在6秒硬超时内读取到主图，可稍后重试。");
+      error.elapsedMs = Date.now() - startedAt;
+      throw error;
+    }
     return { ok: true, imageUrl: image.url, source: image.source, route: "tab-fallback", elapsedMs: Date.now() - startedAt, url };
   } finally {
     if (tab?.id) {
@@ -1056,7 +1063,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!operation) return false;
   Promise.resolve(operation)
     .then((result) => sendResponse(result))
-    .catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
+    .catch((error) => sendResponse({
+      ok: false,
+      error: error.message || String(error),
+      elapsedMs: Number(error?.elapsedMs || 0) || null,
+    }));
   return true;
 });
 
