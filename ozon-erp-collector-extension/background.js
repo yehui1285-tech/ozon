@@ -24,8 +24,6 @@ const BATCH_RELOAD_SKIP_LIMIT = 2;
 const ZERO_MATCH_OBSERVED_THRESHOLD = 500;
 const AUTO_SKIP_OBSERVED_THRESHOLD = 1000;
 const AUTO_SKIP_QUALIFIED_LIMIT = 3;
-const MAIN_IMAGE_METADATA_TIMEOUT_MS = 3500;
-const MAIN_IMAGE_TAB_TIMEOUT_MS = 6000;
 const autoInjectedTabs = new Set();
 const temporaryProductTabs = new Set();
 const enqueueBatchOperation = storeScannerCore.createSerializedExecutor();
@@ -282,17 +280,10 @@ function probeMainImageCandidates() {
 async function readMainImageAsSoonAsAvailable(tabId, timeoutMs = 6000) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
-    const remainingMs = timeoutMs - (Date.now() - startedAt);
     try {
-      let timer = null;
-      const results = await Promise.race([
-        chrome.scripting.executeScript({ target: { tabId }, func: probeMainImageCandidates, injectImmediately: true }),
-        new Promise((resolve) => { timer = setTimeout(() => resolve(null), Math.min(2000, Math.max(100, remainingMs))); }),
-      ]).finally(() => clearTimeout(timer));
-      // A single injection can be delayed while Ozon switches documents. Keep
-      // the overall hard deadline, but do not turn that transient delay into a
-      // failure for the whole product.
-      if (!results) continue;
+      // Keep the proven 0.6.12 behavior: allow Chrome to finish the current
+      // document injection instead of cutting it off and losing a valid image.
+      const results = await chrome.scripting.executeScript({ target: { tabId }, func: probeMainImageCandidates });
       const selected = mainImageCore.chooseBestCandidate(results?.[0]?.result || []);
       if (selected?.url) return { ...selected, elapsedMs: Date.now() - startedAt };
     } catch {
@@ -303,67 +294,22 @@ async function readMainImageAsSoonAsAvailable(tabId, timeoutMs = 6000) {
   return null;
 }
 
-async function readHtmlHead(response, maxCharacters = 512000) {
-  if (!response.body?.getReader) return response.text();
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let html = "";
-  try {
-    while (html.length < maxCharacters) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      html += decoder.decode(value, { stream: true });
-      if (/<\/head\s*>/i.test(html)) break;
-    }
-    html += decoder.decode();
-    return html;
-  } finally {
-    await reader.cancel().catch(() => null);
-  }
-}
-
-async function readMainImageFromMetadata(url, timeoutMs = MAIN_IMAGE_METADATA_TIMEOUT_MS) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(url, {
-      method: "GET",
-      credentials: "include",
-      cache: "no-store",
-      redirect: "follow",
-      headers: { Accept: "text/html,application/xhtml+xml" },
-      signal: controller.signal,
-    });
-    if (!response.ok) return null;
-    const html = await readHtmlHead(response);
-    return mainImageCore.chooseBestCandidate(mainImageCore.metadataImageCandidates(html));
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 async function readMainImageFromProductUrl(rawUrl) {
   const url = blackPriceCore.normalizeProductUrl(rawUrl);
   if (!url) throw new Error("Ozon商品链接无效，主图未补齐。");
-  const startedAt = Date.now();
-  const metadataImage = await readMainImageFromMetadata(url);
-  if (metadataImage?.url) {
-    return { ok: true, imageUrl: metadataImage.url, source: metadataImage.source, route: "metadata-fetch", elapsedMs: Date.now() - startedAt, url };
-  }
   let tab = null;
   try {
     tab = await chrome.tabs.create({ url, active: false });
     temporaryProductTabs.add(tab.id);
     await chrome.tabs.update(tab.id, { autoDiscardable: false }).catch(() => null);
-    const image = await readMainImageAsSoonAsAvailable(tab.id, MAIN_IMAGE_TAB_TIMEOUT_MS);
+    const startedAt = Date.now();
+    const image = await readMainImageAsSoonAsAvailable(tab.id, 6000);
     if (!image?.url) {
-      const error = new Error("元数据直读失败，后台页也未在6秒硬超时内读取到主图，可稍后重试。");
+      const error = new Error("后台商品页未读取到Ozon主图，可稍后重试或手工补齐。");
       error.elapsedMs = Date.now() - startedAt;
       throw error;
     }
-    return { ok: true, imageUrl: image.url, source: image.source, route: "tab-fallback", elapsedMs: Date.now() - startedAt, url };
+    return { ok: true, imageUrl: image.url, source: image.source, route: "tab-reliable", elapsedMs: image.elapsedMs, url };
   } finally {
     if (tab?.id) {
       temporaryProductTabs.delete(tab.id);

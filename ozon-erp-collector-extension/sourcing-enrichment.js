@@ -86,7 +86,7 @@ function renderRows() {
     const state = taskState(task);
     const stateLabels = { pending: "等待", running: "读取中", completed: "成功", failed: "失败" };
     row.append(cell(stateLabels[state] || state, state === "completed" ? "ok" : state === "failed" ? "bad" : "muted"));
-    const routeLabels = { "metadata-fetch": "元数据直读", "tab-fallback": "标签页兜底" };
+    const routeLabels = { "metadata-fetch": "元数据直读", "tab-fallback": "标签页兜底", "tab-reliable": "标签页可靠模式" };
     row.append(cell(routeLabels[task.enrichment?.mainImageRoute] || "-", "muted"));
     row.append(cell(task.enrichment?.mainImageElapsedMs ? `${(task.enrichment.mainImageElapsedMs / 1000).toFixed(1)}秒` : "-", "muted"));
     const linkCell = document.createElement("td");

@@ -279,7 +279,7 @@ assert.match(batchHtmlSource, /row-delete/);
 assert.match(batchHtmlSource, /id="clearBatch">清空当前批次/);
 
 const manifest = JSON.parse(fs.readFileSync(new URL("../ozon-erp-collector-extension/manifest.json", import.meta.url), "utf8"));
-assert.equal(manifest.version, "0.6.14");
+assert.equal(manifest.version, "0.6.15");
 assert.ok(manifest.permissions.includes("alarms"));
 
 const detailSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/content.js", import.meta.url), "utf8");

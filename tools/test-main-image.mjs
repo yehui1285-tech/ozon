@@ -46,19 +46,13 @@ const popupSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/pop
 const enrichmentSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/sourcing-enrichment.js", import.meta.url), "utf8");
 const manifest = JSON.parse(fs.readFileSync(new URL("../ozon-erp-collector-extension/manifest.json", import.meta.url), "utf8"));
 
-assert.equal(manifest.version, "0.6.14");
+assert.equal(manifest.version, "0.6.15");
 assert.match(backgroundSource, /probeMainImageCandidates/);
-assert.match(backgroundSource, /readMainImageFromMetadata\(url\)/);
-assert.match(backgroundSource, /metadata-fetch/);
-assert.match(backgroundSource, /tab-fallback/);
-assert.match(backgroundSource, /new AbortController\(\)/);
-assert.match(backgroundSource, /response\.body\.getReader\(\)/);
-assert.match(backgroundSource, /<\\\/head\\s\*>/);
-assert.match(backgroundSource, /Promise\.race\(\[/);
-assert.match(backgroundSource, /injectImmediately:\s*true/);
-assert.match(backgroundSource, /if \(!results\) continue/);
-assert.doesNotMatch(backgroundSource, /if \(!results\) return null/);
-assert.match(backgroundSource, /readMainImageAsSoonAsAvailable\(tab\.id, MAIN_IMAGE_TAB_TIMEOUT_MS\)/);
+assert.match(backgroundSource, /tab-reliable/);
+assert.doesNotMatch(backgroundSource, /readMainImageFromMetadata/);
+assert.doesNotMatch(backgroundSource, /Promise\.race\(\[/);
+assert.doesNotMatch(backgroundSource, /injectImmediately:\s*true/);
+assert.match(backgroundSource, /readMainImageAsSoonAsAvailable\(tab\.id, 6000\)/);
 assert.match(backgroundSource, /message\?\.type === "readMainImageFromProductUrl"/);
 assert.match(backgroundSource, /chrome\.tabs\.remove\(tab\.id\)/);
 assert.match(popupSource, /openSourcingEnrichment/);
