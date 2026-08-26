@@ -217,10 +217,11 @@ function csvCell(value) {
 }
 
 export function buildQueueCsv(tasks) {
-  const header = ["任务ID", "状态", "店铺", "SKU", "商品名称", "页面价格", "跟卖最低价", "最终绿标价", "采用佣金", "月销量", "发货模式", "长mm", "宽mm", "高mm", "重量g", "商品链接", "详情补全状态", "拼多多找品状态", "采购成本", "利润率", "是否达到18%"];
+  const header = ["任务ID", "状态", "店铺", "SKU", "商品名称", "页面价格", "跟卖最低价", "最终绿标价", "采用佣金", "同源原始黑标价", "国际运费", "运费线路", "18%最高采购成本", "月销量", "发货模式", "长mm", "宽mm", "高mm", "重量g", "商品链接", "详情补全状态", "拼多多找品状态", "采购成本", "利润率", "是否达到18%"];
   const rows = (Array.isArray(tasks) ? tasks : []).map((task) => [
     task.taskId, task.status, task.source.storeName, task.ozon.sku, task.ozon.name, task.ozon.pagePrice, task.ozon.competitorPrice,
-    task.ozon.effectiveGreenPrice, task.ozon.selectedCommission, task.ozon.monthlySales, task.ozon.fulfillment,
+    task.ozon.effectiveGreenPrice, task.ozon.selectedCommission, task.enrichment.originalBlackPrice, task.enrichment.internationalFreight,
+    task.enrichment.freightRoute, task.enrichment.maxPurchaseCostAt18Pct, task.ozon.monthlySales, task.ozon.fulfillment,
     task.ozon.lengthMm, task.ozon.widthMm, task.ozon.heightMm, task.ozon.weightG, task.ozon.productUrl,
     task.enrichment.status, task.sourcing.status, task.pricing.purchaseCost, task.pricing.profitMargin, task.pricing.eligibleAt18Pct,
   ]);

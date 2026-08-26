@@ -1,9 +1,11 @@
 const fileInput = document.getElementById("queueFile");
-const startButton = document.getElementById("start");
+const imageButton = document.getElementById("startImages");
+const pricingButton = document.getElementById("startPricing");
 const stopButton = document.getElementById("stop");
 const downloadButton = document.getElementById("download");
 const statusElement = document.getElementById("status");
 const rowsElement = document.getElementById("taskRows");
+const SAVED_QUEUE_KEY = "ozonSourcingEnrichmentQueueV1";
 
 let queue = null;
 let sourceFileName = "sourcing-queue.json";
@@ -24,24 +26,44 @@ function isOzonProductUrl(value) {
   }
 }
 
-function taskState(task) {
+function mainImageState(task) {
   if (task?.enrichment?.mainImageUrl) return "completed";
   return task?.enrichment?.mainImageStatus || "pending";
 }
 
+function hasFiniteValue(value) {
+  return value !== null && value !== undefined && String(value).trim() !== "" && Number.isFinite(Number(value));
+}
+
+function pricingState(task) {
+  if (task?.enrichment?.ozonPricingStatus === "completed"
+    && Number(task?.enrichment?.originalBlackPrice) > 0
+    && Number(task?.enrichment?.internationalFreight) > 0
+    && hasFiniteValue(task?.enrichment?.maxPurchaseCostAt18Pct)) return "completed";
+  return task?.enrichment?.ozonPricingStatus || "pending";
+}
+
+function syncTaskStage(task) {
+  const ready = mainImageState(task) === "completed" && pricingState(task) === "completed";
+  task.enrichment.status = ready ? "completed" : "pending";
+  task.status = ready ? "pending_pinduoduo_search" : "pending_ozon_enrichment";
+}
+
 function stats() {
   const tasks = queue?.tasks || [];
-  const success = tasks.filter((task) => taskState(task) === "completed").length;
-  const failed = tasks.filter((task) => taskState(task) === "failed").length;
-  return { total: tasks.length, success, failed, pending: tasks.length - success - failed };
+  const imageCompleted = tasks.filter((task) => mainImageState(task) === "completed").length;
+  const pricingCompleted = tasks.filter((task) => pricingState(task) === "completed").length;
+  const pricingFailed = tasks.filter((task) => pricingState(task) === "failed").length;
+  return { total: tasks.length, imageCompleted, pricingCompleted, pricingFailed, pricingPending: tasks.length - pricingCompleted - pricingFailed };
 }
 
 function updateStats() {
   const current = stats();
   document.getElementById("totalCount").textContent = current.total;
-  document.getElementById("successCount").textContent = current.success;
-  document.getElementById("failedCount").textContent = current.failed;
-  document.getElementById("pendingCount").textContent = current.pending;
+  document.getElementById("imageCount").textContent = current.imageCompleted;
+  document.getElementById("pricingSuccessCount").textContent = current.pricingCompleted;
+  document.getElementById("pricingFailedCount").textContent = current.pricingFailed;
+  document.getElementById("pricingPendingCount").textContent = current.pricingPending;
 }
 
 function cell(text, className = "") {
@@ -51,13 +73,18 @@ function cell(text, className = "") {
   return element;
 }
 
+function money(value) {
+  const amount = Number(value);
+  return Number.isFinite(amount) && amount > 0 ? amount.toFixed(2) : "-";
+}
+
 function renderRows() {
   rowsElement.replaceChildren();
   const tasks = queue?.tasks || [];
   if (!tasks.length) {
     const row = document.createElement("tr");
     const empty = cell("尚未导入任务。", "muted");
-    empty.colSpan = 9;
+    empty.colSpan = 12;
     row.append(empty);
     rowsElement.append(row);
     updateStats();
@@ -82,13 +109,15 @@ function renderRows() {
     row.append(imageCell);
     row.append(cell(task.ozon?.sku || "-"));
     row.append(cell(task.ozon?.name || "-", "name"));
-    row.append(cell(task.source?.storeName || "-"));
-    const state = taskState(task);
-    const stateLabels = { pending: "等待", running: "读取中", completed: "成功", failed: "失败" };
+    row.append(cell(money(task.ozon?.effectiveGreenPrice)));
+    row.append(cell(money(task.enrichment?.originalBlackPrice)));
+    row.append(cell(money(task.enrichment?.internationalFreight)));
+    row.append(cell(hasFiniteValue(task.enrichment?.maxPurchaseCostAt18Pct) ? Number(task.enrichment.maxPurchaseCostAt18Pct).toFixed(2) : "-", "limit"));
+    const state = pricingState(task);
+    const stateLabels = { pending: "等待核价", running: "核价中", completed: "核价完成", failed: "核价失败" };
     row.append(cell(stateLabels[state] || state, state === "completed" ? "ok" : state === "failed" ? "bad" : "muted"));
-    const routeLabels = { "metadata-fetch": "元数据直读", "tab-fallback": "标签页兜底", "tab-reliable": "标签页可靠模式" };
-    row.append(cell(routeLabels[task.enrichment?.mainImageRoute] || "-", "muted"));
-    row.append(cell(task.enrichment?.mainImageElapsedMs ? `${(task.enrichment.mainImageElapsedMs / 1000).toFixed(1)}秒` : "-", "muted"));
+    row.append(cell(task.enrichment?.freightRoute || "-", "muted"));
+    row.append(cell(task.enrichment?.ozonPricingElapsedMs ? `${(task.enrichment.ozonPricingElapsedMs / 1000).toFixed(1)}秒` : "-", "muted"));
     const linkCell = document.createElement("td");
     if (isOzonProductUrl(task.ozon?.productUrl)) {
       const link = document.createElement("a");
@@ -125,30 +154,77 @@ async function loadQueue(file) {
   if (invalidCount) throw new Error(`有${invalidCount}件商品缺少有效Ozon商品链接。`);
   parsed.tasks.forEach((task) => {
     task.enrichment = task.enrichment && typeof task.enrichment === "object" ? task.enrichment : {};
+    task.audit = task.audit && typeof task.audit === "object" ? task.audit : {};
+    task.ozon = task.ozon && typeof task.ozon === "object" ? task.ozon : {};
     if (!task.enrichment.mainImageUrl && task.enrichment.mainImageStatus === "running") task.enrichment.mainImageStatus = "pending";
+    if (task.enrichment.ozonPricingStatus === "running") task.enrichment.ozonPricingStatus = "pending";
+    syncTaskStage(task);
   });
   queue = parsed;
   sourceFileName = file.name || sourceFileName;
-  startButton.disabled = false;
+  imageButton.disabled = false;
+  pricingButton.disabled = false;
+  downloadButton.disabled = false;
+  await persistQueue();
+  renderRows();
+  const current = stats();
+  setStatus(`已导入${current.total}件；主图完成${current.imageCompleted}件，Ozon核价完成${current.pricingCompleted}件。`, "success");
+}
+
+async function persistQueue() {
+  if (!queue) return;
+  await chrome.storage.local.set({
+    [SAVED_QUEUE_KEY]: {
+      queue,
+      sourceFileName,
+      savedAt: new Date().toISOString(),
+    },
+  });
+}
+
+async function restoreQueue() {
+  const stored = await chrome.storage.local.get(SAVED_QUEUE_KEY);
+  const saved = stored?.[SAVED_QUEUE_KEY];
+  if (!saved?.queue || !Array.isArray(saved.queue.tasks) || !saved.queue.tasks.length) return false;
+  queue = saved.queue;
+  sourceFileName = saved.sourceFileName || sourceFileName;
+  queue.tasks.forEach((task) => {
+    task.enrichment = task.enrichment && typeof task.enrichment === "object" ? task.enrichment : {};
+    task.audit = task.audit && typeof task.audit === "object" ? task.audit : {};
+    task.ozon = task.ozon && typeof task.ozon === "object" ? task.ozon : {};
+    if (!task.enrichment.mainImageUrl && task.enrichment.mainImageStatus === "running") task.enrichment.mainImageStatus = "pending";
+    if (task.enrichment.ozonPricingStatus === "running") task.enrichment.ozonPricingStatus = "pending";
+    syncTaskStage(task);
+  });
+  imageButton.disabled = false;
+  pricingButton.disabled = false;
   downloadButton.disabled = false;
   renderRows();
   const current = stats();
-  setStatus(`已导入${current.total}件；已有主图${current.success}件，等待/可重试${current.total - current.success}件。`, "success");
+  setStatus(`已恢复上次进度：${current.total}件，核价完成${current.pricingCompleted}件，可继续处理或导出。`, "success");
+  return true;
+}
+
+function setRunning(value) {
+  running = value;
+  imageButton.disabled = value || !queue;
+  pricingButton.disabled = value || !queue;
+  stopButton.disabled = !value;
+  fileInput.disabled = value;
+  downloadButton.disabled = value || !queue;
 }
 
 async function runEnrichment() {
   if (!queue || running) return;
-  running = true;
   stopRequested = false;
-  startButton.disabled = true;
-  stopButton.disabled = false;
-  fileInput.disabled = true;
+  setRunning(true);
   const pending = queue.tasks.filter((task) => !task.enrichment?.mainImageUrl);
   for (let index = 0; index < pending.length; index += 1) {
     if (stopRequested) break;
     const task = pending[index];
     task.enrichment.mainImageStatus = "running";
     task.enrichment.mainImageError = null;
+    await persistQueue();
     renderRows();
     setStatus(`正在处理 ${index + 1}/${pending.length}：SKU ${task.ozon.sku}…`);
     try {
@@ -166,27 +242,82 @@ async function runEnrichment() {
     }
     task.audit = task.audit && typeof task.audit === "object" ? task.audit : {};
     task.audit.updatedAt = new Date().toISOString();
+    syncTaskStage(task);
+    await persistQueue();
     renderRows();
     if (!stopRequested && index < pending.length - 1) await new Promise((resolve) => setTimeout(resolve, 250));
   }
-  running = false;
-  stopButton.disabled = true;
-  fileInput.disabled = false;
-  startButton.disabled = false;
-  downloadButton.disabled = false;
+  setRunning(false);
   const current = stats();
   const stoppedText = stopRequested ? "已按要求停止。" : "本轮完成。";
-  setStatus(`${stoppedText} 主图成功${current.success}/${current.total}，失败${current.failed}；可下载结果或再次重试失败项。`, current.failed ? "error" : "success");
+  const imageFailed = queue.tasks.filter((task) => mainImageState(task) === "failed").length;
+  setStatus(`${stoppedText} 主图成功${current.imageCompleted}/${current.total}，失败${imageFailed}；可下载结果或再次重试失败项。`, imageFailed ? "error" : "success");
+}
+
+async function runPricingEnrichment() {
+  if (!queue || running) return;
+  stopRequested = false;
+  setRunning(true);
+  const pending = queue.tasks.filter((task) => pricingState(task) !== "completed");
+  for (let index = 0; index < pending.length; index += 1) {
+    if (stopRequested) break;
+    const task = pending[index];
+    task.enrichment.ozonPricingStatus = "running";
+    task.enrichment.ozonPricingError = null;
+    await persistQueue();
+    renderRows();
+    setStatus(`正在批量核价 ${index + 1}/${pending.length}：SKU ${task.ozon.sku}…`);
+    try {
+      const response = await sendMessage({ type: "readOzonTaskPricing", task });
+      Object.assign(task.ozon, {
+        pagePrice: response.pagePrice,
+        competitorPrice: response.competitorPrice,
+        effectiveGreenPrice: response.effectiveGreenPrice,
+        commissions: response.commissions,
+        selectedCommission: response.selectedCommission,
+        lengthMm: response.lengthMm,
+        widthMm: response.widthMm,
+        heightMm: response.heightMm,
+        weightG: response.weightG,
+      });
+      Object.assign(task.enrichment, {
+        ozonPricingStatus: "completed",
+        ozonPricingError: null,
+        ozonPricingElapsedMs: Number(response.elapsedMs || 0),
+        ozonPricingFetchedAt: new Date().toISOString(),
+        originalBlackPrice: response.originalBlackPrice,
+        blackPriceSource: response.blackPriceSource,
+        blackPriceSourceUrl: response.blackPriceSourceUrl,
+        internationalFreight: response.internationalFreight,
+        freightRoute: response.freightRoute,
+        maxPurchaseCostAt18Pct: response.maxPurchaseCostAt18Pct,
+        pricingCalculation: response.calculation,
+      });
+    } catch (error) {
+      task.enrichment.ozonPricingStatus = "failed";
+      task.enrichment.ozonPricingError = error.message || String(error);
+      task.enrichment.ozonPricingElapsedMs = Number(error?.elapsedMs || 0) || null;
+    }
+    task.audit.updatedAt = new Date().toISOString();
+    syncTaskStage(task);
+    await persistQueue();
+    renderRows();
+    if (!stopRequested && index < pending.length - 1) await new Promise((resolve) => setTimeout(resolve, 350));
+  }
+  setRunning(false);
+  const current = stats();
+  setStatus(`${stopRequested ? "已停止。" : "本轮核价补全完成。"} 成功${current.pricingCompleted}/${current.total}，失败${current.pricingFailed}；失败项可再次重试。`, current.pricingFailed ? "error" : "success");
 }
 
 function downloadQueue() {
   if (!queue) return;
   queue.generatedAt = new Date().toISOString();
-  queue.enrichmentRun = { stage: "ozon-main-image", completedAt: queue.generatedAt, ...stats() };
+  queue.enrichmentRun = { stage: "ozon-task-pricing", completedAt: queue.generatedAt, ...stats() };
   const blob = new Blob([`${JSON.stringify(queue, null, 2)}\n`], { type: "application/json;charset=utf-8" });
   const link = document.createElement("a");
   link.href = URL.createObjectURL(blob);
-  link.download = sourceFileName.replace(/\.json$/i, "") + "-main-images.json";
+  const base = sourceFileName.replace(/(?:-main-images|-ozon-pricing)?\.json$/i, "");
+  link.download = `${base}-ozon-pricing.json`;
   link.click();
   setTimeout(() => URL.revokeObjectURL(link.href), 1000);
   setStatus(`已下载 ${link.download}。`, "success");
@@ -198,14 +329,17 @@ fileInput.addEventListener("change", async () => {
   try { await loadQueue(file); }
   catch (error) {
     queue = null;
-    startButton.disabled = true;
+    imageButton.disabled = true;
+    pricingButton.disabled = true;
     downloadButton.disabled = true;
     renderRows();
     setStatus(error.message || String(error), "error");
   }
 });
-startButton.addEventListener("click", runEnrichment);
+imageButton.addEventListener("click", runEnrichment);
+pricingButton.addEventListener("click", runPricingEnrichment);
 stopButton.addEventListener("click", () => { stopRequested = true; stopButton.disabled = true; setStatus("将在当前商品处理完成后停止。", ""); });
 downloadButton.addEventListener("click", downloadQueue);
 
 renderRows();
+restoreQueue().catch((error) => setStatus(`未能恢复上次进度：${error.message || String(error)}`, "error"));

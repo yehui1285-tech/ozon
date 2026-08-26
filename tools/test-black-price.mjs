@@ -50,13 +50,13 @@ const contentSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/c
 const backgroundSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/background.js", import.meta.url), "utf8");
 const manifest = JSON.parse(fs.readFileSync(new URL("../ozon-erp-collector-extension/manifest.json", import.meta.url), "utf8"));
 
-assert.equal(manifest.version, "0.6.16");
+assert.equal(manifest.version, "0.6.17");
 assert.match(contentSource, /span\.pdp_h0b/);
 assert.match(contentSource, /#mz-black-price-tag/);
 assert.match(contentSource, /readBlackPriceFromProductUrl/);
 assert.match(contentSource, /startBlackPriceLookup\(p\)/);
 assert.match(contentSource, /competitorTriggerScore/);
-assert.match(backgroundSource, /importScripts\("black-price-core\.js", "main-image-core\.js", "store-scanner-core\.js"\)/);
+assert.match(backgroundSource, /importScripts\("black-price-core\.js", "main-image-core\.js", "task-pricing-core\.js", "store-scanner-core\.js"\)/);
 assert.match(backgroundSource, /files: \["black-price-core\.js", "content\.js", "store-scanner-core\.js", "store-scanner\.js"\]/);
 assert.match(backgroundSource, /message\?\.type === "readBlackPriceFromProductUrl"/);
 assert.match(backgroundSource, /chrome\.tabs\.remove\(tab\.id\)/);

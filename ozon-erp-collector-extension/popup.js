@@ -50,7 +50,7 @@ batchManagerButton.addEventListener("click", () => {
 sourcingEnrichmentButton.addEventListener("click", () => {
   chrome.runtime.sendMessage({ type: "openSourcingEnrichment" }, (response) => {
     if (chrome.runtime.lastError || !response?.ok) {
-      setStatus(chrome.runtime.lastError?.message || response?.error || "无法打开找品详情补全页", false);
+      setStatus(chrome.runtime.lastError?.message || response?.error || "无法打开任务批量核价补全页", false);
       return;
     }
     window.close();

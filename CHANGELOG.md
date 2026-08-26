@@ -5,6 +5,53 @@
 - `当前文件怎么用.md`
 - `OZON项目复现交接文档.md`
 
+## 2026-08-26 - Ozon任务批量核价补全层（扩展 0.6.17）
+
+### 实现
+
+- 将扩展“找品详情补全”升级为“Ozon任务批量核价补全”，保留已验收的主图可靠读取，并新增独立批量核价按钮、进度统计和核价结果列。
+- 每件任务只使用一个后台Ozon标签页：先读取页面价、跟卖最低价、佣金、尺寸和重量；页面价胜出时读取当前页原始黑价，跟卖价胜出时在同一标签页跳转到对应跟卖商品页读取原始黑价。
+- 新增`task-pricing-core.js`，从共享运费规则同步线路，沿用核价页公式计算国际运费，并按目标利润率18%反推最高采购成本，结果向下保留两位小数。
+- 补全结果逐件串行保存到扩展本地存储。页面刷新或浏览器重启后自动恢复最近队列，运行中断项回到等待状态；失败项保留错误并可重试。
+- 只有主图与Ozon核价字段均完整时，任务才进入`pending_pinduoduo_search`；队列CSV新增同源黑标价、国际运费、线路及18%最高采购成本。
+
+### 涉及文件
+
+- `ozon-erp-collector-extension/task-pricing-core.js`
+- `ozon-erp-collector-extension/background.js`
+- `ozon-erp-collector-extension/content.js`
+- `ozon-erp-collector-extension/sourcing-enrichment.html`
+- `ozon-erp-collector-extension/sourcing-enrichment.js`
+- `ozon-erp-collector-extension/manifest.json`
+- `ozon-erp-collector-extension/popup.html`
+- `ozon-erp-collector-extension/popup.js`
+- `sourcing-agent/queue-core.mjs`
+- `sourcing-agent/README.md`
+- `tools/sync-freight-rules.mjs`
+- `tools/test-task-pricing.mjs`
+- `tools/test-black-price.mjs`
+- `tools/test-main-image.mjs`
+- `tools/test-store-scanner.mjs`
+- `tools/verify-project.ps1`
+- `package.json`
+- `PROJECT_STATUS.md`
+- `当前文件怎么用.md`
+- `真实浏览器验收清单.md`
+
+### 验证与交付
+
+- 自动测试覆盖同源价格选择、600卢布佣金边界、共享运费样本、18%采购成本边界、任务状态流转、恢复存储接线及原有功能回归。
+- 完整发布构建与ZIP独立核验通过；ZIP共15项，版本为0.6.17并包含`task-pricing-core.js`，SHA-256为`C842D84640DF32773823C084F6AF3694B6E913A7C489542580D988B734E400BE`。真实Ozon动态页面批量验收按用户要求本轮暂不执行。
+- 修改仅涉及扩展与本地队列工具；不需要上传`feishu.html`，不需要部署Cloudflare Worker。需要在Chrome/Edge扩展管理页重新加载0.6.17后才能使用。
+
+### 回滚备份
+
+```text
+C:\Users\Microsoft\Documents\Ozon\_备份_20260826_ozon_task_pricing_0.6.16_before
+```
+
+- 备份包含修改前扩展、`sourcing-agent`及状态文档；创建后常规`_备份_...`目录仍为5个。
+
 ## 2026-08-26 - 批量扫描OOM记录恢复修复（扩展 0.6.16）
 
 ### 根因

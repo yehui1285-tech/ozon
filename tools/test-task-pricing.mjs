@@ -1,0 +1,86 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import vm from "node:vm";
+
+const pricingSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/task-pricing-core.js", import.meta.url), "utf8");
+const context = vm.createContext({ URL });
+context.globalThis = context;
+vm.runInContext(pricingSource, context, { filename: "task-pricing-core.js" });
+const core = context.OzonTaskPricingCore;
+
+assert.ok(core, "task pricing core must be installed");
+assert.equal(core.chooseSource(350.9, 253.85), "competitor");
+assert.equal(core.chooseSource(253.85, 280.74), "page");
+assert.equal(core.selectedCommission(600, [12, 14, 18]), 14);
+assert.equal(core.selectedCommission(600.01, [12, 14, 18]), 18);
+
+const freight = core.calculateFreight({ greenPrice: 253.85, weightKg: 2.1, lengthCm: 80, widthCm: 12, heightCm: 12 });
+assert.equal(freight.route, "CEL Economy Big");
+assert.equal(freight.price, 80.61);
+
+const task = {
+  ozon: {
+    productUrl: "https://www.ozon.ru/product/example-4984098622/",
+    pagePrice: 350.9,
+    competitorPrice: 253.85,
+    commissions: [12, 17, 17],
+    selectedCommission: 17,
+    lengthMm: 800,
+    widthMm: 120,
+    heightMm: 120,
+    weightG: 2100,
+  },
+};
+const result = core.buildTaskPricing(task, {
+  source: "competitor",
+  sourceUrl: "https://www.ozon.ru/product/source-5382620664/",
+  pageGreenPrice: 350.9,
+  minCompetitorPrice: 253.85,
+  product: {},
+}, 266.36, "https://www.ozon.ru/product/source-5382620664/");
+assert.equal(result.effectiveGreenPrice, 253.85);
+assert.equal(result.originalBlackPrice, 266.36);
+assert.equal(result.blackPriceSource, "competitor");
+assert.equal(result.internationalFreight, 80.61);
+assert.equal(result.freightRoute, "CEL Economy Big");
+assert.ok(result.maxPurchaseCostAt18Pct > 0);
+
+const webContext = vm.createContext({});
+webContext.globalThis = webContext;
+const webPricingSource = fs.readFileSync(new URL("../web-src/pricing-core.js", import.meta.url), "utf8");
+vm.runInContext(`${webPricingSource}\n;globalThis.__pricingCore = OzonPricingCore;`, webContext, { filename: "pricing-core.js" });
+const webCore = webContext.__pricingCore;
+const atLimit = webCore.calc({
+  green: result.effectiveGreenPrice,
+  black: result.originalBlackPrice,
+  commission: result.selectedCommission,
+  cost: result.maxPurchaseCostAt18Pct,
+  freight: result.internationalFreight,
+});
+const aboveLimit = webCore.calc({
+  green: result.effectiveGreenPrice,
+  black: result.originalBlackPrice,
+  commission: result.selectedCommission,
+  cost: result.maxPurchaseCostAt18Pct + 0.01,
+  freight: result.internationalFreight,
+});
+assert.ok(atLimit.margin >= 0.18, `floor limit must retain at least 18%, got ${atLimit.margin}`);
+assert.ok(aboveLimit.margin < 0.18, `one cent above limit must fall below 18%, got ${aboveLimit.margin}`);
+
+assert.throws(() => core.buildTaskPricing({ ozon: {} }, {}, 0, ""), /核价字段不完整/);
+
+const backgroundSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/background.js", import.meta.url), "utf8");
+const contentSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/content.js", import.meta.url), "utf8");
+const enrichmentSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/sourcing-enrichment.js", import.meta.url), "utf8");
+assert.match(backgroundSource, /readOzonTaskPricing/);
+assert.match(backgroundSource, /task-pricing-core\.js/);
+assert.match(backgroundSource, /await chrome\.tabs\.update\(tab\.id, \{ url: sourceUrl/);
+assert.match(contentSource, /collectOzonTaskPricingSnapshot/);
+assert.match(contentSource, /findLowestCompetitorProduct/);
+assert.match(enrichmentSource, /pending_pinduoduo_search/);
+assert.match(enrichmentSource, /maxPurchaseCostAt18Pct/);
+assert.match(enrichmentSource, /ozonSourcingEnrichmentQueueV1/);
+assert.match(enrichmentSource, /await persistQueue\(\)/);
+assert.match(enrichmentSource, /mainImageState\(task\) === "completed" && pricingState\(task\) === "completed"/);
+
+console.log("Ozon task pricing enrichment tests passed.");

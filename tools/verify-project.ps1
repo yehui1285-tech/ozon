@@ -9,6 +9,7 @@ try {
   node tools/test-commission-rules.mjs
   node tools/test-black-price.mjs
   node tools/test-main-image.mjs
+  node tools/test-task-pricing.mjs
   node tools/test-sourcing-queue.mjs
   node tools/test-store-scanner.mjs
   node tools/test-store-background-integration.mjs
@@ -18,6 +19,7 @@ try {
   node --check ozon-erp-collector-extension/background.js
   node --check ozon-erp-collector-extension/black-price-core.js
   node --check ozon-erp-collector-extension/main-image-core.js
+  node --check ozon-erp-collector-extension/task-pricing-core.js
   node --check ozon-erp-collector-extension/content.js
   node --check ozon-erp-collector-extension/store-scanner-core.js
   node --check ozon-erp-collector-extension/store-scanner.js

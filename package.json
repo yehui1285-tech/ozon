@@ -10,6 +10,7 @@
     "test:commission": "node tools/test-commission-rules.mjs",
     "test:black-price": "node tools/test-black-price.mjs",
     "test:main-image": "node tools/test-main-image.mjs",
+    "test:task-pricing": "node tools/test-task-pricing.mjs",
     "build:sourcing-queue": "node sourcing-agent/build-queue.mjs",
     "test:sourcing-queue": "node tools/test-sourcing-queue.mjs",
     "test:store": "node tools/test-store-scanner.mjs",
@@ -17,6 +18,6 @@
     "test:pricing": "node tools/test-pricing-core.mjs",
     "test:worker": "node tools/test-worker-security.mjs",
     "test:parsing": "node tools/test-parsing-fixtures.mjs",
-    "test": "node tools/build-web.mjs --check && node tools/sync-freight-rules.mjs --check && node tools/test-freight-rules.mjs && node tools/test-commission-rules.mjs && node tools/test-black-price.mjs && node tools/test-main-image.mjs && node tools/test-sourcing-queue.mjs && node tools/test-store-scanner.mjs && node tools/test-store-background-integration.mjs && node tools/test-pricing-core.mjs && node tools/test-worker-security.mjs && node tools/test-parsing-fixtures.mjs"
+    "test": "node tools/build-web.mjs --check && node tools/sync-freight-rules.mjs --check && node tools/test-freight-rules.mjs && node tools/test-commission-rules.mjs && node tools/test-black-price.mjs && node tools/test-main-image.mjs && node tools/test-task-pricing.mjs && node tools/test-sourcing-queue.mjs && node tools/test-store-scanner.mjs && node tools/test-store-background-integration.mjs && node tools/test-pricing-core.mjs && node tools/test-worker-security.mjs && node tools/test-parsing-fixtures.mjs"
   }
 }

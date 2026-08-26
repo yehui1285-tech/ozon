@@ -462,6 +462,43 @@ function startBlackPriceLookup(product) {
   return blackPriceLookupPromise;
 }
 
+async function collectOzonTaskPricingSnapshot(hints = {}) {
+  const expectedSku = String(hints.sku || "").trim();
+  const startedAt = Date.now();
+  let product = null;
+  let pagePrice = 0;
+  let competitorPrice = 0;
+  let source = "none";
+  while (Date.now() - startedAt < 8000) {
+    product = collectProduct();
+    if (expectedSku && product.sku && product.sku !== expectedSku) throw new Error(`商品SKU不一致：任务${expectedSku}，页面${product.sku}`);
+    pagePrice = Number(product.pageGreenPrice || 0) || num(hints.pagePrice);
+    competitorPrice = Number(product.minCompetitorPrice || 0) || num(hints.competitorPrice);
+    source = blackPriceCore?.chooseSource(pagePrice, competitorPrice) || "none";
+    if ((product.sku || expectedSku) && source !== "none") break;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  if (source === "none") throw new Error("未识别到页面绿标价或跟卖最低价");
+  let sourceUrl = location.href;
+  let currentBlackPrice = 0;
+  if (source === "page") {
+    currentBlackPrice = await waitForOriginalBlackPrice(pagePrice, 5000);
+  } else {
+    const competitor = await findLowestCompetitorProduct({ ...(product || {}), minCompetitorPrice: competitorPrice }, 6000);
+    if (!competitor?.url) throw new Error("未能从跟卖列表定位最低价商品链接");
+    sourceUrl = competitor.url;
+  }
+  return {
+    product: product || {},
+    pageGreenPrice: pagePrice,
+    minCompetitorPrice: competitorPrice,
+    effectiveGreenPrice: source === "competitor" ? competitorPrice : pagePrice,
+    source,
+    sourceUrl,
+    currentBlackPrice,
+  };
+}
+
 function recalculateEditor() {
   const price = editorNumber("ozon-edit-green");
   const length = editorNumber("ozon-edit-length");
@@ -903,4 +940,14 @@ if (location.hostname === "yehui1285-tech.github.io") {
   });
 } else if (!/^\/seller\/[^/]+/i.test(location.pathname)) {
   installPanel();
+  if (!globalThis.__ozonTaskPricingListenerInstalled) {
+    globalThis.__ozonTaskPricingListenerInstalled = true;
+    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+      if (message?.type !== "collectOzonTaskPricingSnapshot") return false;
+      collectOzonTaskPricingSnapshot(message.hints || {})
+        .then((snapshot) => sendResponse({ ok: true, snapshot }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    });
+  }
 }

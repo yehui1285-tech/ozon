@@ -7,6 +7,7 @@ const rules = JSON.parse(fs.readFileSync(path.join(root, "shared", "freight-rule
 const checkOnly = process.argv.includes("--check");
 const pageFiles = [path.join("web-src", "app.js")];
 const extensionFile = path.join("ozon-erp-collector-extension", "content.js");
+const taskPricingFile = path.join("ozon-erp-collector-extension", "task-pricing-core.js");
 const pageOnlyKeys = new Set(["cn", "delivery", "feeText", "weightText", "valueText"]);
 
 function findArrayEnd(text, arrayStart) {
@@ -52,4 +53,5 @@ const extensionRules = rules.map((rule) => Object.fromEntries(Object.entries(rul
 let changed = false;
 for (const file of pageFiles) changed = updateFile(file, "const routes = ", rules, "") || changed;
 changed = updateFile(extensionFile, "const routes = ", extensionRules, "") || changed;
+changed = updateFile(taskPricingFile, "const routes = ", extensionRules, "  ") || changed;
 console.log(checkOnly ? "运费规则同步检查通过" : changed ? "运费规则已同步" : "运费规则无需更新");

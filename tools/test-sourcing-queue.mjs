@@ -50,6 +50,7 @@ assert.equal(new Set(selected.map((task) => task.source.storeName)).size, 3);
 
 const csv = buildQueueCsv(selected);
 assert.match(csv, /任务ID,状态,店铺,SKU/);
+assert.match(csv, /同源原始黑标价,国际运费,运费线路,18%最高采购成本/);
 assert.match(csv, /ozon-1001/);
 assert.doesNotMatch(csv, /暂无符合要求/);
 

@@ -1,7 +1,8 @@
-importScripts("black-price-core.js", "main-image-core.js", "store-scanner-core.js");
+importScripts("black-price-core.js", "main-image-core.js", "task-pricing-core.js", "store-scanner-core.js");
 
 const blackPriceCore = globalThis.OzonBlackPriceCore;
 const mainImageCore = globalThis.OzonMainImageCore;
+const taskPricingCore = globalThis.OzonTaskPricingCore;
 const storeScannerCore = globalThis.OzonStoreScannerCore;
 const TARGET_URL = "https://yehui1285-tech.github.io/ozon/feishu.html?v=20260720";
 const TARGET_MATCH = "https://yehui1285-tech.github.io/ozon/feishu.html*";
@@ -310,6 +311,73 @@ async function readMainImageFromProductUrl(rawUrl) {
       throw error;
     }
     return { ok: true, imageUrl: image.url, source: image.source, route: "tab-reliable", elapsedMs: image.elapsedMs, url };
+  } finally {
+    if (tab?.id) {
+      temporaryProductTabs.delete(tab.id);
+      await chrome.tabs.remove(tab.id).catch(() => null);
+    }
+  }
+}
+
+async function injectTaskPricingCollector(tabId, timeoutMs = 5000) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      await chrome.scripting.executeScript({ target: { tabId }, files: ["black-price-core.js", "content.js"] });
+      return;
+    } catch {
+      await wait(150);
+    }
+  }
+  throw new Error("Ozon商品页核价采集器未能启动");
+}
+
+async function collectTaskPricingSnapshot(tabId, task) {
+  let lastError = null;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    await injectTaskPricingCollector(tabId);
+    try {
+      return await chrome.tabs.sendMessage(tabId, {
+        type: "collectOzonTaskPricingSnapshot",
+        hints: {
+          sku: String(task?.ozon?.sku || ""),
+          pagePrice: task?.ozon?.pagePrice,
+          competitorPrice: task?.ozon?.competitorPrice,
+        },
+      });
+    } catch (error) {
+      lastError = error;
+      await wait(200);
+    }
+  }
+  throw new Error(lastError?.message || "无法连接Ozon商品页核价采集器");
+}
+
+async function readOzonTaskPricing(rawTask) {
+  const task = rawTask && typeof rawTask === "object" ? rawTask : {};
+  const url = blackPriceCore.normalizeProductUrl(task?.ozon?.productUrl);
+  if (!url) throw new Error("任务缺少有效Ozon商品链接");
+  const startedAt = Date.now();
+  let tab = null;
+  try {
+    tab = await chrome.tabs.create({ url, active: false });
+    temporaryProductTabs.add(tab.id);
+    await chrome.tabs.update(tab.id, { autoDiscardable: false }).catch(() => null);
+    const snapshotResponse = await collectTaskPricingSnapshot(tab.id, task);
+    if (!snapshotResponse?.ok) throw new Error(snapshotResponse?.error || "Ozon商品页核价信息读取失败");
+    const snapshot = snapshotResponse.snapshot || {};
+    const sourceUrl = blackPriceCore.normalizeProductUrl(snapshot.sourceUrl || url);
+    if (!sourceUrl) throw new Error("未能定位绿标价对应的商品来源链接");
+    let blackPrice = Number(snapshot.currentBlackPrice || 0);
+    if (snapshot.source === "competitor") {
+      await chrome.tabs.update(tab.id, { url: sourceUrl, active: false });
+      blackPrice = await readOriginalBlackPriceAsSoonAsAvailable(tab.id, 8000);
+    } else if (!(blackPrice > 0)) {
+      blackPrice = await readOriginalBlackPriceAsSoonAsAvailable(tab.id, 5000);
+    }
+    if (!(blackPrice > 0)) throw new Error("未读取到有效绿标来源商品的原始黑标价");
+    const pricing = taskPricingCore.buildTaskPricing(task, snapshot, blackPrice, sourceUrl);
+    return { ok: true, ...pricing, elapsedMs: Date.now() - startedAt, sourceProductUrl: sourceUrl };
   } finally {
     if (tab?.id) {
       temporaryProductTabs.delete(tab.id);
@@ -988,6 +1056,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   else if (message?.type === "sendProductToPricing") operation = sendToPricing(message.product || {});
   else if (message?.type === "readBlackPriceFromProductUrl") operation = readBlackPriceFromProductUrl(message.url);
   else if (message?.type === "readMainImageFromProductUrl") operation = readMainImageFromProductUrl(message.url);
+  else if (message?.type === "readOzonTaskPricing") operation = readOzonTaskPricing(message.task);
   else if (message?.type === "getStoreScanState") operation = getStoreScanState(message);
   else if (message?.type === "saveStoreScanState") operation = saveStoreScanState(message);
   else if (message?.type === "enrichStoreProductBySku") operation = enrichStoreProductBySku(message);
