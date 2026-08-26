@@ -54,6 +54,15 @@
   let activeBatchId = "";
   let activeAttemptId = "";
   let lastProgressAt = 0;
+  let pendingSaveRequest = null;
+  let saveInFlight = false;
+  let saveRetryTimer = null;
+  let saveSequence = 0;
+  let lastSavedAt = 0;
+  let lastSaveError = "";
+  let persistenceFailureHandled = false;
+  let stateHydrated = false;
+  let pendingStartOptions = null;
   let viewportNewSkuCount = 0;
   let consecutiveNoNewSkuScreens = 0;
   let lastNewSkuAt = Date.now();
@@ -280,12 +289,102 @@
     };
   }
 
-  function saveRecords(mode = "merge") {
-    try {
-      chrome.runtime.sendMessage({ type: "saveStoreScanState", sellerKey, state: storeState(), mode }, () => void chrome.runtime.lastError);
-    } catch {
-      // 页面卸载期间忽略保存回执，后台已串行处理此前提交的记录。
+  function updatePersistenceStatus() {
+    const element = document.getElementById("ozon-store-persistence");
+    if (!element) return;
+    if (lastSaveError) {
+      element.textContent = `本地保存失败：${lastSaveError}`;
+      element.style.color = "#b42318";
+      element.style.background = "#fff0f0";
+      return;
     }
+    element.style.color = "#476078";
+    element.style.background = "#edf7f2";
+    if (saveInFlight || pendingSaveRequest) element.textContent = "正在保存扫描记录……";
+    else if (lastSavedAt) element.textContent = `记录已安全保存（${new Date(lastSavedAt).toLocaleTimeString("zh-CN", { hour12: false })}）`;
+    else element.textContent = "正在读取本店历史记录……";
+  }
+
+  function sendStoreState(request) {
+    return new Promise((resolve, reject) => {
+      try {
+        chrome.runtime.sendMessage({ type: "saveStoreScanState", sellerKey, state: request.state, mode: request.mode }, (response) => {
+          if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+          else if (!response?.ok) reject(new Error(response?.error || "扩展后台未确认保存"));
+          else resolve(response);
+        });
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }
+
+  async function pumpSaveQueue() {
+    if (saveInFlight) return;
+    saveInFlight = true;
+    updatePersistenceStatus();
+    try {
+      while (pendingSaveRequest) {
+        const request = pendingSaveRequest;
+        pendingSaveRequest = null;
+        try {
+          await sendStoreState(request);
+          lastSavedAt = Date.now();
+          lastSaveError = "";
+          request.waiters.forEach(({ resolve }) => resolve({ ok: true, sequence: request.sequence }));
+        } catch (error) {
+          lastSaveError = error?.message || String(error);
+          request.waiters.forEach(({ reject }) => reject(error));
+          if (!saveRetryTimer) {
+            saveRetryTimer = setTimeout(() => {
+              saveRetryTimer = null;
+              saveRecords().catch(handlePersistenceFailure);
+            }, 3000);
+          }
+          break;
+        }
+      }
+    } finally {
+      saveInFlight = false;
+      updatePersistenceStatus();
+      if (pendingSaveRequest && !lastSaveError) void pumpSaveQueue();
+    }
+  }
+
+  function saveRecords(mode = "merge") {
+    const sequence = ++saveSequence;
+    const snapshot = storeState();
+    const promise = new Promise((resolve, reject) => {
+      if (pendingSaveRequest) {
+        pendingSaveRequest.state = snapshot;
+        pendingSaveRequest.sequence = sequence;
+        if (mode === "replace") pendingSaveRequest.mode = "replace";
+        pendingSaveRequest.waiters.push({ resolve, reject });
+      } else {
+        pendingSaveRequest = { state: snapshot, mode, sequence, waiters: [{ resolve, reject }] };
+      }
+    });
+    lastSaveError = "";
+    updatePersistenceStatus();
+    void pumpSaveQueue();
+    return promise;
+  }
+
+  function handlePersistenceFailure(error) {
+    if (persistenceFailureHandled) return;
+    persistenceFailureHandled = true;
+    autoScanning = false;
+    if (autoTimer) clearTimeout(autoTimer);
+    autoTimer = null;
+    setScanProtection(false);
+    const message = `本地保存失败，扫描已安全暂停：${error?.message || String(error)}。刷新扩展后可从最后一次成功保存处继续。`;
+    render();
+    const status = document.getElementById("ozon-store-status");
+    if (status) status.textContent = message;
+    const failedBatchId = activeBatchId;
+    reportBatchFinished(failedBatchId, message, false, "persistence-error");
+    activeBatchId = "";
+    activeAttemptId = "";
   }
 
   function statusMessage(message = "") {
@@ -395,7 +494,7 @@
     const changed = applyFoundProducts(result.found);
     result.newSkuCount = Math.max(0, observedSkus.size - previousObservedCount);
     if (result.newSkuCount > 0) lastNewSkuAt = Date.now();
-    if (changed || observedSkus.size !== previousObservedCount || pendingLinks.size !== previousPendingCount) saveRecords();
+    if (changed || observedSkus.size !== previousObservedCount || pendingLinks.size !== previousPendingCount) saveRecords().catch(handlePersistenceFailure);
     render();
     return result;
   }
@@ -407,7 +506,7 @@
 
   function scheduleAuto(delayMs) {
     if (autoTimer) clearTimeout(autoTimer);
-    autoTimer = setTimeout(pollViewport, delayMs);
+    autoTimer = setTimeout(() => void pollViewport(), delayMs);
   }
 
   function beginViewportWait(delayMs = SETTLE_DELAY_MS) {
@@ -418,7 +517,7 @@
     scheduleAuto(Math.max(delayMs, document.hidden ? BACKGROUND_SETTLE_DELAY_MS : SETTLE_DELAY_MS));
   }
 
-  function stopAutoScan(message, complete = false, options = {}) {
+  async function stopAutoScan(message, complete = false, options = {}) {
     const finishedBatchId = activeBatchId;
     autoScanning = false;
     scanComplete = Boolean(complete);
@@ -427,7 +526,12 @@
     autoTimer = null;
     lastProgressAt = Date.now();
     scanNow();
-    saveRecords();
+    try {
+      await saveRecords();
+    } catch (error) {
+      handlePersistenceFailure(error);
+      return false;
+    }
     activeBatchId = "";
     render();
     statusMessage(message);
@@ -435,6 +539,7 @@
     activeAttemptId = "";
     attemptObservedSkus.clear();
     acknowledgedAttemptSkus.clear();
+    return true;
   }
 
   function resetBoundaryVerification() {
@@ -481,7 +586,7 @@
       forwardReachedBoundary = true;
       resetBoundaryVerification();
       if (pendingLinks.size === 0) {
-        stopAutoScan("扫描完成：店铺末尾已稳定，且没有待复查商品，已省略整页反向复查。", true);
+        void stopAutoScan("扫描完成：店铺末尾已稳定，且没有待复查商品，已省略整页反向复查。", true);
       } else {
         startReviewPass(`已确认到达店铺末尾，正在复查 ${pendingLinks.size} 个待确认商品。`);
       }
@@ -501,7 +606,7 @@
     statusMessage(`${reason} 正在从底部向上复查遗漏商品……`);
     if (window.scrollY <= 10) {
       const complete = forwardReachedBoundary && pendingLinks.size === 0;
-      stopAutoScan(complete ? "扫描完成：所有商品已稳定加载并完成回查。" : `回查结束，仍有 ${pendingLinks.size} 个商品未确认。`, complete);
+      void stopAutoScan(complete ? "扫描完成：所有商品已稳定加载并完成回查。" : `回查结束，仍有 ${pendingLinks.size} 个商品未确认。`, complete);
       return;
     }
     window.scrollBy({ top: -Math.max(360, window.innerHeight * SCROLL_RATIO), left: 0, behavior: "auto" });
@@ -513,13 +618,18 @@
     const message = complete
       ? "扫描完成：已到达店铺末尾并反向复查，没有待确认商品。"
       : `回查结束：仍有 ${pendingLinks.size} 个商品加载超时，建议保持页面打开后再次扫描。`;
-    stopAutoScan(message, complete);
+    void stopAutoScan(message, complete);
   }
 
-  function advanceAfterStableViewport(result, readiness, timedOut) {
+  async function advanceAfterStableViewport(result, readiness, timedOut) {
     if (timedOut) readiness.missingLinks.forEach((link) => pendingLinks.add(link));
     else readiness.missingLinks.forEach((link) => pendingLinks.delete(link));
-    saveRecords();
+    try {
+      await saveRecords();
+    } catch (error) {
+      handlePersistenceFailure(error);
+      return;
+    }
     render();
 
     if (scanDirection < 0) {
@@ -580,7 +690,7 @@
     beginViewportWait();
   }
 
-  function pollViewport() {
+  async function pollViewport() {
     if (!autoScanning) return;
     lastPollAt = Date.now();
     const result = scanNow();
@@ -606,13 +716,19 @@
     statusMessage(`${phase}：本屏已加载 ${readiness.loadedCount}/${readiness.visibleCount}，稳定 ${stablePollCount}/${requiredStable}，连续无新增 ${consecutiveNoNewSkuScreens} 屏，待复查 ${pendingLinks.size}${stalled}`);
 
     if (stable || timedOut) {
-      advanceAfterStableViewport(result, readiness, timedOut);
+      await advanceAfterStableViewport(result, readiness, timedOut);
       return;
     }
     scheduleAuto(POLL_INTERVAL_MS);
   }
 
   function startAutoScan(options = {}) {
+    if (!stateHydrated) {
+      pendingStartOptions = options;
+      const status = document.getElementById("ozon-store-status");
+      if (status) status.textContent = "正在恢复上次已保存的扫描记录，完成后自动续扫……";
+      return;
+    }
     if (autoTimer) clearTimeout(autoTimer);
     if (options.batchId) {
       activeBatchId = String(options.batchId);
@@ -630,6 +746,7 @@
       acknowledgedAttemptSkus.clear();
     }
     autoScanning = true;
+    persistenceFailureHandled = false;
     scanComplete = false;
     scanDirection = 1;
     noProgressCount = 0;
@@ -679,16 +796,23 @@
     attemptObservedSkus.clear();
     acknowledgedAttemptSkus.clear();
     scanComplete = false;
-    saveRecords("replace");
+    saveRecords("replace").catch(handlePersistenceFailure);
     render();
     statusMessage("本店记录已清空，可以重新扫描。 ");
   }
 
-  function finishCurrentBatchStore() {
+  async function finishCurrentBatchStore() {
     if (!activeBatchId || !autoScanning) return;
     const button = document.getElementById("ozon-store-skip");
     button.disabled = true;
     document.getElementById("ozon-store-status").textContent = "正在结束当前店；系统会根据扫描阶段记录完成状态，稍后进入下一家……";
+    try {
+      await saveRecords();
+    } catch (error) {
+      button.disabled = false;
+      handlePersistenceFailure(error);
+      return;
+    }
     chrome.runtime.sendMessage({
       type: "skipStoreBatchCurrent",
       source: "store-panel",
@@ -730,29 +854,63 @@
         <button id="ozon-store-skip" type="button" hidden style="grid-column:1/-1;">结束当前店，扫描下一家</button>
       </div>
       <div id="ozon-store-status" style="margin-top:9px;padding:8px;border-radius:9px;background:#eef1f8;color:#5f6d88;line-height:1.45;"></div>
+      <div id="ozon-store-persistence" style="margin-top:6px;padding:7px;border-radius:9px;background:#edf7f2;color:#476078;line-height:1.4;">正在读取本店历史记录……</div>
       <style>
         #${PANEL_ID} *{box-sizing:border-box}#${PANEL_ID} button{min-height:34px;border:1px solid #dce2f4;border-radius:9px;background:#fff;color:#3e4e72;font:inherit;font-weight:800;cursor:pointer}#${PANEL_ID} button:hover{border-color:#8796e5;color:#274fc4}#${PANEL_ID} button:disabled{opacity:.55;cursor:not-allowed}#${PANEL_ID} #ozon-store-start,#${PANEL_ID} #ozon-store-export{color:#fff;border:0;background:linear-gradient(135deg,#245be9,#746fd9)}#${PANEL_ID} #ozon-store-stop{color:#a82b45;background:#fff0f2;border-color:#ffd7df}#${PANEL_ID} #ozon-store-skip{color:#8a5800;background:#fff7df;border-color:#f3d58a}
       </style>
     `;
     document.body.appendChild(panel);
     document.getElementById("ozon-store-start").addEventListener("click", startAutoScan);
-    document.getElementById("ozon-store-stop").addEventListener("click", () => stopAutoScan("扫描已停止，可导出当前结果或稍后继续。", false, { reason: "manual-stop" }));
+    document.getElementById("ozon-store-stop").addEventListener("click", () => void stopAutoScan("扫描已停止，可导出当前结果或稍后继续。", false, { reason: "manual-stop" }));
     document.getElementById("ozon-store-export").addEventListener("click", exportMarkdown);
     document.getElementById("ozon-store-clear").addEventListener("click", clearStoreRecords);
-    document.getElementById("ozon-store-skip").addEventListener("click", finishCurrentBatchStore);
+    document.getElementById("ozon-store-skip").addEventListener("click", () => void finishCurrentBatchStore());
+  }
+
+  function hydrateStoredState(attempt = 0) {
+    chrome.runtime.sendMessage({ type: "getStoreScanState", sellerKey }, (response) => {
+      const errorMessage = chrome.runtime.lastError?.message || (!response?.ok ? response?.error || "扩展后台未确认读取" : "");
+      if (errorMessage) {
+        lastSaveError = `历史记录读取失败：${errorMessage}`;
+        updatePersistenceStatus();
+        const status = document.getElementById("ozon-store-status");
+        if (status) status.textContent = attempt < 2 ? `历史记录读取失败，正在自动重试（${attempt + 1}/3）……` : "历史记录读取失败，扫描未启动，避免覆盖已有数据。";
+        if (attempt < 2) {
+          setTimeout(() => hydrateStoredState(attempt + 1), 1200);
+          return;
+        }
+        if (pendingStartOptions?.batchId) {
+          activeBatchId = String(pendingStartOptions.batchId);
+          activeAttemptId = String(pendingStartOptions.attemptId || "");
+          reportBatchFinished(activeBatchId, `历史记录读取失败，扫描未启动：${errorMessage}`, false, "persistence-error");
+          activeBatchId = "";
+          activeAttemptId = "";
+        }
+        pendingStartOptions = null;
+        return;
+      }
+      const state = response?.state || { storeName: storeName(), storeUrl, products: {} };
+      (state.observedSkus || []).forEach((sku) => observedSkus.add(String(sku)));
+      (state.pendingLinks || []).forEach((link) => pendingLinks.add(core.canonicalProductLink(link)));
+      Object.entries(state.products || {}).forEach(([sku, product]) => records.set(sku, product));
+      scanComplete = Boolean(state.scanComplete);
+      stateHydrated = true;
+      lastSaveError = "";
+      lastSavedAt = state.updatedAt ? Date.parse(state.updatedAt) || Date.now() : 0;
+      updatePersistenceStatus();
+      scanNow();
+      if (pendingStartOptions) {
+        const options = pendingStartOptions;
+        pendingStartOptions = null;
+        startAutoScan(options);
+      }
+    });
   }
 
   installPanel();
   installProductIntersectionObserver();
   registerProductAnchors(document.body);
-  chrome.runtime.sendMessage({ type: "getStoreScanState", sellerKey }, (response) => {
-    const state = response?.state || { storeName: storeName(), storeUrl, products: {} };
-    (state.observedSkus || []).forEach((sku) => observedSkus.add(String(sku)));
-    (state.pendingLinks || []).forEach((link) => pendingLinks.add(core.canonicalProductLink(link)));
-    Object.entries(state.products || {}).forEach(([sku, product]) => records.set(sku, product));
-    scanComplete = Boolean(state.scanComplete);
-    scanNow();
-  });
+  hydrateStoredState();
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== "local" || !changes[STORAGE_KEY]?.newValue) return;
     const state = changes[STORAGE_KEY].newValue;
@@ -801,9 +959,10 @@
       return false;
     }
     if (message?.type === "stopStoreScan") {
-      stopAutoScan(message.complete ? "正向扫描已完成，已省略剩余反向复查。" : "扫描已由批量任务控制器结束。", Boolean(message.complete), { silent: Boolean(message.silent), reason: "controller-stop" });
-      sendResponse({ ok: true });
-      return false;
+      stopAutoScan(message.complete ? "正向扫描已完成，已省略剩余反向复查。" : "扫描已由批量任务控制器结束。", Boolean(message.complete), { silent: Boolean(message.silent), reason: "controller-stop" })
+        .then((ok) => sendResponse({ ok: ok !== false }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
     }
     if (message?.type === "getStoreScanStatus") {
       sendResponse({ ok: true, sellerKey, attemptId: activeAttemptId, attemptObservedSkus: [...attemptObservedSkus], autoScanning, scanComplete, observedCount: observedSkus.size, qualifiedCount: records.size, pendingCount: pendingLinks.size, reviewing: scanDirection < 0, forwardReachedBoundary });
@@ -815,6 +974,7 @@
   });
   window.addEventListener("pagehide", () => {
     if (batchCooldownTimer) clearTimeout(batchCooldownTimer);
+    saveRecords().catch(() => null);
     setScanProtection(false);
   }, { once: true });
   scheduleScan();

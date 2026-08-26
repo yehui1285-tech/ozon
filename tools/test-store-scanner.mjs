@@ -199,6 +199,17 @@ assert.match(scannerSource, /mutation\.addedNodes/);
 assert.match(scannerSource, /storeScanProgress/);
 assert.match(scannerSource, /attemptObservedSkuDelta/);
 assert.match(scannerSource, /acknowledgedAttemptSkus/);
+assert.match(scannerSource, /let pendingSaveRequest = null/);
+assert.match(scannerSource, /let saveInFlight = false/);
+assert.match(scannerSource, /async function pumpSaveQueue/);
+assert.match(scannerSource, /if \(chrome\.runtime\.lastError\) reject/);
+assert.match(scannerSource, /else if \(!response\?\.ok\) reject/);
+assert.match(scannerSource, /await saveRecords\(\)/);
+assert.match(scannerSource, /本地保存失败，扫描已安全暂停/);
+assert.match(scannerSource, /if \(!stateHydrated\)/);
+assert.match(scannerSource, /id="ozon-store-persistence"/);
+assert.match(scannerSource, /function hydrateStoredState\(attempt = 0\)/);
+assert.match(scannerSource, /历史记录读取失败，扫描未启动，避免覆盖已有数据/);
 assert.match(scannerSource, /storeScanFinished/);
 assert.match(scannerSource, /batchCooldownElapsed/);
 assert.match(scannerSource, /armBatchCooldown/);
@@ -279,8 +290,9 @@ assert.match(batchHtmlSource, /row-delete/);
 assert.match(batchHtmlSource, /id="clearBatch">清空当前批次/);
 
 const manifest = JSON.parse(fs.readFileSync(new URL("../ozon-erp-collector-extension/manifest.json", import.meta.url), "utf8"));
-assert.equal(manifest.version, "0.6.15");
+assert.equal(manifest.version, "0.6.16");
 assert.ok(manifest.permissions.includes("alarms"));
+assert.ok(manifest.permissions.includes("unlimitedStorage"));
 
 const detailSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/content.js", import.meta.url), "utf8");
 assert.match(detailSource, /function enrichStoredStoreRecord\(product\)/);
