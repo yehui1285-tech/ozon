@@ -56,14 +56,16 @@
       }))
       .filter((row) => row.url && row.price > 0);
     if (!valid.length) return null;
-    valid.sort((a, b) => {
+    const matching = target > 0 ? valid.filter((row) => Math.abs(row.price - target) <= 0.05) : valid;
+    if (!matching.length) return null;
+    matching.sort((a, b) => {
       if (target > 0) {
         const distance = Math.abs(a.price - target) - Math.abs(b.price - target);
         if (Math.abs(distance) > 0.0001) return distance;
       }
       return a.price - b.price || a.index - b.index;
     });
-    return valid[0];
+    return matching[0];
   }
 
   function competitorTriggerScore(candidate) {

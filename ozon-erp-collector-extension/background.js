@@ -341,8 +341,6 @@ async function collectTaskPricingSnapshot(tabId, task) {
         type: "collectOzonTaskPricingSnapshot",
         hints: {
           sku: String(task?.ozon?.sku || ""),
-          pagePrice: task?.ozon?.pagePrice,
-          competitorPrice: task?.ozon?.competitorPrice,
         },
       });
     } catch (error) {

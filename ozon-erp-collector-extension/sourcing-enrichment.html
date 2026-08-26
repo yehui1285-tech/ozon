@@ -31,7 +31,7 @@
     .stat span { display:block; color:#758099; font-size:11px; }
     .stat strong { display:block; margin-top:5px; font-size:22px; }
     .table-wrap { overflow:auto; border:1px solid #e4e9f2; border-radius:14px; background:#fff; }
-    table { width:100%; border-collapse:collapse; min-width:1320px; }
+    table { width:100%; border-collapse:collapse; min-width:1480px; }
     th,td { padding:10px 11px; border-bottom:1px solid #edf0f6; text-align:left; vertical-align:middle; font-size:12px; }
     th { position:sticky; top:0; z-index:1; color:#51617e; background:#f7f9fd; font-size:11px; }
     tr:last-child td { border-bottom:0; }
@@ -53,7 +53,7 @@
         <h1>Ozon 任务批量核价补全</h1>
         <p class="subtitle">导入找品任务JSON后，批量补齐同源黑标价、国际运费和18%利润率对应的最高采购成本，再进入拼多多找同款。</p>
       </div>
-      <span class="version">扩展 v0.6.17 · Ozon批量核价补全</span>
+      <span class="version">扩展 v0.6.18 · 当前页面数据校验</span>
     </header>
     <main class="panel">
       <div class="toolbar">
@@ -74,8 +74,8 @@
       </section>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>#</th><th>主图</th><th>SKU</th><th>商品名称</th><th>绿标价</th><th>同源黑标价</th><th>国际运费</th><th>18%最高采购成本</th><th>状态</th><th>线路</th><th>耗时</th><th>商品页</th></tr></thead>
-          <tbody id="taskRows"><tr><td colspan="12" class="muted">尚未导入任务。</td></tr></tbody>
+          <thead><tr><th>#</th><th>主图</th><th>SKU</th><th>商品名称</th><th>绿标价</th><th>同源黑标价</th><th>国际运费</th><th>18%最高采购成本</th><th>状态</th><th>来源/失败原因</th><th>线路</th><th>耗时</th><th>商品页</th></tr></thead>
+          <tbody id="taskRows"><tr><td colspan="13" class="muted">尚未导入任务。</td></tr></tbody>
         </table>
       </div>
     </main>

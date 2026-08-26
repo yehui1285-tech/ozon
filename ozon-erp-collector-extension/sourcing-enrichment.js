@@ -6,6 +6,7 @@ const downloadButton = document.getElementById("download");
 const statusElement = document.getElementById("status");
 const rowsElement = document.getElementById("taskRows");
 const SAVED_QUEUE_KEY = "ozonSourcingEnrichmentQueueV1";
+const PRICING_METHOD_VERSION = "live-stable-v2";
 
 let queue = null;
 let sourceFileName = "sourcing-queue.json";
@@ -37,6 +38,7 @@ function hasFiniteValue(value) {
 
 function pricingState(task) {
   if (task?.enrichment?.ozonPricingStatus === "completed"
+    && task?.enrichment?.ozonPricingMethodVersion === PRICING_METHOD_VERSION
     && Number(task?.enrichment?.originalBlackPrice) > 0
     && Number(task?.enrichment?.internationalFreight) > 0
     && hasFiniteValue(task?.enrichment?.maxPurchaseCostAt18Pct)) return "completed";
@@ -47,6 +49,33 @@ function syncTaskStage(task) {
   const ready = mainImageState(task) === "completed" && pricingState(task) === "completed";
   task.enrichment.status = ready ? "completed" : "pending";
   task.status = ready ? "pending_pinduoduo_search" : "pending_ozon_enrichment";
+}
+
+function invalidateLegacyPricing(task) {
+  if (task?.enrichment?.ozonPricingStatus !== "completed"
+    || task.enrichment.ozonPricingMethodVersion === PRICING_METHOD_VERSION) return;
+  Object.assign(task.ozon, {
+    pagePrice: null,
+    competitorPrice: null,
+    effectiveGreenPrice: null,
+    commissions: [],
+    selectedCommission: null,
+    lengthMm: null,
+    widthMm: null,
+    heightMm: null,
+    weightG: null,
+  });
+  Object.assign(task.enrichment, {
+    ozonPricingStatus: "pending",
+    ozonPricingError: "旧版核价结果已作废，需要按当前页面重新读取",
+    originalBlackPrice: null,
+    blackPriceSource: null,
+    blackPriceSourceUrl: null,
+    internationalFreight: null,
+    freightRoute: null,
+    maxPurchaseCostAt18Pct: null,
+    pricingCalculation: null,
+  });
 }
 
 function stats() {
@@ -84,7 +113,7 @@ function renderRows() {
   if (!tasks.length) {
     const row = document.createElement("tr");
     const empty = cell("尚未导入任务。", "muted");
-    empty.colSpan = 12;
+    empty.colSpan = 13;
     row.append(empty);
     rowsElement.append(row);
     updateStats();
@@ -116,6 +145,8 @@ function renderRows() {
     const state = pricingState(task);
     const stateLabels = { pending: "等待核价", running: "核价中", completed: "核价完成", failed: "核价失败" };
     row.append(cell(stateLabels[state] || state, state === "completed" ? "ok" : state === "failed" ? "bad" : "muted"));
+    const sourceLabels = { page: "当前商品", competitor: "跟卖商品" };
+    row.append(cell(state === "failed" ? (task.enrichment?.ozonPricingError || "未知错误") : (sourceLabels[task.enrichment?.blackPriceSource] || "-"), state === "failed" ? "bad" : "muted"));
     row.append(cell(task.enrichment?.freightRoute || "-", "muted"));
     row.append(cell(task.enrichment?.ozonPricingElapsedMs ? `${(task.enrichment.ozonPricingElapsedMs / 1000).toFixed(1)}秒` : "-", "muted"));
     const linkCell = document.createElement("td");
@@ -158,6 +189,7 @@ async function loadQueue(file) {
     task.ozon = task.ozon && typeof task.ozon === "object" ? task.ozon : {};
     if (!task.enrichment.mainImageUrl && task.enrichment.mainImageStatus === "running") task.enrichment.mainImageStatus = "pending";
     if (task.enrichment.ozonPricingStatus === "running") task.enrichment.ozonPricingStatus = "pending";
+    invalidateLegacyPricing(task);
     syncTaskStage(task);
   });
   queue = parsed;
@@ -194,6 +226,7 @@ async function restoreQueue() {
     task.ozon = task.ozon && typeof task.ozon === "object" ? task.ozon : {};
     if (!task.enrichment.mainImageUrl && task.enrichment.mainImageStatus === "running") task.enrichment.mainImageStatus = "pending";
     if (task.enrichment.ozonPricingStatus === "running") task.enrichment.ozonPricingStatus = "pending";
+    invalidateLegacyPricing(task);
     syncTaskStage(task);
   });
   imageButton.disabled = false;
@@ -282,6 +315,7 @@ async function runPricingEnrichment() {
       });
       Object.assign(task.enrichment, {
         ozonPricingStatus: "completed",
+        ozonPricingMethodVersion: PRICING_METHOD_VERSION,
         ozonPricingError: null,
         ozonPricingElapsedMs: Number(response.elapsedMs || 0),
         ozonPricingFetchedAt: new Date().toISOString(),

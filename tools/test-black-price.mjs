@@ -45,12 +45,15 @@ const selected = core.chooseCompetitorRow([
 ], 125.08);
 assert.equal(selected.url, "https://www.ozon.ru/product/second-2/");
 assert.equal(selected.price, 125.1);
+assert.equal(core.chooseCompetitorRow([
+  { url: "https://www.ozon.ru/product/wrong-3/", price: "130.00 ₽" },
+], 125.08), null);
 
 const contentSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/content.js", import.meta.url), "utf8");
 const backgroundSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/background.js", import.meta.url), "utf8");
 const manifest = JSON.parse(fs.readFileSync(new URL("../ozon-erp-collector-extension/manifest.json", import.meta.url), "utf8"));
 
-assert.equal(manifest.version, "0.6.17");
+assert.equal(manifest.version, "0.6.18");
 assert.match(contentSource, /span\.pdp_h0b/);
 assert.match(contentSource, /#mz-black-price-tag/);
 assert.match(contentSource, /readBlackPriceFromProductUrl/);

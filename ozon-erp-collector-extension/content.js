@@ -195,25 +195,34 @@ function hasGreenPriceStyle(node) {
 }
 
 function pageGreenPrice() {
-  const candidates = [];
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-  const pricePattern = /(\d[\d\s]*(?:[,.]\d{1,2})?)\s*[₽¥￥]/g;
-  while (walker.nextNode()) {
-    const node = walker.currentNode;
-    const text = node.nodeValue || "";
-    if (!/[₽¥￥]/.test(text)) continue;
-    let match;
-    while ((match = pricePattern.exec(text))) {
-      const value = num(match[1]);
-      if (value <= 0) continue;
-      const parent = node.parentElement;
-      if (!parent || !hasGreenPriceStyle(parent)) continue;
-      const rect = parent.getBoundingClientRect();
-      if (rect.width < 20 || rect.height < 14) continue;
-      candidates.push({ value, top: rect.top, left: rect.left });
+  const collectCandidates = (root) => {
+    const candidates = [];
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const pricePattern = /(\d[\d\s]*(?:[,.]\d{1,2})?)\s*[₽¥￥]/g;
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      const text = node.nodeValue || "";
+      if (!/[₽¥￥]/.test(text)) continue;
+      let match;
+      while ((match = pricePattern.exec(text))) {
+        const value = num(match[1]);
+        if (value <= 0) continue;
+        const parent = node.parentElement;
+        if (!parent || !hasGreenPriceStyle(parent)) continue;
+        const rect = parent.getBoundingClientRect();
+        if (rect.width < 20 || rect.height < 14) continue;
+        candidates.push({ value, top: rect.top, left: rect.left });
+      }
     }
+    candidates.sort((a, b) => a.top - b.top || b.left - a.left);
+    return candidates;
+  };
+  const priceWidgets = [...document.querySelectorAll('[data-widget="webPrice"]')].filter(isDisplayedElement);
+  for (const widget of priceWidgets) {
+    const candidates = collectCandidates(widget);
+    if (candidates[0]?.value > 0) return candidates[0].value;
   }
-  candidates.sort((a, b) => a.top - b.top || b.left - a.left);
+  const candidates = collectCandidates(document.body);
   return candidates[0]?.value || 0;
 }
 
@@ -295,11 +304,10 @@ function visibleCompetitorRows() {
 
 async function findLowestCompetitorProduct(product, timeoutMs = 5500) {
   if (!blackPriceCore) return null;
-  const trigger = findCompetitorHoverTrigger();
-  if (!trigger) return null;
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
-    hoverElement(trigger);
+    const trigger = findCompetitorHoverTrigger();
+    if (trigger) hoverElement(trigger);
     const selected = blackPriceCore.chooseCompetitorRow(visibleCompetitorRows(), product.minCompetitorPrice);
     if (selected) return selected;
     await new Promise((resolve) => setTimeout(resolve, 250));
@@ -317,13 +325,15 @@ function requestRemoteBlackPrice(url) {
   });
 }
 
-function collectProduct() {
+function collectProduct({ enrichStoreRecord = true } = {}) {
   const raw = erpText();
   const dims = parseDimensions(raw);
   const weight = parseWeight(raw);
   const commissions = parsePercents(raw);
   const visibleGreen = pageGreenPrice();
-  const minSeller = num(first(raw, /跟卖最低价\s*[:：]?\s*[¥￥₽]?([0-9][0-9\s\u00a0\u202f.,]*)/));
+  const competitorMatch = raw.match(/跟卖最低价\s*[:：]?\s*[¥￥₽]?([0-9][0-9\s\u00a0\u202f.,]*)/);
+  const competitorUnavailable = /跟卖最低价\s*[:：]?\s*(?:无|暂无|没有|未发现|[-—]+)/.test(raw);
+  const minSeller = num(competitorMatch?.[1]);
   const candidates = [visibleGreen, minSeller].filter((v) => v > 0);
   const greenPrice = candidates.length ? Math.min(...candidates) : 0;
   const sku = first(raw, /SKU\s*[:：]?\s*(\d{5,})/i);
@@ -341,6 +351,8 @@ function collectProduct() {
     greenPrice,
     pageGreenPrice: visibleGreen,
     minCompetitorPrice: minSeller,
+    erpLoaded: raw.includes("毛子ERP"),
+    competitorPriceResolved: Boolean(competitorMatch || competitorUnavailable),
     commission,
     commissionText: commissions.line,
     commissionOptions: commissions.values,
@@ -351,7 +363,7 @@ function collectProduct() {
     ...dims,
     ...weight,
   };
-  enrichStoredStoreRecord(product);
+  if (enrichStoreRecord) enrichStoredStoreRecord(product);
   return product;
 }
 
@@ -469,16 +481,47 @@ async function collectOzonTaskPricingSnapshot(hints = {}) {
   let pagePrice = 0;
   let competitorPrice = 0;
   let source = "none";
-  while (Date.now() - startedAt < 8000) {
-    product = collectProduct();
+  let stableFingerprint = "";
+  let stableCount = 0;
+  while (Date.now() - startedAt < 15000) {
+    product = collectProduct({ enrichStoreRecord: false });
     if (expectedSku && product.sku && product.sku !== expectedSku) throw new Error(`商品SKU不一致：任务${expectedSku}，页面${product.sku}`);
-    pagePrice = Number(product.pageGreenPrice || 0) || num(hints.pagePrice);
-    competitorPrice = Number(product.minCompetitorPrice || 0) || num(hints.competitorPrice);
+    pagePrice = Number(product.pageGreenPrice || 0);
+    competitorPrice = Number(product.minCompetitorPrice || 0);
     source = blackPriceCore?.chooseSource(pagePrice, competitorPrice) || "none";
-    if ((product.sku || expectedSku) && source !== "none") break;
+    const complete = product.erpLoaded
+      && product.competitorPriceResolved
+      && product.sku
+      && pagePrice > 0
+      && product.commissionOptions?.length >= 3
+      && product.lengthCm > 0
+      && product.widthCm > 0
+      && product.heightCm > 0
+      && product.weightKg > 0
+      && source !== "none";
+    if (complete) {
+      const fingerprint = JSON.stringify([
+        product.sku, pagePrice, competitorPrice, product.commissionOptions,
+        product.lengthCm, product.widthCm, product.heightCm, product.weightKg,
+      ]);
+      stableCount = fingerprint === stableFingerprint ? stableCount + 1 : 1;
+      stableFingerprint = fingerprint;
+      if (stableCount >= 3) break;
+    } else {
+      stableCount = 0;
+      stableFingerprint = "";
+    }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
-  if (source === "none") throw new Error("未识别到页面绿标价或跟卖最低价");
+  const missing = [];
+  if (!product?.erpLoaded) missing.push("毛子ERP面板");
+  if (!product?.sku) missing.push("当前SKU");
+  if (!(pagePrice > 0)) missing.push("当前页面绿标价");
+  if (!product?.competitorPriceResolved) missing.push("当前跟卖最低价状态");
+  if (!(product?.commissionOptions?.length >= 3)) missing.push("当前佣金档位");
+  if (!(product?.lengthCm > 0 && product?.widthCm > 0 && product?.heightCm > 0)) missing.push("当前尺寸");
+  if (!(product?.weightKg > 0)) missing.push("当前重量");
+  if (stableCount < 3 || source === "none") throw new Error(`15秒内当前页面数据未完整稳定：${missing.join("、") || "价格或ERP字段仍在变化"}`);
   let sourceUrl = location.href;
   let currentBlackPrice = 0;
   if (source === "page") {

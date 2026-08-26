@@ -21,14 +21,14 @@ assert.equal(freight.price, 80.61);
 const task = {
   ozon: {
     productUrl: "https://www.ozon.ru/product/example-4984098622/",
-    pagePrice: 350.9,
-    competitorPrice: 253.85,
-    commissions: [12, 17, 17],
-    selectedCommission: 17,
-    lengthMm: 800,
-    widthMm: 120,
-    heightMm: 120,
-    weightG: 2100,
+    pagePrice: 999.99,
+    competitorPrice: 888.88,
+    commissions: [1, 2, 3],
+    selectedCommission: 2,
+    lengthMm: 1,
+    widthMm: 1,
+    heightMm: 1,
+    weightG: 1,
   },
 };
 const result = core.buildTaskPricing(task, {
@@ -36,7 +36,15 @@ const result = core.buildTaskPricing(task, {
   sourceUrl: "https://www.ozon.ru/product/source-5382620664/",
   pageGreenPrice: 350.9,
   minCompetitorPrice: 253.85,
-  product: {},
+  product: {
+    erpLoaded: true,
+    competitorPriceResolved: true,
+    commissionOptions: [12, 17, 17],
+    lengthCm: 80,
+    widthCm: 12,
+    heightCm: 12,
+    weightKg: 2.1,
+  },
 }, 266.36, "https://www.ozon.ru/product/source-5382620664/");
 assert.equal(result.effectiveGreenPrice, 253.85);
 assert.equal(result.originalBlackPrice, 266.36);
@@ -44,6 +52,8 @@ assert.equal(result.blackPriceSource, "competitor");
 assert.equal(result.internationalFreight, 80.61);
 assert.equal(result.freightRoute, "CEL Economy Big");
 assert.ok(result.maxPurchaseCostAt18Pct > 0);
+assert.equal(result.selectedCommission, 17);
+assert.equal(result.lengthMm, 800);
 
 const webContext = vm.createContext({});
 webContext.globalThis = webContext;
@@ -68,6 +78,27 @@ assert.ok(atLimit.margin >= 0.18, `floor limit must retain at least 18%, got ${a
 assert.ok(aboveLimit.margin < 0.18, `one cent above limit must fall below 18%, got ${aboveLimit.margin}`);
 
 assert.throws(() => core.buildTaskPricing({ ozon: {} }, {}, 0, ""), /核价字段不完整/);
+assert.throws(() => core.buildTaskPricing(task, {
+  source: "competitor",
+  pageGreenPrice: 0,
+  minCompetitorPrice: 0,
+  product: { erpLoaded: false, competitorPriceResolved: false },
+}, 266.36, ""), /当前页面绿标价|当前毛子ERP数据/);
+assert.throws(() => core.buildTaskPricing(task, {
+  source: "competitor",
+  sourceUrl: "https://www.ozon.ru/product/source-5382620664/",
+  pageGreenPrice: 350.9,
+  minCompetitorPrice: 253.85,
+  product: {
+    erpLoaded: true,
+    competitorPriceResolved: true,
+    commissionOptions: [12, 17, 17],
+    lengthCm: 80,
+    widthCm: 12,
+    heightCm: 12,
+    weightKg: 2.1,
+  },
+}, 200, ""), /黑标价低于同源绿标价/);
 
 const backgroundSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/background.js", import.meta.url), "utf8");
 const contentSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/content.js", import.meta.url), "utf8");
@@ -77,10 +108,17 @@ assert.match(backgroundSource, /task-pricing-core\.js/);
 assert.match(backgroundSource, /await chrome\.tabs\.update\(tab\.id, \{ url: sourceUrl/);
 assert.match(contentSource, /collectOzonTaskPricingSnapshot/);
 assert.match(contentSource, /findLowestCompetitorProduct/);
+assert.match(contentSource, /stableCount >= 3/);
+assert.match(contentSource, /competitorPriceResolved/);
+assert.match(contentSource, /collectProduct\(\{ enrichStoreRecord: false \}\)/);
+assert.doesNotMatch(contentSource, /num\(hints\.(?:pagePrice|competitorPrice)\)/);
+assert.doesNotMatch(pricingSource, /task\?\.ozon\?\.(?:pagePrice|competitorPrice|commissions|selectedCommission|lengthMm|weightG)/);
 assert.match(enrichmentSource, /pending_pinduoduo_search/);
 assert.match(enrichmentSource, /maxPurchaseCostAt18Pct/);
 assert.match(enrichmentSource, /ozonSourcingEnrichmentQueueV1/);
 assert.match(enrichmentSource, /await persistQueue\(\)/);
 assert.match(enrichmentSource, /mainImageState\(task\) === "completed" && pricingState\(task\) === "completed"/);
+assert.match(enrichmentSource, /live-stable-v2/);
+assert.match(enrichmentSource, /旧版核价结果已作废/);
 
 console.log("Ozon task pricing enrichment tests passed.");

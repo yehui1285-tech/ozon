@@ -111,26 +111,24 @@
     };
   }
 
-  function liveOrTaskDimensions(task, snapshot) {
-    const live = [snapshot?.product?.lengthCm, snapshot?.product?.widthCm, snapshot?.product?.heightCm].map(number);
-    if (live.every((value) => value > 0)) return live;
-    return [task?.ozon?.lengthMm, task?.ozon?.widthMm, task?.ozon?.heightMm].map((value) => number(value) / 10);
-  }
-
   function buildTaskPricing(task, snapshot, originalBlackPrice, blackPriceSourceUrl) {
-    const pagePrice = number(snapshot?.pageGreenPrice) || number(task?.ozon?.pagePrice);
-    const competitorPrice = number(snapshot?.minCompetitorPrice) || number(task?.ozon?.competitorPrice);
+    const pagePrice = number(snapshot?.pageGreenPrice);
+    const competitorPrice = number(snapshot?.minCompetitorPrice);
     const source = snapshot?.source || chooseSource(pagePrice, competitorPrice);
     const effectiveGreenPrice = source === "competitor" ? competitorPrice : source === "page" ? pagePrice : 0;
-    const commissionOptions = (snapshot?.product?.commissionOptions?.length ? snapshot.product.commissionOptions : task?.ozon?.commissions || []).map(number);
-    const commission = selectedCommission(effectiveGreenPrice, commissionOptions) || number(task?.ozon?.selectedCommission);
-    const [lengthCm, widthCm, heightCm] = liveOrTaskDimensions(task, snapshot);
-    const weightKg = number(snapshot?.product?.weightKg) || number(task?.ozon?.weightG) / 1000;
+    const commissionOptions = (snapshot?.product?.commissionOptions || []).map(number);
+    const commission = selectedCommission(effectiveGreenPrice, commissionOptions);
+    const [lengthCm, widthCm, heightCm] = [snapshot?.product?.lengthCm, snapshot?.product?.widthCm, snapshot?.product?.heightCm].map(number);
+    const weightKg = number(snapshot?.product?.weightKg);
     const freight = calculateFreight({ greenPrice: effectiveGreenPrice, weightKg, lengthCm, widthCm, heightCm });
     const missing = [];
+    if (!(pagePrice > 0)) missing.push("当前页面绿标价");
+    if (snapshot?.product?.erpLoaded !== true || snapshot?.product?.competitorPriceResolved !== true) missing.push("当前毛子ERP数据");
     if (source === "none" || !(effectiveGreenPrice > 0)) missing.push("有效绿标价");
     if (!(number(originalBlackPrice) > 0)) missing.push("同源原始黑标价");
+    else if (number(originalBlackPrice) < effectiveGreenPrice - 0.01) missing.push("黑标价低于同源绿标价");
     if (!(commission > 0)) missing.push("佣金档位");
+    if (!(lengthCm > 0 && widthCm > 0 && heightCm > 0 && weightKg > 0)) missing.push("尺寸重量");
     if (!(freight.price > 0)) missing.push("国际运费");
     if (missing.length) throw new Error(`核价字段不完整：${missing.join("、")}`);
     const calculation = calculateMaxPurchaseCost({
