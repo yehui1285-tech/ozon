@@ -463,6 +463,11 @@ function startBlackPriceLookup(product) {
         sourceUrl = competitor.url;
         const response = await requestRemoteBlackPrice(competitor.url);
         blackPrice = Number(response.blackPrice || 0);
+        if (response.singlePrice && Number(response.sourceGreenPrice || 0) > 0) {
+          product.greenPrice = Number(response.sourceGreenPrice);
+          const greenInput = document.getElementById("ozon-edit-green");
+          if (greenInput) greenInput.value = product.greenPrice.toFixed(2);
+        }
       } else {
         throw new Error("没有可用的绿标价格来源");
       }
@@ -477,7 +482,8 @@ function startBlackPriceLookup(product) {
       }
       input.value = blackPrice.toFixed(2);
       input.dataset.autoValue = input.value;
-      currentProduct = { ...(currentProduct || product), blackPrice, blackPriceSource: source, blackPriceSourceUrl: sourceUrl };
+      currentProduct = { ...(currentProduct || product), greenPrice: product.greenPrice, blackPrice, blackPriceSource: source, blackPriceSourceUrl: sourceUrl };
+      recalculateEditor();
       setBlackPriceStatus(`已自动填入 ${blackPrice.toFixed(2)}（${sourceText}）。`);
       addCollectionLog(`黑标价自动读取成功：${blackPrice.toFixed(2)}（${sourceText}）`);
       return { blackPrice, source, sourceUrl };

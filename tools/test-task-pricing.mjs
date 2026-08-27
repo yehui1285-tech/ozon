@@ -77,6 +77,26 @@ assert.equal(partialBase.blackPriceSource, "competitor");
 assert.equal(partialBase.internationalFreight, 80.61);
 assert.equal(partialBase.originalBlackPrice, undefined);
 
+const singlePriceResult = core.buildTaskPricing(task, {
+  source: "competitor",
+  sourceUrl: "https://www.ozon.ru/product/source-5594634396/",
+  pageGreenPrice: 650,
+  minCompetitorPrice: 582.93,
+  product: {
+    erpLoaded: true,
+    selectionQualified: true,
+    competitorPriceResolved: true,
+    commissionOptions: [12, 17, 17],
+    lengthCm: 20,
+    widthCm: 15,
+    heightCm: 10,
+    weightKg: 1,
+  },
+}, 582.93, "https://www.ozon.ru/product/source-5594634396/");
+assert.equal(singlePriceResult.effectiveGreenPrice, 582.93);
+assert.equal(singlePriceResult.originalBlackPrice, 582.93);
+assert.ok(singlePriceResult.maxPurchaseCostAt18Pct >= 0);
+
 assert.throws(() => core.buildTaskPricing(task, {
   source: "competitor",
   sourceUrl: "https://www.ozon.ru/product/source-5382620664/",
@@ -164,6 +184,7 @@ assert.match(contentSource, /collectProduct\(\{ enrichStoreRecord: false \}\)/);
 assert.match(contentSource, /15秒内未切换到任务商品/);
 assert.match(contentSource, /selectionQualified/);
 assert.match(contentSource, /产品不合要求：未发现“选品标签：符合要求”/);
+assert.match(contentSource, /greenPrice:\s*product\.greenPrice/);
 assert.doesNotMatch(contentSource, /erpLoaded:\s*raw\.includes\("毛子ERP"\)/);
 assert.doesNotMatch(contentSource, /num\(hints\.(?:pagePrice|competitorPrice)\)/);
 assert.doesNotMatch(pricingSource, /task\?\.ozon\?\.(?:pagePrice|competitorPrice|commissions|selectedCommission|lengthMm|weightG)/);
@@ -172,7 +193,8 @@ assert.match(enrichmentSource, /maxPurchaseCostAt18Pct/);
 assert.match(enrichmentSource, /ozonSourcingEnrichmentQueueV1/);
 assert.match(enrichmentSource, /await persistQueue\(\)/);
 assert.match(enrichmentSource, /mainImageState\(task\) === "completed" && pricingState\(task\) === "completed"/);
-assert.match(enrichmentSource, /live-partial-green-v5/);
+assert.match(enrichmentSource, /live-single-price-v6/);
+assert.match(backgroundSource, /minCompetitorPrice:\s*Number\(sourcePricing\.sourceGreenPrice\)/);
 assert.match(enrichmentSource, /response\.partial \? "failed" : "completed"/);
 assert.match(enrichmentSource, /preserveLiveBase:\s*true/);
 assert.match(enrichmentSource, /liveEnrichmentBase/);

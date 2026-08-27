@@ -196,26 +196,43 @@ async function probeOriginalBlackPrice(timeoutMs) {
         .filter((element) => isVisible(element) && !element.closest("#mz-black-price-tag"))
         .map((element) => parseNumber(element.textContent))
         .find((value) => value > 0);
-      if (direct) return direct;
       const prices = [...widget.querySelectorAll("span")]
         .filter((element) => isVisible(element) && !element.closest("#mz-black-price-tag"))
         .map((element) => ({ element, value: parseNumber(element.textContent) }))
         .filter((entry) => entry.value > 0 && /[¥￥₽]/.test(entry.element.textContent || ""));
       const greenIndex = prices.findIndex((entry) => isGreen(entry.element));
       if (greenIndex >= 0) {
+        if (direct) return { blackPrice: direct, singlePrice: false, sourceGreenPrice: 0 };
         const black = prices.slice(greenIndex + 1).find((entry) => !isGreen(entry.element));
-        if (black) return black.value;
+        if (black) return { blackPrice: black.value, singlePrice: false, sourceGreenPrice: 0 };
+        continue;
       }
+      const uniquePrices = [...new Set(prices.map((entry) => entry.value.toFixed(2)))].map(Number);
+      if (uniquePrices.length === 1) {
+        return { blackPrice: uniquePrices[0], singlePrice: true, sourceGreenPrice: uniquePrices[0] };
+      }
+      if (direct) return { blackPrice: direct, singlePrice: false, sourceGreenPrice: 0 };
     }
-    return 0;
+    return null;
   };
   const startedAt = Date.now();
+  let singleFingerprint = "";
+  let singleStableCount = 0;
   while (Date.now() - startedAt < timeoutMs) {
     const value = readOnce();
-    if (value > 0) return value;
+    if (Number(value?.blackPrice || 0) > 0 && !value.singlePrice) return value;
+    if (Number(value?.blackPrice || 0) > 0 && value.singlePrice) {
+      const fingerprint = Number(value.blackPrice).toFixed(2);
+      singleStableCount = fingerprint === singleFingerprint ? singleStableCount + 1 : 1;
+      singleFingerprint = fingerprint;
+      if (singleStableCount >= 3) return value;
+    } else {
+      singleFingerprint = "";
+      singleStableCount = 0;
+    }
     await new Promise((resolve) => setTimeout(resolve, 300));
   }
-  return 0;
+  return null;
 }
 
 async function readOriginalBlackPriceAsSoonAsAvailable(tabId, timeoutMs = 8000) {
@@ -228,15 +245,22 @@ async function readOriginalBlackPriceAsSoonAsAvailable(tabId, timeoutMs = 8000) 
         func: probeOriginalBlackPrice,
         args: [Math.min(900, Math.max(250, remainingMs))],
       });
-      const blackPrice = Number(results?.[0]?.result || 0);
-      if (blackPrice > 0) return blackPrice;
+      const result = results?.[0]?.result;
+      const blackPrice = Number(result?.blackPrice || result || 0);
+      if (blackPrice > 0) {
+        return {
+          blackPrice,
+          singlePrice: Boolean(result?.singlePrice),
+          sourceGreenPrice: Number(result?.sourceGreenPrice || 0),
+        };
+      }
     } catch {
       // The new tab may still be switching from its initial document to Ozon.
       // Retry immediately instead of waiting for the whole page to finish loading.
     }
     await wait(120);
   }
-  return 0;
+  return { blackPrice: 0, singlePrice: false, sourceGreenPrice: 0 };
 }
 
 async function readBlackPriceFromProductUrl(rawUrl) {
@@ -247,9 +271,16 @@ async function readBlackPriceFromProductUrl(rawUrl) {
     tab = await chrome.tabs.create({ url, active: false });
     temporaryProductTabs.add(tab.id);
     await chrome.tabs.update(tab.id, { autoDiscardable: false }).catch(() => null);
-    const blackPrice = await readOriginalBlackPriceAsSoonAsAvailable(tab.id, 8000);
+    const sourcePricing = await readOriginalBlackPriceAsSoonAsAvailable(tab.id, 8000);
+    const blackPrice = Number(sourcePricing.blackPrice || 0);
     if (!(blackPrice > 0)) throw new Error("8秒内未读取到跟卖商品页原始黑价，已保留手工填写。");
-    return { ok: true, blackPrice, url };
+    return {
+      ok: true,
+      blackPrice,
+      singlePrice: sourcePricing.singlePrice,
+      sourceGreenPrice: sourcePricing.sourceGreenPrice,
+      url,
+    };
   } finally {
     if (tab?.id) {
       temporaryProductTabs.delete(tab.id);
@@ -411,18 +442,29 @@ async function readOzonTaskPricing(rawTask) {
     }
     const sourceUrl = blackPriceCore.normalizeProductUrl(snapshot.sourceUrl || url);
     if (!sourceUrl) throw new Error("未能定位绿标价对应的商品来源链接");
-    const basePricing = taskPricingCore.buildTaskPricingBase(task, snapshot, sourceUrl);
+    let pricingSnapshot = snapshot;
+    let basePricing = taskPricingCore.buildTaskPricingBase(task, pricingSnapshot, sourceUrl);
     try {
       let blackPrice = Number(snapshot.currentBlackPrice || 0);
       if (snapshot.source === "competitor") {
         await chrome.tabs.update(tab.id, { url: sourceUrl, active: false });
         await waitForOzonProductNavigation(tab.id, productSkuFromUrl(sourceUrl), 20000, "最低跟卖商品页");
-        blackPrice = await readOriginalBlackPriceAsSoonAsAvailable(tab.id, 8000);
+        const sourcePricing = await readOriginalBlackPriceAsSoonAsAvailable(tab.id, 8000);
+        blackPrice = Number(sourcePricing.blackPrice || 0);
+        if (sourcePricing.singlePrice && Number(sourcePricing.sourceGreenPrice || 0) > 0) {
+          pricingSnapshot = {
+            ...snapshot,
+            source: "competitor",
+            minCompetitorPrice: Number(sourcePricing.sourceGreenPrice),
+          };
+          basePricing = taskPricingCore.buildTaskPricingBase(task, pricingSnapshot, sourceUrl);
+        }
       } else if (!(blackPrice > 0)) {
-        blackPrice = await readOriginalBlackPriceAsSoonAsAvailable(tab.id, 5000);
+        const sourcePricing = await readOriginalBlackPriceAsSoonAsAvailable(tab.id, 5000);
+        blackPrice = Number(sourcePricing.blackPrice || 0);
       }
       if (!(blackPrice > 0)) throw new Error("未读取到有效绿标来源商品的原始黑标价");
-      const pricing = taskPricingCore.buildTaskPricing(task, snapshot, blackPrice, sourceUrl);
+      const pricing = taskPricingCore.buildTaskPricing(task, pricingSnapshot, blackPrice, sourceUrl);
       return { ok: true, ...pricing, elapsedMs: Date.now() - startedAt, sourceProductUrl: sourceUrl };
     } catch (error) {
       return {

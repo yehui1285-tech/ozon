@@ -6,7 +6,7 @@ const downloadButton = document.getElementById("download");
 const statusElement = document.getElementById("status");
 const rowsElement = document.getElementById("taskRows");
 const SAVED_QUEUE_KEY = "ozonSourcingEnrichmentQueueV1";
-const PRICING_METHOD_VERSION = "live-partial-green-v5";
+const PRICING_METHOD_VERSION = "live-single-price-v6";
 
 let queue = null;
 let sourceFileName = "sourcing-queue.json";

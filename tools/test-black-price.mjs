@@ -53,7 +53,7 @@ const contentSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/c
 const backgroundSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/background.js", import.meta.url), "utf8");
 const manifest = JSON.parse(fs.readFileSync(new URL("../ozon-erp-collector-extension/manifest.json", import.meta.url), "utf8"));
 
-assert.equal(manifest.version, "0.6.21");
+assert.equal(manifest.version, "0.6.22");
 assert.match(contentSource, /span\.pdp_h0b/);
 assert.match(contentSource, /#mz-black-price-tag/);
 assert.match(contentSource, /readBlackPriceFromProductUrl/);
@@ -64,6 +64,11 @@ assert.match(backgroundSource, /files: \["black-price-core\.js", "content\.js", 
 assert.match(backgroundSource, /message\?\.type === "readBlackPriceFromProductUrl"/);
 assert.match(backgroundSource, /chrome\.tabs\.remove\(tab\.id\)/);
 assert.match(backgroundSource, /readOriginalBlackPriceAsSoonAsAvailable\(tab\.id, 8000\)/);
+assert.match(backgroundSource, /uniquePrices\.length === 1/);
+assert.match(backgroundSource, /singlePrice:\s*true/);
+assert.match(backgroundSource, /sourceGreenPrice/);
+assert.match(backgroundSource, /singleStableCount >= 3/);
+assert.match(backgroundSource, /!element\.closest\("#mz-black-price-tag"\)/);
 assert.match(backgroundSource, /Math\.min\(900, Math\.max\(250, remainingMs\)\)/);
 assert.doesNotMatch(backgroundSource, /waitForTabLoaded\(tab\.id, 20000, "跟卖商品页"\)/);
 
