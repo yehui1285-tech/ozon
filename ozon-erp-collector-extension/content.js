@@ -229,7 +229,7 @@ function pageGreenPrice() {
         const value = num(match[1]);
         if (value <= 0) continue;
         const parent = node.parentElement;
-        if (!parent || !hasGreenPriceStyle(parent)) continue;
+        if (!parent || parent.closest("#mz-black-price-tag") || !hasGreenPriceStyle(parent)) continue;
         const rect = parent.getBoundingClientRect();
         if (rect.width < 20 || rect.height < 14) continue;
         candidates.push({ value, top: rect.top, left: rect.left });
@@ -243,8 +243,7 @@ function pageGreenPrice() {
     const candidates = collectCandidates(widget);
     if (candidates[0]?.value > 0) return candidates[0].value;
   }
-  const candidates = collectCandidates(document.body);
-  return candidates[0]?.value || 0;
+  return 0;
 }
 
 function isDisplayedElement(element) {
@@ -508,6 +507,7 @@ function startBlackPriceLookup(product) {
 
 async function collectOzonTaskPricingSnapshot(hints = {}) {
   const expectedSku = String(hints.sku || "").trim();
+  const trustedQualified = hints.trustedQualified === true;
   const timeoutMs = Math.min(15000, Math.max(2000, Number(hints.timeoutMs || 6000)));
   const startedAt = Date.now();
   let product = null;
@@ -528,7 +528,7 @@ async function collectOzonTaskPricingSnapshot(hints = {}) {
       await new Promise((resolve) => setTimeout(resolve, 250));
       continue;
     }
-    if (product.erpLoaded && product.selectionState === "rejected") {
+    if (!trustedQualified && product.erpLoaded && product.selectionState === "rejected") {
       const fingerprint = JSON.stringify([
         product.sku, product.commissionOptions, product.lengthCm, product.widthCm,
         product.heightCm, product.weightKg, product.competitorPriceResolved,
@@ -552,7 +552,7 @@ async function collectOzonTaskPricingSnapshot(hints = {}) {
     competitorPrice = Number(product.minCompetitorPrice || 0);
     source = blackPriceCore?.chooseSource(pagePrice, competitorPrice) || "none";
     const complete = product.erpLoaded
-      && product.selectionQualified
+      && (trustedQualified || product.selectionQualified)
       && product.competitorPriceResolved
       && product.sku
       && pagePrice > 0
@@ -576,7 +576,7 @@ async function collectOzonTaskPricingSnapshot(hints = {}) {
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
-  if (product?.erpLoaded && product?.selectionState === "rejected") {
+  if (!trustedQualified && product?.erpLoaded && product?.selectionState === "rejected") {
     return {
       disqualified: true,
       disqualificationReason: "产品不合要求：页面明确显示非符合要求的选品标签",
@@ -586,21 +586,25 @@ async function collectOzonTaskPricingSnapshot(hints = {}) {
   const missing = [];
   if (!product?.erpLoaded) missing.push("毛子ERP面板");
   if (!product?.sku) missing.push("当前SKU");
-  if (!(pagePrice > 0)) missing.push("当前页面绿标价");
+  if (!(pagePrice > 0)) missing.push("Ozon官方价格组件");
   if (!product?.competitorPriceResolved) missing.push("当前跟卖最低价状态");
   if (!(product?.commissionOptions?.length >= 3)) missing.push("当前佣金档位");
   if (!(product?.lengthCm > 0 && product?.widthCm > 0 && product?.heightCm > 0)) missing.push("当前尺寸");
   if (!(product?.weightKg > 0)) missing.push("当前重量");
-  if (product?.selectionState !== "qualified") missing.push("选品标签仍在加载");
+  if (!trustedQualified && product?.selectionState !== "qualified") missing.push("选品标签仍在加载");
   if (expectedSku && lastObservedSku && lastObservedSku !== expectedSku) {
     throw new Error(`${Math.ceil(timeoutMs / 1000)}秒内未切换到任务商品：任务${expectedSku}，页面${lastObservedSku}`);
   }
   if (stableCount < 3 || source === "none") {
     return {
-      selectionPending: true,
-      selectionPendingReason: `${Math.ceil(timeoutMs / 1000)}秒内当前页面数据未完整稳定：${missing.join("、") || "价格或ERP字段仍在变化"}`,
+      dataPending: true,
+      dataPendingReason: `${Math.ceil(timeoutMs / 1000)}秒内当前页面数据未完整稳定：${missing.join("、") || "价格或ERP字段仍在变化"}`,
       product,
     };
+  }
+  if (trustedQualified && product) {
+    product.selectionQualified = true;
+    product.qualificationSource = "batch_store_scan";
   }
   let sourceUrl = location.href;
   let currentBlackPrice = 0;

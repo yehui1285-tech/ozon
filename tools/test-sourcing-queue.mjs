@@ -38,6 +38,11 @@ assert.equal(first.ozon.weightG, 300);
 assert.equal(first.ozon.productUrl, "https://www.ozon.ru/product/filter-1001/");
 assert.equal(first.enrichment.originalBlackPrice, null);
 assert.equal(first.status, "pending_ozon_enrichment");
+assert.deepEqual(first.qualification, {
+  status: "qualified",
+  source: "batch_store_scan",
+  verifiedAt: "2026/8/15 16:24:39",
+});
 
 const second = queue.tasks[1];
 assert.equal(second.ozon.effectiveGreenPrice, 700);

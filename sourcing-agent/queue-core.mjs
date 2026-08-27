@@ -106,6 +106,11 @@ function taskFromCells(headers, cells, batch, createdAt) {
       storeStatus: clean(row["状态"]),
       productIndex: number(row["商品序号"]),
     },
+    qualification: {
+      status: "qualified",
+      source: "batch_store_scan",
+      verifiedAt: batch.exportedAt || createdAt,
+    },
     ozon: {
       sku,
       name: clean(row["商品名称"]),

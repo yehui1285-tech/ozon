@@ -439,6 +439,8 @@ async function injectTaskPricingCollector(tabId, timeoutMs = 5000) {
 }
 
 async function collectTaskPricingSnapshot(tabId, task, timeoutMs = 6000) {
+  const trustedQualified = task?.qualification?.status === "qualified"
+    && task?.qualification?.source === "batch_store_scan";
   let lastError = null;
   for (let attempt = 0; attempt < 4; attempt += 1) {
     try {
@@ -449,6 +451,7 @@ async function collectTaskPricingSnapshot(tabId, task, timeoutMs = 6000) {
         hints: {
           sku: String(task?.ozon?.sku || ""),
           timeoutMs,
+          trustedQualified,
         },
       });
     } catch (error) {
@@ -471,7 +474,7 @@ async function readOzonTaskPricing(rawTask) {
     await chrome.tabs.update(tab.id, { autoDiscardable: false }).catch(() => null);
     await waitForOzonProductNavigation(tab.id, task?.ozon?.sku, 20000, "任务商品页");
     let snapshotResponse = await collectTaskPricingSnapshot(tab.id, task, 6000);
-    if (snapshotResponse?.ok && snapshotResponse.snapshot?.selectionPending) {
+    if (snapshotResponse?.ok && snapshotResponse.snapshot?.dataPending) {
       snapshotResponse = await runWithForegroundTabWakeup(
         tab.id,
         () => collectTaskPricingSnapshot(tab.id, task, 6000),
@@ -479,8 +482,8 @@ async function readOzonTaskPricing(rawTask) {
     }
     if (!snapshotResponse?.ok) throw new Error(snapshotResponse?.error || "Ozon商品页核价信息读取失败");
     const snapshot = snapshotResponse.snapshot || {};
-    if (snapshot.selectionPending) {
-      throw new Error(snapshot.selectionPendingReason || "选品标签在后台等待及前台唤醒后仍未加载，可稍后重试");
+    if (snapshot.dataPending) {
+      throw new Error(snapshot.dataPendingReason || "Ozon官方价格或ERP核价字段在后台等待及前台唤醒后仍未完整，可稍后重试");
     }
     if (snapshot.disqualified) {
       return {

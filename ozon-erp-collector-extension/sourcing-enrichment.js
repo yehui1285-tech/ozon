@@ -6,7 +6,7 @@ const downloadButton = document.getElementById("download");
 const statusElement = document.getElementById("status");
 const rowsElement = document.getElementById("taskRows");
 const SAVED_QUEUE_KEY = "ozonSourcingEnrichmentQueueV1";
-const PRICING_METHOD_VERSION = "live-selection-wakeup-v8";
+const PRICING_METHOD_VERSION = "live-trusted-strict-price-v9";
 
 let queue = null;
 let sourceFileName = "sourcing-queue.json";
@@ -103,14 +103,35 @@ function clearTaskPricingValues(task, { preserveLiveBase = false } = {}) {
 }
 
 function invalidateLegacyPricing(task) {
-  if (!["completed", "disqualified"].includes(task?.enrichment?.ozonPricingStatus)
-    || task.enrichment.ozonPricingMethodVersion === PRICING_METHOD_VERSION) return;
+  if (task?.enrichment?.ozonPricingMethodVersion === PRICING_METHOD_VERSION) return;
+  const hasLegacyPricing = Boolean(task?.enrichment?.ozonPricingMethodVersion)
+    || ["completed", "disqualified", "failed", "running"].includes(task?.enrichment?.ozonPricingStatus);
+  if (!hasLegacyPricing) return;
   clearTaskPricingValues(task);
   if (task.ozon && typeof task.ozon === "object") task.ozon.selectionQualified = null;
   Object.assign(task.enrichment, {
     ozonPricingStatus: "pending",
-    ozonPricingError: "旧版核价或资格结论已作废，需要按当前页面重新读取",
+    ozonPricingError: "旧版核价结果已作废，需要按可信批量扫描资格及Ozon官方价格组件重新读取",
   });
+}
+
+function ensureQualificationProvenance(task, batch) {
+  if (task?.qualification?.status === "qualified"
+    && task?.qualification?.source === "batch_store_scan") return;
+  const legacyTrusted = Boolean(
+    Number(batch?.declaredProductCount) > 0
+    && task?.source?.batchId
+    && task.source.batchId === batch?.batchId
+    && task?.source?.storeUrl
+    && task?.ozon?.sku
+  );
+  if (!legacyTrusted) return;
+  task.qualification = {
+    status: "qualified",
+    source: "batch_store_scan",
+    verifiedAt: task.source.exportedAt || batch.exportedAt || null,
+    migratedFromLegacyBatch: true,
+  };
 }
 
 function stats() {
@@ -225,6 +246,7 @@ async function loadQueue(file) {
     task.enrichment = task.enrichment && typeof task.enrichment === "object" ? task.enrichment : {};
     task.audit = task.audit && typeof task.audit === "object" ? task.audit : {};
     task.ozon = task.ozon && typeof task.ozon === "object" ? task.ozon : {};
+    ensureQualificationProvenance(task, parsed.batch);
     if (!task.enrichment.mainImageUrl && task.enrichment.mainImageStatus === "running") task.enrichment.mainImageStatus = "pending";
     if (task.enrichment.ozonPricingStatus === "running") task.enrichment.ozonPricingStatus = "pending";
     invalidateLegacyPricing(task);
@@ -263,6 +285,7 @@ async function restoreQueue() {
     task.enrichment = task.enrichment && typeof task.enrichment === "object" ? task.enrichment : {};
     task.audit = task.audit && typeof task.audit === "object" ? task.audit : {};
     task.ozon = task.ozon && typeof task.ozon === "object" ? task.ozon : {};
+    ensureQualificationProvenance(task, queue.batch);
     if (!task.enrichment.mainImageUrl && task.enrichment.mainImageStatus === "running") task.enrichment.mainImageStatus = "pending";
     if (task.enrichment.ozonPricingStatus === "running") task.enrichment.ozonPricingStatus = "pending";
     invalidateLegacyPricing(task);
