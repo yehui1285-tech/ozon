@@ -152,6 +152,8 @@ assert.match(enrichmentSource, /mainImageState\(task\) === "completed" && pricin
 assert.match(enrichmentSource, /live-qualified-v4/);
 assert.match(enrichmentSource, /rejected_not_qualified/);
 assert.match(enrichmentSource, /pricingDisqualified/);
+assert.match(enrichmentSource, /function clearTaskPricingValues\(task\)/);
+assert.match(enrichmentSource, /clearTaskPricingValues\(task\);\s*task\.enrichment\.ozonPricingStatus = "running"/);
 assert.match(enrichmentSource, /旧版核价结果已作废/);
 
 console.log("Ozon task pricing enrichment tests passed.");

@@ -56,9 +56,7 @@ function syncTaskStage(task) {
   task.status = ready ? "pending_pinduoduo_search" : "pending_ozon_enrichment";
 }
 
-function invalidateLegacyPricing(task) {
-  if (task?.enrichment?.ozonPricingStatus !== "completed"
-    || task.enrichment.ozonPricingMethodVersion === PRICING_METHOD_VERSION) return;
+function clearTaskPricingValues(task) {
   Object.assign(task.ozon, {
     pagePrice: null,
     competitorPrice: null,
@@ -71,8 +69,6 @@ function invalidateLegacyPricing(task) {
     weightG: null,
   });
   Object.assign(task.enrichment, {
-    ozonPricingStatus: "pending",
-    ozonPricingError: "旧版核价结果已作废，需要按当前页面重新读取",
     originalBlackPrice: null,
     blackPriceSource: null,
     blackPriceSourceUrl: null,
@@ -80,6 +76,16 @@ function invalidateLegacyPricing(task) {
     freightRoute: null,
     maxPurchaseCostAt18Pct: null,
     pricingCalculation: null,
+  });
+}
+
+function invalidateLegacyPricing(task) {
+  if (task?.enrichment?.ozonPricingStatus !== "completed"
+    || task.enrichment.ozonPricingMethodVersion === PRICING_METHOD_VERSION) return;
+  clearTaskPricingValues(task);
+  Object.assign(task.enrichment, {
+    ozonPricingStatus: "pending",
+    ozonPricingError: "旧版核价结果已作废，需要按当前页面重新读取",
   });
 }
 
@@ -198,6 +204,7 @@ async function loadQueue(file) {
     if (!task.enrichment.mainImageUrl && task.enrichment.mainImageStatus === "running") task.enrichment.mainImageStatus = "pending";
     if (task.enrichment.ozonPricingStatus === "running") task.enrichment.ozonPricingStatus = "pending";
     invalidateLegacyPricing(task);
+    if (!["completed", "disqualified"].includes(pricingState(task))) clearTaskPricingValues(task);
     syncTaskStage(task);
   });
   queue = parsed;
@@ -235,6 +242,7 @@ async function restoreQueue() {
     if (!task.enrichment.mainImageUrl && task.enrichment.mainImageStatus === "running") task.enrichment.mainImageStatus = "pending";
     if (task.enrichment.ozonPricingStatus === "running") task.enrichment.ozonPricingStatus = "pending";
     invalidateLegacyPricing(task);
+    if (!["completed", "disqualified"].includes(pricingState(task))) clearTaskPricingValues(task);
     syncTaskStage(task);
   });
   imageButton.disabled = false;
@@ -303,6 +311,7 @@ async function runPricingEnrichment() {
   for (let index = 0; index < pending.length; index += 1) {
     if (stopRequested) break;
     const task = pending[index];
+    clearTaskPricingValues(task);
     task.enrichment.ozonPricingStatus = "running";
     task.enrichment.ozonPricingError = null;
     await persistQueue();
