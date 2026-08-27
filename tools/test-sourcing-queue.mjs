@@ -63,11 +63,16 @@ assert.doesNotMatch(csv, /暂无符合要求/);
 assert.throws(() => parseBatchMarkdown("# no table"), /没有找到批量扫描商品表格/);
 
 const guiToolSource = fs.readFileSync(new URL("./md-to-json-gui.ps1", import.meta.url), "utf8");
-const launcherSource = fs.readFileSync(new URL("../Ozon批量MD转JSON.cmd", import.meta.url), "utf8");
+const launcherPath = new URL("../Ozon批量MD转JSON.cmd", import.meta.url);
+const launcherBuffer = fs.readFileSync(launcherPath);
+const launcherSource = launcherBuffer.toString("ascii");
 assert.match(guiToolSource, /sourcing-agent\\build-queue\.mjs/);
 assert.match(guiToolSource, /--input \$resolvedInput --output \$resolvedOutput --limit 10/);
 assert.match(guiToolSource, /转换工具不会重新检查商品标签/);
 assert.match(guiToolSource, /Start-Process explorer\.exe/);
 assert.match(launcherSource, /md-to-json-gui\.ps1/);
+assert.match(launcherSource, /md-to-json-gui\.ps1" %\*/);
+assert.ok([...launcherBuffer].every((byte) => byte < 128), "Windows CMD launcher must remain ASCII-only");
+assert.match(launcherSource, /if errorlevel 1[\s\S]*?pause/);
 
 console.log("Sourcing queue parser tests passed.");

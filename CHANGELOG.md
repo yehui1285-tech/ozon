@@ -26,6 +26,13 @@ C:\Users\Microsoft\Documents\Ozon\_备份_20260827_md_to_json_tool_before
 - 测试输出核对后已删除；现有任务队列测试增加启动器、转换核心调用、风险提示和自动打开目录的接线检查。
 - 本次未修改网页、扩展或Worker；不需要上传`feishu.html`，不需要重新生成扩展ZIP，也不需要部署Worker。
 
+### 启动器闪退修复
+
+- 首次真实双击反馈为窗口闪退；使用`cmd.exe`复现后确认Windows命令解释器把UTF-8中文提示行拆成了无效命令，转换核心未出错。
+- 启动器内容改为纯ASCII，中文保留在带UTF-8 BOM的PowerShell图形界面中；失败时CMD窗口会暂停并显示错误，不再无提示关闭。
+- 新增启动器全字节ASCII及失败暂停检查。
+- 回滚备份：`C:\Users\Microsoft\Documents\Ozon\_备份_20260827_md_to_json_launcher_fix_before`。
+
 ## 2026-08-27 - 可信队列快速核价与官方价格源收紧（扩展 0.6.25）
 
 ### 真实测试结论
