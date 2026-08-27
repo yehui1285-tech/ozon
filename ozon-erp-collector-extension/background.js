@@ -370,8 +370,9 @@ async function injectTaskPricingCollector(tabId, timeoutMs = 5000) {
 async function collectTaskPricingSnapshot(tabId, task) {
   let lastError = null;
   for (let attempt = 0; attempt < 4; attempt += 1) {
-    await injectTaskPricingCollector(tabId);
     try {
+      await waitForOzonProductNavigation(tabId, task?.ozon?.sku, 20000, "任务商品页");
+      await injectTaskPricingCollector(tabId);
       return await chrome.tabs.sendMessage(tabId, {
         type: "collectOzonTaskPricingSnapshot",
         hints: {
@@ -400,6 +401,14 @@ async function readOzonTaskPricing(rawTask) {
     const snapshotResponse = await collectTaskPricingSnapshot(tab.id, task);
     if (!snapshotResponse?.ok) throw new Error(snapshotResponse?.error || "Ozon商品页核价信息读取失败");
     const snapshot = snapshotResponse.snapshot || {};
+    if (snapshot.disqualified) {
+      return {
+        ok: true,
+        disqualified: true,
+        disqualificationReason: snapshot.disqualificationReason || "产品不合要求：未发现“选品标签：符合要求”",
+        elapsedMs: Date.now() - startedAt,
+      };
+    }
     const sourceUrl = blackPriceCore.normalizeProductUrl(snapshot.sourceUrl || url);
     if (!sourceUrl) throw new Error("未能定位绿标价对应的商品来源链接");
     let blackPrice = Number(snapshot.currentBlackPrice || 0);

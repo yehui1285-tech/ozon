@@ -25,7 +25,7 @@ function extractFunction(source, name) {
   return match[0];
 }
 
-const detailFunctionNames = ["num", "first", "normalizeText", "parsePercents", "parseDimensions", "parseWeight", "saleValue"];
+const detailFunctionNames = ["num", "first", "normalizeText", "parsePercents", "parseDimensions", "parseWeight", "saleValue", "hasErpPanelData", "hasQualifiedSelection"];
 const detailSource = detailFunctionNames.map((name) => extractFunction(contentSource, name)).join("\n");
 const detailContext = {};
 vm.runInNewContext(
@@ -93,6 +93,12 @@ const fixtures = [
   { fn: "saleValue", input: 135, expect: 2000, note: "135 边界" },
   { fn: "saleValue", input: 600, expect: 2000, note: "600 边界" },
   { fn: "saleValue", input: 600.01, expect: 20000, note: "高于 600" },
+
+  // ── 详情页 ERP 面板识别与选品资格 ──
+  { fn: "hasErpPanelData", input: "rFBS佣金： - - - SKU：4533215810 月销量：暂无数据 发货模式：暂无数据 长 宽 高：暂无数据 重 量：暂无数据 跟卖列表：xianfa等5个卖家 跟卖最低价：¥124.19", expect: true, note: "真实新版ERP面板无标题文字" },
+  { fn: "hasQualifiedSelection", input: "rFBS佣金： - - - SKU：4533215810 跟卖最低价：¥124.19", expect: false, note: "真实无选品标签商品" },
+  { fn: "hasQualifiedSelection", input: "选品标签：符合要求 rFBS佣金： 12% 17% 17% SKU：4379290049 跟卖最低价：¥266.44", expect: true, note: "明确符合要求标签" },
+  { fn: "hasErpPanelData", input: "Ozon商品 SKU：4379290049", expect: false, note: "普通页面SKU不是ERP面板" },
 
   // ── competitorState：跟卖最低价（中英文冒号 / 货币 / 无价格）──
   { fn: "competitorState", input: "跟卖最低价：\u00a5201.65", expect: { value: "\u00a5201.65", ready: true }, note: "中文冒号人民币" },

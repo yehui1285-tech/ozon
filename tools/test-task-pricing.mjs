@@ -38,6 +38,7 @@ const result = core.buildTaskPricing(task, {
   minCompetitorPrice: 253.85,
   product: {
     erpLoaded: true,
+    selectionQualified: true,
     competitorPriceResolved: true,
     commissionOptions: [12, 17, 17],
     lengthCm: 80,
@@ -54,6 +55,23 @@ assert.equal(result.freightRoute, "CEL Economy Big");
 assert.ok(result.maxPurchaseCostAt18Pct > 0);
 assert.equal(result.selectedCommission, 17);
 assert.equal(result.lengthMm, 800);
+
+assert.throws(() => core.buildTaskPricing(task, {
+  source: "competitor",
+  sourceUrl: "https://www.ozon.ru/product/source-5382620664/",
+  pageGreenPrice: 350.9,
+  minCompetitorPrice: 253.85,
+  product: {
+    erpLoaded: true,
+    selectionQualified: false,
+    competitorPriceResolved: true,
+    commissionOptions: [12, 17, 17],
+    lengthCm: 80,
+    widthCm: 12,
+    heightCm: 12,
+    weightKg: 2.1,
+  },
+}, 266.36, "https://www.ozon.ru/product/source-5382620664/"), /产品不合要求/);
 
 const webContext = vm.createContext({});
 webContext.globalThis = webContext;
@@ -82,8 +100,8 @@ assert.throws(() => core.buildTaskPricing(task, {
   source: "competitor",
   pageGreenPrice: 0,
   minCompetitorPrice: 0,
-  product: { erpLoaded: false, competitorPriceResolved: false },
-}, 266.36, ""), /当前页面绿标价|当前毛子ERP数据/);
+  product: { erpLoaded: false, selectionQualified: false, competitorPriceResolved: false },
+}, 266.36, ""), /产品不合要求|当前页面绿标价|当前毛子ERP数据/);
 assert.throws(() => core.buildTaskPricing(task, {
   source: "competitor",
   sourceUrl: "https://www.ozon.ru/product/source-5382620664/",
@@ -91,6 +109,7 @@ assert.throws(() => core.buildTaskPricing(task, {
   minCompetitorPrice: 253.85,
   product: {
     erpLoaded: true,
+    selectionQualified: true,
     competitorPriceResolved: true,
     commissionOptions: [12, 17, 17],
     lengthCm: 80,
@@ -112,12 +131,17 @@ assert.match(backgroundSource, /document\.readyState/);
 assert.doesNotMatch(backgroundSource, /tab\.status === "complete" && \(!targetSku/);
 assert.match(backgroundSource, /任务商品页/);
 assert.match(backgroundSource, /最低跟卖商品页/);
+assert.match(backgroundSource, /snapshot\.disqualified/);
+assert.match(backgroundSource, /try\s*\{\s*await waitForOzonProductNavigation[\s\S]*?await injectTaskPricingCollector/);
 assert.match(contentSource, /collectOzonTaskPricingSnapshot/);
 assert.match(contentSource, /findLowestCompetitorProduct/);
 assert.match(contentSource, /stableCount >= 3/);
 assert.match(contentSource, /competitorPriceResolved/);
 assert.match(contentSource, /collectProduct\(\{ enrichStoreRecord: false \}\)/);
 assert.match(contentSource, /15秒内未切换到任务商品/);
+assert.match(contentSource, /selectionQualified/);
+assert.match(contentSource, /产品不合要求：未发现“选品标签：符合要求”/);
+assert.doesNotMatch(contentSource, /erpLoaded:\s*raw\.includes\("毛子ERP"\)/);
 assert.doesNotMatch(contentSource, /num\(hints\.(?:pagePrice|competitorPrice)\)/);
 assert.doesNotMatch(pricingSource, /task\?\.ozon\?\.(?:pagePrice|competitorPrice|commissions|selectedCommission|lengthMm|weightG)/);
 assert.match(enrichmentSource, /pending_pinduoduo_search/);
@@ -125,7 +149,9 @@ assert.match(enrichmentSource, /maxPurchaseCostAt18Pct/);
 assert.match(enrichmentSource, /ozonSourcingEnrichmentQueueV1/);
 assert.match(enrichmentSource, /await persistQueue\(\)/);
 assert.match(enrichmentSource, /mainImageState\(task\) === "completed" && pricingState\(task\) === "completed"/);
-assert.match(enrichmentSource, /live-stable-v3/);
+assert.match(enrichmentSource, /live-qualified-v4/);
+assert.match(enrichmentSource, /rejected_not_qualified/);
+assert.match(enrichmentSource, /pricingDisqualified/);
 assert.match(enrichmentSource, /旧版核价结果已作废/);
 
 console.log("Ozon task pricing enrichment tests passed.");

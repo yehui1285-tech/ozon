@@ -140,6 +140,19 @@ function pickCommission(price, values) {
   return values[2] || 0;
 }
 
+function hasErpPanelData(raw) {
+  const text = String(raw || "");
+  return /SKU\s*[:：]?\s*\d{5,}/i.test(text)
+    && /rFBS佣金/.test(text)
+    && /(?:跟卖最低价|跟卖列表)/.test(text);
+}
+
+function hasQualifiedSelection(raw) {
+  const text = String(raw || "");
+  return /选品标签\s*[:：]?\s*符合要求/.test(text)
+    || /(?:^|\n)\s*符合要求\s*(?:\n|$)/.test(text);
+}
+
 function isVisibleElement(el) {
   const rect = el.getBoundingClientRect();
   const style = getComputedStyle(el);
@@ -152,10 +165,11 @@ function erpText() {
     .filter(isVisibleElement)
     .map((el) => {
       const text = textOf(el);
-      if (!text.includes("毛子ERP")) return null;
+      if (!hasErpPanelData(text) && !(/SKU\s*[:：]?\s*\d{5,}/i.test(text) && /选品标签/.test(text))) return null;
       const rect = el.getBoundingClientRect();
       let score = 0;
       if (/SKU\s*[:：]?\s*\d{5,}/i.test(text)) score += 5;
+      if (/选品标签/.test(text)) score += 4;
       if (/(?:长\s*宽\s*高|长宽高|尺寸|包装尺寸|规格)/.test(text)) score += 4;
       if (/(?:重\s*量|实\s*重|毛\s*重|净\s*重)\s*[:：]?\s*\d/.test(text)) score += 4;
       if (/跟卖最低价/.test(text)) score += 3;
@@ -337,6 +351,8 @@ function collectProduct({ enrichStoreRecord = true } = {}) {
   const candidates = [visibleGreen, minSeller].filter((v) => v > 0);
   const greenPrice = candidates.length ? Math.min(...candidates) : 0;
   const sku = first(raw, /SKU\s*[:：]?\s*(\d{5,})/i);
+  const erpLoaded = hasErpPanelData(raw);
+  const selectionQualified = hasQualifiedSelection(raw);
   const commission = pickCommission(greenPrice, commissions.values);
   const freight = calcFreight(greenPrice, weight.weightKg, dims.lengthCm, dims.widthCm, dims.heightCm);
   const notes = [];
@@ -351,7 +367,8 @@ function collectProduct({ enrichStoreRecord = true } = {}) {
     greenPrice,
     pageGreenPrice: visibleGreen,
     minCompetitorPrice: minSeller,
-    erpLoaded: raw.includes("毛子ERP"),
+    erpLoaded,
+    selectionQualified,
     competitorPriceResolved: Boolean(competitorMatch || competitorUnavailable),
     commission,
     commissionText: commissions.line,
@@ -484,6 +501,8 @@ async function collectOzonTaskPricingSnapshot(hints = {}) {
   let stableFingerprint = "";
   let stableCount = 0;
   let lastObservedSku = "";
+  let unqualifiedFingerprint = "";
+  let unqualifiedStableCount = 0;
   while (Date.now() - startedAt < 15000) {
     product = collectProduct({ enrichStoreRecord: false });
     lastObservedSku = String(product.sku || "").trim();
@@ -493,10 +512,31 @@ async function collectOzonTaskPricingSnapshot(hints = {}) {
       await new Promise((resolve) => setTimeout(resolve, 250));
       continue;
     }
+    if (product.erpLoaded && !product.selectionQualified) {
+      const fingerprint = JSON.stringify([
+        product.sku, product.commissionOptions, product.lengthCm, product.widthCm,
+        product.heightCm, product.weightKg, product.competitorPriceResolved,
+        /暂无数据/.test(product.rawText || ""),
+      ]);
+      unqualifiedStableCount = fingerprint === unqualifiedFingerprint ? unqualifiedStableCount + 1 : 1;
+      unqualifiedFingerprint = fingerprint;
+      if (unqualifiedStableCount >= 8) {
+        return {
+          disqualified: true,
+          disqualificationReason: "产品不合要求：未发现“选品标签：符合要求”",
+          product,
+        };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      continue;
+    }
+    unqualifiedStableCount = 0;
+    unqualifiedFingerprint = "";
     pagePrice = Number(product.pageGreenPrice || 0);
     competitorPrice = Number(product.minCompetitorPrice || 0);
     source = blackPriceCore?.chooseSource(pagePrice, competitorPrice) || "none";
     const complete = product.erpLoaded
+      && product.selectionQualified
       && product.competitorPriceResolved
       && product.sku
       && pagePrice > 0
@@ -519,6 +559,13 @@ async function collectOzonTaskPricingSnapshot(hints = {}) {
       stableFingerprint = "";
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  if (product?.erpLoaded && !product?.selectionQualified) {
+    return {
+      disqualified: true,
+      disqualificationReason: "产品不合要求：未发现“选品标签：符合要求”",
+      product,
+    };
   }
   const missing = [];
   if (!product?.erpLoaded) missing.push("毛子ERP面板");

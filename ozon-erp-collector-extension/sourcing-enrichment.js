@@ -6,7 +6,7 @@ const downloadButton = document.getElementById("download");
 const statusElement = document.getElementById("status");
 const rowsElement = document.getElementById("taskRows");
 const SAVED_QUEUE_KEY = "ozonSourcingEnrichmentQueueV1";
-const PRICING_METHOD_VERSION = "live-stable-v3";
+const PRICING_METHOD_VERSION = "live-qualified-v4";
 
 let queue = null;
 let sourceFileName = "sourcing-queue.json";
@@ -46,6 +46,11 @@ function pricingState(task) {
 }
 
 function syncTaskStage(task) {
+  if (pricingState(task) === "disqualified") {
+    task.enrichment.status = "disqualified";
+    task.status = "rejected_not_qualified";
+    return;
+  }
   const ready = mainImageState(task) === "completed" && pricingState(task) === "completed";
   task.enrichment.status = ready ? "completed" : "pending";
   task.status = ready ? "pending_pinduoduo_search" : "pending_ozon_enrichment";
@@ -83,7 +88,8 @@ function stats() {
   const imageCompleted = tasks.filter((task) => mainImageState(task) === "completed").length;
   const pricingCompleted = tasks.filter((task) => pricingState(task) === "completed").length;
   const pricingFailed = tasks.filter((task) => pricingState(task) === "failed").length;
-  return { total: tasks.length, imageCompleted, pricingCompleted, pricingFailed, pricingPending: tasks.length - pricingCompleted - pricingFailed };
+  const pricingDisqualified = tasks.filter((task) => pricingState(task) === "disqualified").length;
+  return { total: tasks.length, imageCompleted, pricingCompleted, pricingFailed, pricingDisqualified, pricingPending: tasks.length - pricingCompleted - pricingFailed - pricingDisqualified };
 }
 
 function updateStats() {
@@ -92,6 +98,7 @@ function updateStats() {
   document.getElementById("imageCount").textContent = current.imageCompleted;
   document.getElementById("pricingSuccessCount").textContent = current.pricingCompleted;
   document.getElementById("pricingFailedCount").textContent = current.pricingFailed;
+  document.getElementById("pricingDisqualifiedCount").textContent = current.pricingDisqualified;
   document.getElementById("pricingPendingCount").textContent = current.pricingPending;
 }
 
@@ -143,10 +150,11 @@ function renderRows() {
     row.append(cell(money(task.enrichment?.internationalFreight)));
     row.append(cell(hasFiniteValue(task.enrichment?.maxPurchaseCostAt18Pct) ? Number(task.enrichment.maxPurchaseCostAt18Pct).toFixed(2) : "-", "limit"));
     const state = pricingState(task);
-    const stateLabels = { pending: "等待核价", running: "核价中", completed: "核价完成", failed: "核价失败" };
-    row.append(cell(stateLabels[state] || state, state === "completed" ? "ok" : state === "failed" ? "bad" : "muted"));
+    const stateLabels = { pending: "等待核价", running: "核价中", completed: "核价完成", failed: "核价失败", disqualified: "产品不合要求" };
+    row.append(cell(stateLabels[state] || state, state === "completed" ? "ok" : ["failed", "disqualified"].includes(state) ? "bad" : "muted"));
     const sourceLabels = { page: "当前商品", competitor: "跟卖商品" };
-    row.append(cell(state === "failed" ? (task.enrichment?.ozonPricingError || "未知错误") : (sourceLabels[task.enrichment?.blackPriceSource] || "-"), state === "failed" ? "bad" : "muted"));
+    const reason = ["failed", "disqualified"].includes(state) ? (task.enrichment?.ozonPricingError || "未知错误") : (sourceLabels[task.enrichment?.blackPriceSource] || "-");
+    row.append(cell(reason, ["failed", "disqualified"].includes(state) ? "bad" : "muted"));
     row.append(cell(task.enrichment?.freightRoute || "-", "muted"));
     row.append(cell(task.enrichment?.ozonPricingElapsedMs ? `${(task.enrichment.ozonPricingElapsedMs / 1000).toFixed(1)}秒` : "-", "muted"));
     const linkCell = document.createElement("td");
@@ -291,7 +299,7 @@ async function runPricingEnrichment() {
   if (!queue || running) return;
   stopRequested = false;
   setRunning(true);
-  const pending = queue.tasks.filter((task) => pricingState(task) !== "completed");
+  const pending = queue.tasks.filter((task) => !["completed", "disqualified"].includes(pricingState(task)));
   for (let index = 0; index < pending.length; index += 1) {
     if (stopRequested) break;
     const task = pending[index];
@@ -302,6 +310,23 @@ async function runPricingEnrichment() {
     setStatus(`正在批量核价 ${index + 1}/${pending.length}：SKU ${task.ozon.sku}…`);
     try {
       const response = await sendMessage({ type: "readOzonTaskPricing", task });
+      if (response.disqualified) {
+        Object.assign(task.ozon, { selectionQualified: false });
+        Object.assign(task.enrichment, {
+          ozonPricingStatus: "disqualified",
+          ozonPricingMethodVersion: PRICING_METHOD_VERSION,
+          ozonPricingError: response.disqualificationReason || "产品不合要求：未发现“选品标签：符合要求”",
+          ozonPricingElapsedMs: Number(response.elapsedMs || 0),
+          ozonPricingFetchedAt: new Date().toISOString(),
+          originalBlackPrice: null,
+          blackPriceSource: null,
+          blackPriceSourceUrl: null,
+          internationalFreight: null,
+          freightRoute: null,
+          maxPurchaseCostAt18Pct: null,
+          pricingCalculation: null,
+        });
+      } else {
       Object.assign(task.ozon, {
         pagePrice: response.pagePrice,
         competitorPrice: response.competitorPrice,
@@ -327,6 +352,7 @@ async function runPricingEnrichment() {
         maxPurchaseCostAt18Pct: response.maxPurchaseCostAt18Pct,
         pricingCalculation: response.calculation,
       });
+      }
     } catch (error) {
       task.enrichment.ozonPricingStatus = "failed";
       task.enrichment.ozonPricingError = error.message || String(error);
@@ -340,7 +366,7 @@ async function runPricingEnrichment() {
   }
   setRunning(false);
   const current = stats();
-  setStatus(`${stopRequested ? "已停止。" : "本轮核价补全完成。"} 成功${current.pricingCompleted}/${current.total}，失败${current.pricingFailed}；失败项可再次重试。`, current.pricingFailed ? "error" : "success");
+  setStatus(`${stopRequested ? "已停止。" : "本轮核价补全完成。"} 成功${current.pricingCompleted}/${current.total}，不合要求${current.pricingDisqualified}，失败${current.pricingFailed}；失败项可再次重试。`, current.pricingFailed ? "error" : "success");
 }
 
 function downloadQueue() {

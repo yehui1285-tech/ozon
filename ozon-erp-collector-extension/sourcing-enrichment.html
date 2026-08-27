@@ -26,7 +26,7 @@
     #status { min-height:20px; margin:14px 0 0; color:#4d6388; font-size:13px; font-weight:700; }
     #status[data-state="error"] { color:#b42318; }
     #status[data-state="success"] { color:#067647; }
-    .stats { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:12px; margin:16px 0; }
+    .stats { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:12px; margin:16px 0; }
     .stat { padding:14px 15px; border:1px solid #e5eaf4; border-radius:14px; background:#fff; }
     .stat span { display:block; color:#758099; font-size:11px; }
     .stat strong { display:block; margin-top:5px; font-size:22px; }
@@ -53,7 +53,7 @@
         <h1>Ozon 任务批量核价补全</h1>
         <p class="subtitle">导入找品任务JSON后，批量补齐同源黑标价、国际运费和18%利润率对应的最高采购成本，再进入拼多多找同款。</p>
       </div>
-      <span class="version">扩展 v0.6.19 · 任务商品导航校验</span>
+      <span class="version">扩展 v0.6.20 · ERP识别与选品资格校验</span>
     </header>
     <main class="panel">
       <div class="toolbar">
@@ -70,6 +70,7 @@
         <div class="stat"><span>主图完成</span><strong id="imageCount">0</strong></div>
         <div class="stat"><span>核价完成</span><strong id="pricingSuccessCount">0</strong></div>
         <div class="stat"><span>核价失败</span><strong id="pricingFailedCount">0</strong></div>
+        <div class="stat"><span>产品不合要求</span><strong id="pricingDisqualifiedCount">0</strong></div>
         <div class="stat"><span>等待核价</span><strong id="pricingPendingCount">0</strong></div>
       </section>
       <div class="table-wrap">

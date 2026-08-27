@@ -122,6 +122,7 @@
     const weightKg = number(snapshot?.product?.weightKg);
     const freight = calculateFreight({ greenPrice: effectiveGreenPrice, weightKg, lengthCm, widthCm, heightCm });
     const missing = [];
+    if (snapshot?.product?.selectionQualified !== true) missing.push("产品不合要求");
     if (!(pagePrice > 0)) missing.push("当前页面绿标价");
     if (snapshot?.product?.erpLoaded !== true || snapshot?.product?.competitorPriceResolved !== true) missing.push("当前毛子ERP数据");
     if (source === "none" || !(effectiveGreenPrice > 0)) missing.push("有效绿标价");
