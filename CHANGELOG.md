@@ -5,6 +5,27 @@
 - `当前文件怎么用.md`
 - `OZON项目复现交接文档.md`
 
+## 2026-08-27 - 批量扫描MD转JSON双击工具
+
+### 新增
+
+- 项目根目录新增`Ozon批量MD转JSON.cmd`；双击后通过Windows文件选择框选择批量扫描MD，无需输入命令。
+- 工具复用`sourcing-agent/build-queue.mjs`现有转换核心，在MD同目录的`Ozon_JSON_转换结果`中生成全量JSON、10件样本JSON和样本CSV，完成后自动打开输出文件夹。
+- 成功提示明确说明转换不会重新检查选品标签，旧的错误MD不能作为正式找品输入。
+- PowerShell脚本加入UTF-8 BOM，兼容Windows PowerShell 5读取中文路径和提示。
+
+### 回滚备份
+
+```text
+C:\Users\Microsoft\Documents\Ozon\_备份_20260827_md_to_json_tool_before
+```
+
+### 验证
+
+- 使用`Ozon批量店铺符合要求_2026-08-15.md`完成无界面实测：解析50件，生成3个文件；全量JSON共50个任务，首项资格为`qualified / batch_store_scan`。
+- 测试输出核对后已删除；现有任务队列测试增加启动器、转换核心调用、风险提示和自动打开目录的接线检查。
+- 本次未修改网页、扩展或Worker；不需要上传`feishu.html`，不需要重新生成扩展ZIP，也不需要部署Worker。
+
 ## 2026-08-27 - 可信队列快速核价与官方价格源收紧（扩展 0.6.25）
 
 ### 真实测试结论

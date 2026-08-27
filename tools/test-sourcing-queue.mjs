@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import { buildQueueCsv, parseBatchMarkdown, selectRepresentativeTasks } from "../sourcing-agent/queue-core.mjs";
 
 const fixture = `# Ozon 批量店铺“符合要求”商品清单
@@ -60,5 +61,13 @@ assert.match(csv, /ozon-1001/);
 assert.doesNotMatch(csv, /暂无符合要求/);
 
 assert.throws(() => parseBatchMarkdown("# no table"), /没有找到批量扫描商品表格/);
+
+const guiToolSource = fs.readFileSync(new URL("./md-to-json-gui.ps1", import.meta.url), "utf8");
+const launcherSource = fs.readFileSync(new URL("../Ozon批量MD转JSON.cmd", import.meta.url), "utf8");
+assert.match(guiToolSource, /sourcing-agent\\build-queue\.mjs/);
+assert.match(guiToolSource, /--input \$resolvedInput --output \$resolvedOutput --limit 10/);
+assert.match(guiToolSource, /转换工具不会重新检查商品标签/);
+assert.match(guiToolSource, /Start-Process explorer\.exe/);
+assert.match(launcherSource, /md-to-json-gui\.ps1/);
 
 console.log("Sourcing queue parser tests passed.");

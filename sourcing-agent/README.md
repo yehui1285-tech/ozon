@@ -4,6 +4,18 @@
 
 ## 生成队列
 
+### 双击小工具（推荐）
+
+双击项目根目录的`Ozon批量MD转JSON.cmd`，选择批量店铺扫描导出的MD文件。工具会在MD所在目录创建`Ozon_JSON_转换结果`文件夹，并自动生成：
+
+- `*-all.json`：全部任务，正式批量核价使用。
+- `*-sample-10.json`：10件代表样本，小批量测试使用。
+- `*-sample-10.csv`：人工查看使用。
+
+完成后工具会自动打开输出文件夹。转换只负责把MD结构化，不会重新访问Ozon检查标签，因此必须选择当前批量扫描准确导出的“符合要求”MD；旧的错误MD不会因转换而自动变准确。
+
+### 命令行方式
+
 ```powershell
 npm.cmd run build:sourcing-queue -- --input "C:\Users\Microsoft\Downloads\Ozon批量店铺符合要求_YYYY-MM-DD.md" --limit 10
 ```
