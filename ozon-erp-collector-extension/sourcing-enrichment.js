@@ -1,4 +1,5 @@
 const fileInput = document.getElementById("queueFile");
+const allButton = document.getElementById("startAll");
 const imageButton = document.getElementById("startImages");
 const pricingButton = document.getElementById("startPricing");
 const stopButton = document.getElementById("stop");
@@ -115,23 +116,17 @@ function invalidateLegacyPricing(task) {
   });
 }
 
-function ensureQualificationProvenance(task, batch) {
-  if (task?.qualification?.status === "qualified"
-    && task?.qualification?.source === "batch_store_scan") return;
-  const legacyTrusted = Boolean(
-    Number(batch?.declaredProductCount) > 0
-    && task?.source?.batchId
-    && task.source.batchId === batch?.batchId
-    && task?.source?.storeUrl
-    && task?.ozon?.sku
-  );
-  if (!legacyTrusted) return;
-  task.qualification = {
-    status: "qualified",
-    source: "batch_store_scan",
-    verifiedAt: task.source.exportedAt || batch.exportedAt || null,
-    migratedFromLegacyBatch: true,
-  };
+function discardLegacyQualificationMigration(task) {
+  if (task?.qualification?.migratedFromLegacyBatch !== true) return false;
+  delete task.qualification;
+  clearTaskPricingValues(task);
+  if (task.ozon && typeof task.ozon === "object") task.ozon.selectionQualified = null;
+  Object.assign(task.enrichment, {
+    ozonPricingStatus: "pending",
+    ozonPricingMethodVersion: null,
+    ozonPricingError: "旧JSON的推断资格与核价结果已撤销，需要重新检查",
+  });
+  return true;
 }
 
 function stats() {
@@ -246,7 +241,7 @@ async function loadQueue(file) {
     task.enrichment = task.enrichment && typeof task.enrichment === "object" ? task.enrichment : {};
     task.audit = task.audit && typeof task.audit === "object" ? task.audit : {};
     task.ozon = task.ozon && typeof task.ozon === "object" ? task.ozon : {};
-    ensureQualificationProvenance(task, parsed.batch);
+    discardLegacyQualificationMigration(task);
     if (!task.enrichment.mainImageUrl && task.enrichment.mainImageStatus === "running") task.enrichment.mainImageStatus = "pending";
     if (task.enrichment.ozonPricingStatus === "running") task.enrichment.ozonPricingStatus = "pending";
     invalidateLegacyPricing(task);
@@ -257,6 +252,7 @@ async function loadQueue(file) {
   sourceFileName = file.name || sourceFileName;
   imageButton.disabled = false;
   pricingButton.disabled = false;
+  allButton.disabled = false;
   downloadButton.disabled = false;
   await persistQueue();
   renderRows();
@@ -285,7 +281,7 @@ async function restoreQueue() {
     task.enrichment = task.enrichment && typeof task.enrichment === "object" ? task.enrichment : {};
     task.audit = task.audit && typeof task.audit === "object" ? task.audit : {};
     task.ozon = task.ozon && typeof task.ozon === "object" ? task.ozon : {};
-    ensureQualificationProvenance(task, queue.batch);
+    discardLegacyQualificationMigration(task);
     if (!task.enrichment.mainImageUrl && task.enrichment.mainImageStatus === "running") task.enrichment.mainImageStatus = "pending";
     if (task.enrichment.ozonPricingStatus === "running") task.enrichment.ozonPricingStatus = "pending";
     invalidateLegacyPricing(task);
@@ -294,6 +290,7 @@ async function restoreQueue() {
   });
   imageButton.disabled = false;
   pricingButton.disabled = false;
+  allButton.disabled = false;
   downloadButton.disabled = false;
   renderRows();
   const current = stats();
@@ -305,84 +302,62 @@ function setRunning(value) {
   running = value;
   imageButton.disabled = value || !queue;
   pricingButton.disabled = value || !queue;
+  allButton.disabled = value || !queue;
   stopButton.disabled = !value;
   fileInput.disabled = value;
   downloadButton.disabled = value || !queue;
 }
 
-async function runEnrichment() {
-  if (!queue || running) return;
-  stopRequested = false;
-  setRunning(true);
-  const pending = queue.tasks.filter((task) => !task.enrichment?.mainImageUrl);
-  for (let index = 0; index < pending.length; index += 1) {
-    if (stopRequested) break;
-    const task = pending[index];
-    task.enrichment.mainImageStatus = "running";
-    task.enrichment.mainImageError = null;
-    await persistQueue();
-    renderRows();
-    setStatus(`正在处理 ${index + 1}/${pending.length}：SKU ${task.ozon.sku}…`);
-    try {
-      const response = await sendMessage({ type: "readMainImageFromProductUrl", url: task.ozon.productUrl });
-      task.enrichment.mainImageUrl = response.imageUrl;
-      task.enrichment.mainImageSource = response.source;
-      task.enrichment.mainImageRoute = response.route;
-      task.enrichment.mainImageElapsedMs = Number(response.elapsedMs || 0);
-      task.enrichment.mainImageFetchedAt = new Date().toISOString();
-      task.enrichment.mainImageStatus = "completed";
-    } catch (error) {
-      task.enrichment.mainImageStatus = "failed";
-      task.enrichment.mainImageError = error.message || String(error);
-      task.enrichment.mainImageElapsedMs = Number(error?.elapsedMs || 0) || null;
-    }
-    task.audit = task.audit && typeof task.audit === "object" ? task.audit : {};
-    task.audit.updatedAt = new Date().toISOString();
-    syncTaskStage(task);
-    await persistQueue();
-    renderRows();
-    if (!stopRequested && index < pending.length - 1) await new Promise((resolve) => setTimeout(resolve, 250));
+async function enrichMainImageTask(task) {
+  task.enrichment.mainImageStatus = "running";
+  task.enrichment.mainImageError = null;
+  await persistQueue();
+  renderRows();
+  try {
+    const response = await sendMessage({ type: "readMainImageFromProductUrl", url: task.ozon.productUrl });
+    task.enrichment.mainImageUrl = response.imageUrl;
+    task.enrichment.mainImageSource = response.source;
+    task.enrichment.mainImageRoute = response.route;
+    task.enrichment.mainImageElapsedMs = Number(response.elapsedMs || 0);
+    task.enrichment.mainImageFetchedAt = new Date().toISOString();
+    task.enrichment.mainImageStatus = "completed";
+  } catch (error) {
+    task.enrichment.mainImageStatus = "failed";
+    task.enrichment.mainImageError = error.message || String(error);
+    task.enrichment.mainImageElapsedMs = Number(error?.elapsedMs || 0) || null;
   }
-  setRunning(false);
-  const current = stats();
-  const stoppedText = stopRequested ? "已按要求停止。" : "本轮完成。";
-  const imageFailed = queue.tasks.filter((task) => mainImageState(task) === "failed").length;
-  setStatus(`${stoppedText} 主图成功${current.imageCompleted}/${current.total}，失败${imageFailed}；可下载结果或再次重试失败项。`, imageFailed ? "error" : "success");
+  task.audit = task.audit && typeof task.audit === "object" ? task.audit : {};
+  task.audit.updatedAt = new Date().toISOString();
+  syncTaskStage(task);
+  await persistQueue();
+  renderRows();
 }
 
-async function runPricingEnrichment() {
-  if (!queue || running) return;
-  stopRequested = false;
-  setRunning(true);
-  const pending = queue.tasks.filter((task) => !["completed", "disqualified"].includes(pricingState(task)));
-  for (let index = 0; index < pending.length; index += 1) {
-    if (stopRequested) break;
-    const task = pending[index];
-    clearTaskPricingValues(task);
-    task.enrichment.ozonPricingStatus = "running";
-    task.enrichment.ozonPricingError = null;
-    await persistQueue();
-    renderRows();
-    setStatus(`正在批量核价 ${index + 1}/${pending.length}：SKU ${task.ozon.sku}…`);
-    try {
-      const response = await sendMessage({ type: "readOzonTaskPricing", task });
-      if (response.disqualified) {
-        Object.assign(task.ozon, { selectionQualified: false });
-        Object.assign(task.enrichment, {
-          ozonPricingStatus: "disqualified",
-          ozonPricingMethodVersion: PRICING_METHOD_VERSION,
-          ozonPricingError: response.disqualificationReason || "产品不合要求：页面明确显示非符合要求的选品标签",
-          ozonPricingElapsedMs: Number(response.elapsedMs || 0),
-          ozonPricingFetchedAt: new Date().toISOString(),
-          originalBlackPrice: null,
-          blackPriceSource: null,
-          blackPriceSourceUrl: null,
-          internationalFreight: null,
-          freightRoute: null,
-          maxPurchaseCostAt18Pct: null,
-          pricingCalculation: null,
-        });
-      } else {
+async function enrichPricingTask(task) {
+  clearTaskPricingValues(task);
+  task.enrichment.ozonPricingStatus = "running";
+  task.enrichment.ozonPricingError = null;
+  await persistQueue();
+  renderRows();
+  try {
+    const response = await sendMessage({ type: "readOzonTaskPricing", task });
+    if (response.disqualified) {
+      Object.assign(task.ozon, { selectionQualified: false });
+      Object.assign(task.enrichment, {
+        ozonPricingStatus: "disqualified",
+        ozonPricingMethodVersion: PRICING_METHOD_VERSION,
+        ozonPricingError: response.disqualificationReason || "产品不合要求：页面明确显示非符合要求的选品标签",
+        ozonPricingElapsedMs: Number(response.elapsedMs || 0),
+        ozonPricingFetchedAt: new Date().toISOString(),
+        originalBlackPrice: null,
+        blackPriceSource: null,
+        blackPriceSourceUrl: null,
+        internationalFreight: null,
+        freightRoute: null,
+        maxPurchaseCostAt18Pct: null,
+        pricingCalculation: null,
+      });
+    } else {
       Object.assign(task.ozon, {
         pagePrice: response.pagePrice,
         competitorPrice: response.competitorPrice,
@@ -408,21 +383,79 @@ async function runPricingEnrichment() {
         maxPurchaseCostAt18Pct: response.partial ? null : response.maxPurchaseCostAt18Pct,
         pricingCalculation: response.partial ? null : response.calculation,
       });
-      }
-    } catch (error) {
-      task.enrichment.ozonPricingStatus = "failed";
-      task.enrichment.ozonPricingError = error.message || String(error);
-      task.enrichment.ozonPricingElapsedMs = Number(error?.elapsedMs || 0) || null;
     }
-    task.audit.updatedAt = new Date().toISOString();
-    syncTaskStage(task);
-    await persistQueue();
-    renderRows();
+  } catch (error) {
+    task.enrichment.ozonPricingStatus = "failed";
+    task.enrichment.ozonPricingError = error.message || String(error);
+    task.enrichment.ozonPricingElapsedMs = Number(error?.elapsedMs || 0) || null;
+  }
+  task.audit = task.audit && typeof task.audit === "object" ? task.audit : {};
+  task.audit.updatedAt = new Date().toISOString();
+  syncTaskStage(task);
+  await persistQueue();
+  renderRows();
+}
+
+async function runEnrichment() {
+  if (!queue || running) return;
+  stopRequested = false;
+  setRunning(true);
+  const pending = queue.tasks.filter((task) => !task.enrichment?.mainImageUrl);
+  for (let index = 0; index < pending.length; index += 1) {
+    if (stopRequested) break;
+    const task = pending[index];
+    setStatus(`正在处理 ${index + 1}/${pending.length}：SKU ${task.ozon.sku}…`);
+    await enrichMainImageTask(task);
+    if (!stopRequested && index < pending.length - 1) await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  setRunning(false);
+  const current = stats();
+  const stoppedText = stopRequested ? "已按要求停止。" : "本轮完成。";
+  const imageFailed = queue.tasks.filter((task) => mainImageState(task) === "failed").length;
+  setStatus(`${stoppedText} 主图成功${current.imageCompleted}/${current.total}，失败${imageFailed}；可下载结果或再次重试失败项。`, imageFailed ? "error" : "success");
+}
+
+async function runPricingEnrichment() {
+  if (!queue || running) return;
+  stopRequested = false;
+  setRunning(true);
+  const pending = queue.tasks.filter((task) => !["completed", "disqualified"].includes(pricingState(task)));
+  for (let index = 0; index < pending.length; index += 1) {
+    if (stopRequested) break;
+    const task = pending[index];
+    setStatus(`正在批量核价 ${index + 1}/${pending.length}：SKU ${task.ozon.sku}…`);
+    await enrichPricingTask(task);
     if (!stopRequested && index < pending.length - 1) await new Promise((resolve) => setTimeout(resolve, 350));
   }
   setRunning(false);
   const current = stats();
   setStatus(`${stopRequested ? "已停止。" : "本轮核价补全完成。"} 成功${current.pricingCompleted}/${current.total}，不合要求${current.pricingDisqualified}，失败${current.pricingFailed}；失败项可再次重试。`, current.pricingFailed ? "error" : "success");
+}
+
+async function runCombinedEnrichment() {
+  if (!queue || running) return;
+  stopRequested = false;
+  setRunning(true);
+  const pending = queue.tasks.filter((task) => pricingState(task) !== "disqualified"
+    && (!task.enrichment?.mainImageUrl || pricingState(task) !== "completed"));
+  for (let index = 0; index < pending.length; index += 1) {
+    const task = pending[index];
+    if (!task.enrichment?.mainImageUrl) {
+      setStatus(`一键补齐 ${index + 1}/${pending.length}：SKU ${task.ozon.sku} · 正在读取主图…`);
+      await enrichMainImageTask(task);
+    }
+    if (!["completed", "disqualified"].includes(pricingState(task))) {
+      setStatus(`一键补齐 ${index + 1}/${pending.length}：SKU ${task.ozon.sku} · 正在读取核价…`);
+      await enrichPricingTask(task);
+    }
+    if (stopRequested) break;
+    if (index < pending.length - 1) await new Promise((resolve) => setTimeout(resolve, 350));
+  }
+  setRunning(false);
+  const current = stats();
+  const imageFailed = queue.tasks.filter((task) => mainImageState(task) === "failed").length;
+  const hasFailures = imageFailed > 0 || current.pricingFailed > 0;
+  setStatus(`${stopRequested ? "已停止。" : "一键补齐完成。"} 主图${current.imageCompleted}/${current.total}，核价${current.pricingCompleted}/${current.total}，不合要求${current.pricingDisqualified}，主图失败${imageFailed}，核价失败${current.pricingFailed}；失败项可再次一键重试。`, hasFailures ? "error" : "success");
 }
 
 function downloadQueue() {
@@ -447,6 +480,7 @@ fileInput.addEventListener("change", async () => {
     queue = null;
     imageButton.disabled = true;
     pricingButton.disabled = true;
+    allButton.disabled = true;
     downloadButton.disabled = true;
     renderRows();
     setStatus(error.message || String(error), "error");
@@ -454,6 +488,7 @@ fileInput.addEventListener("change", async () => {
 });
 imageButton.addEventListener("click", runEnrichment);
 pricingButton.addEventListener("click", runPricingEnrichment);
+allButton.addEventListener("click", runCombinedEnrichment);
 stopButton.addEventListener("click", () => { stopRequested = true; stopButton.disabled = true; setStatus("将在当前商品处理完成后停止。", ""); });
 downloadButton.addEventListener("click", downloadQueue);
 

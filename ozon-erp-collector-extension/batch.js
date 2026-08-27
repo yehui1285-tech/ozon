@@ -52,6 +52,7 @@ function render(batch) {
   $("retryFailed").disabled = !tasks.some((task) => ["failed", "partial"].includes(task.status));
   $("exportMd").disabled = !tasks.length;
   $("exportCsv").disabled = !tasks.length;
+  $("exportJson").disabled = !tasks.length;
   if (!tasks.length) {
     $("tasks").innerHTML = '<tr><td colspan="10" class="empty">尚未创建批量任务</td></tr>';
     return;
@@ -103,7 +104,7 @@ $("clearBatch").addEventListener("click", async () => {
   if (!currentBatch) return;
   const active = currentBatch.status === "running";
   const activeWarning = active ? "\n\n当前任务仍在运行，清空时会同时停止扫描。" : "";
-  if (!confirm(`确认清空当前批次？\n\n左侧链接、右侧任务列表、统计和运行状态会被清除。已下载到电脑的 Markdown/CSV 文件以及各店铺历史采集记录都会保留。${activeWarning}`)) return;
+  if (!confirm(`确认清空当前批次？\n\n左侧链接、右侧任务列表、统计和运行状态会被清除。已下载到电脑的 JSON/Markdown/CSV 文件以及各店铺历史采集记录都会保留。${activeWarning}`)) return;
   $("clearBatch").disabled = true;
   try {
     const response = await send({ type: "clearStoreBatch", batchId: currentBatch.id });
@@ -145,8 +146,8 @@ $("tasks").addEventListener("click", async (event) => {
   }
 });
 
-function download(name, content, type) {
-  const blob = new Blob(["\ufeff", content], { type });
+function download(name, content, type, includeBom = true) {
+  const blob = new Blob([includeBom ? "\ufeff" : "", content], { type });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
@@ -162,10 +163,18 @@ async function exportBatch(format) {
   const response = await send({ type: "getBatchStoreResults", sellerKeys: currentBatch.stores.map((task) => task.sellerKey) });
   const stores = response.stores || {};
   const date = new Date().toISOString().slice(0, 10);
-  if (format === "md") download(`Ozon批量店铺符合要求_${date}.md`, core.buildBatchMarkdown({ batch: currentBatch, stores, exportedAt: new Date().toLocaleString("zh-CN", { hour12: false }) }), "text/markdown;charset=utf-8");
-  else download(`Ozon批量店铺符合要求_${date}.csv`, core.buildBatchCsv({ batch: currentBatch, stores }), "text/csv;charset=utf-8");
+  const exportedAt = new Date().toLocaleString("zh-CN", { hour12: false });
+  if (format === "md") download(`Ozon批量店铺符合要求_${date}.md`, core.buildBatchMarkdown({ batch: currentBatch, stores, exportedAt }), "text/markdown;charset=utf-8");
+  else if (format === "csv") download(`Ozon批量店铺符合要求_${date}.csv`, core.buildBatchCsv({ batch: currentBatch, stores }), "text/csv;charset=utf-8");
+  else {
+    const queue = core.buildBatchTaskQueue({ batch: currentBatch, stores, exportedAt });
+    if (!queue.tasks.length) throw new Error("当前批次没有可导出的符合要求商品。");
+    download(`Ozon找品任务_${date}.json`, `${JSON.stringify(queue, null, 2)}\n`, "application/json;charset=utf-8", false);
+    setMessage(`已导出找品任务JSON，共${queue.tasks.length}件，可直接进入主图与核价补全。`);
+  }
 }
 
+$("exportJson").addEventListener("click", () => exportBatch("json").catch((error) => setMessage(error.message, true)));
 $("exportMd").addEventListener("click", () => exportBatch("md").catch((error) => setMessage(error.message, true)));
 $("exportCsv").addEventListener("click", () => exportBatch("csv").catch((error) => setMessage(error.message, true)));
 

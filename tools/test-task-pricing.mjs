@@ -163,6 +163,7 @@ assert.throws(() => core.buildTaskPricing(task, {
 const backgroundSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/background.js", import.meta.url), "utf8");
 const contentSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/content.js", import.meta.url), "utf8");
 const enrichmentSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/sourcing-enrichment.js", import.meta.url), "utf8");
+const enrichmentHtmlSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/sourcing-enrichment.html", import.meta.url), "utf8");
 assert.match(backgroundSource, /readOzonTaskPricing/);
 assert.match(backgroundSource, /task-pricing-core\.js/);
 assert.match(backgroundSource, /await chrome\.tabs\.update\(tab\.id, \{ url: sourceUrl/);
@@ -217,7 +218,15 @@ assert.match(enrichmentSource, /clearTaskPricingValues\(task\);\s*task\.enrichme
 assert.match(enrichmentSource, /旧版核价结果已作废/);
 assert.match(enrichmentSource, /\["completed", "disqualified", "failed", "running"\]\.includes/);
 assert.match(enrichmentSource, /task\.ozon\.selectionQualified = null/);
-assert.match(enrichmentSource, /function ensureQualificationProvenance/);
-assert.match(enrichmentSource, /migratedFromLegacyBatch:\s*true/);
+assert.match(enrichmentSource, /function discardLegacyQualificationMigration/);
+assert.match(enrichmentSource, /migratedFromLegacyBatch !== true/);
+assert.match(enrichmentSource, /旧JSON的推断资格与核价结果已撤销/);
+assert.match(enrichmentSource, /ozonPricingMethodVersion:\s*null/);
+assert.doesNotMatch(enrichmentSource, /function ensureQualificationProvenance/);
+assert.match(enrichmentSource, /async function runCombinedEnrichment/);
+assert.match(enrichmentSource, /await enrichMainImageTask\(task\);[\s\S]*?await enrichPricingTask\(task\);/);
+assert.match(enrichmentSource, /allButton\.addEventListener\("click", runCombinedEnrichment\)/);
+assert.match(enrichmentHtmlSource, /主图→核价→保存/);
+assert.match(enrichmentHtmlSource, /id="startAll"/);
 
 console.log("Ozon task pricing enrichment tests passed.");

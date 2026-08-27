@@ -120,6 +120,43 @@
     return `"${text.replace(/"/g, '""')}"`;
   }
 
+  function numericValue(value) {
+    let text = cleanText(value).replace(/[¥￥₽%]/g, "").replace(/[\u00a0\u202f]/g, " ");
+    const match = text.match(/-?[\d\s.,]+/);
+    if (!match) return null;
+    text = match[0].replace(/\s+/g, "");
+    const comma = text.lastIndexOf(",");
+    const dot = text.lastIndexOf(".");
+    if (comma >= 0 && dot >= 0) {
+      const decimal = comma > dot ? "," : ".";
+      text = text.replace(new RegExp(`\\${decimal === "," ? "." : ","}`, "g"), "").replace(decimal, ".");
+    } else if (comma >= 0) text = text.replace(",", ".");
+    const parsed = Number(text);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function dimensionsMm(value) {
+    const values = [...cleanText(value).matchAll(/(\d+(?:[.,]\d+)?)/g)]
+      .map((match) => numericValue(match[1]))
+      .filter((entry) => entry !== null);
+    return values.length >= 3
+      ? { lengthMm: values[0], widthMm: values[1], heightMm: values[2] }
+      : { lengthMm: null, widthMm: null, heightMm: null };
+  }
+
+  function weightGrams(value) {
+    const amount = numericValue(value);
+    if (amount === null) return null;
+    return /kg|кг|千克|公斤/i.test(cleanText(value)) ? amount * 1000 : amount;
+  }
+
+  function selectedCommission(effectiveGreenPrice, commissions) {
+    const price = Number(effectiveGreenPrice);
+    if (!(price > 0)) return null;
+    const tierIndex = price <= 600 ? 1 : 2;
+    return Number.isFinite(commissions[tierIndex]) ? commissions[tierIndex] : null;
+  }
+
   function batchStoreState(stores, sellerKey) {
     return stores?.[sellerKey] || { products: {} };
   }
@@ -210,6 +247,99 @@
     return lines.join("\r\n");
   }
 
+  function buildBatchTaskQueue({ batch, stores = {}, exportedAt, createdAt = new Date().toISOString() }) {
+    const tasks = batchProductRows(batch, stores)
+      .filter((entry) => entry.product)
+      .map(({ task, saved, storeIndex, productIndex, product }) => {
+        const pagePrice = numericValue(product.price);
+        const competitorPrice = /无|暂无|没有跟卖|^[-—]+$/i.test(cleanText(product.competitor)) ? null : numericValue(product.competitor);
+        const effectiveGreenPrice = [pagePrice, competitorPrice]
+          .filter((entry) => Number(entry) > 0)
+          .sort((a, b) => a - b)[0] ?? null;
+        const commissions = (product.commissions || [])
+          .map(numericValue)
+          .filter((entry) => entry !== null);
+        const size = dimensionsMm(product.dimensions);
+        return {
+          taskId: `ozon-${cleanText(product.sku)}`,
+          status: "pending_ozon_enrichment",
+          source: {
+            batchId: cleanText(batch?.id),
+            exportedAt: cleanText(exportedAt) || createdAt,
+            batchStatus: batchStatusLabel(batch?.status),
+            storeIndex: storeIndex + 1,
+            storeName: cleanText(saved.storeName || task.sellerKey),
+            storeUrl: task.url,
+            storeStatus: batchStatusLabel(task.status),
+            productIndex: productIndex + 1,
+          },
+          qualification: {
+            status: "qualified",
+            source: "batch_store_scan",
+            verifiedAt: cleanText(exportedAt) || createdAt,
+          },
+          ozon: {
+            sku: cleanText(product.sku),
+            name: cleanText(product.name),
+            productUrl: canonicalProductLink(product.link),
+            pagePrice,
+            competitorPrice,
+            effectiveGreenPrice,
+            commissions,
+            selectedCommission: selectedCommission(effectiveGreenPrice, commissions),
+            monthlySales: numericValue(product.monthlySales),
+            fulfillment: cleanText(product.fulfillment),
+            ...size,
+            weightG: weightGrams(product.weight),
+          },
+          enrichment: {
+            status: "pending",
+            mainImageUrl: null,
+            originalBlackPrice: null,
+            blackPriceSourceUrl: null,
+            internationalFreight: null,
+            freightRoute: null,
+            maxPurchaseCostAt18Pct: null,
+          },
+          sourcing: {
+            platform: "pinduoduo",
+            status: "pending",
+            candidates: [],
+            selectedCandidate: null,
+            judgeProvider: null,
+            judgeResult: null,
+          },
+          pricing: {
+            purchaseCost: null,
+            sourceUrl: null,
+            profit: null,
+            profitMargin: null,
+            eligibleAt18Pct: null,
+          },
+          audit: { createdAt, updatedAt: createdAt },
+        };
+      });
+    const batchSummary = {
+      batchId: cleanText(batch?.id),
+      exportedAt: cleanText(exportedAt) || createdAt,
+      status: batchStatusLabel(batch?.status),
+      declaredStoreCount: (batch?.stores || []).length,
+      declaredProductCount: tasks.length,
+    };
+    return {
+      schemaVersion: 1,
+      generatedAt: createdAt,
+      batch: batchSummary,
+      summary: {
+        parsedProductCount: tasks.length,
+        storeCount: new Set(tasks.map((entry) => entry.source.storeUrl || entry.source.storeName)).size,
+        pendingEnrichmentCount: tasks.length,
+      },
+      selection: { strategy: "all", count: tasks.length },
+      tasks,
+    };
+  }
+
   function assessViewportReadiness(visibleLinks = [], loadedByLink = new Map()) {
     const loaded = loadedByLink instanceof Map ? loadedByLink : new Map(Object.entries(loadedByLink || {}));
     const links = [...new Set(visibleLinks.map(canonicalProductLink).filter(Boolean))].sort();
@@ -291,6 +421,7 @@
     autoSkipDisposition,
     buildBatchCsv,
     buildBatchMarkdown,
+    buildBatchTaskQueue,
     buildMarkdown,
     canonicalProductLink,
     classifyStoreFinish,

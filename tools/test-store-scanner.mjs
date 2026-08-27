@@ -165,7 +165,7 @@ const batch = {
   stores: [{ sellerKey: "hj025", url: "https://www.ozon.ru/seller/hj025/", status: "completed" }],
 };
 const batchStores = {
-  hj025: { storeName: "=HJ|025", products: { "3258064058": { name: "汽车|扰流板", sku: "3258064058", price: "327,28", commissions: ["14%", "18%"], competitor: "¥201.65", link: "https://www.ozon.ru/product/test-3258064058/?at=abc" } } },
+  hj025: { storeName: "=HJ|025", products: { "3258064058": { name: "汽车|扰流板", sku: "3258064058", price: "327,28", commissions: ["12%", "14%", "18%"], monthlySales: "3", fulfillment: "FBS", dimensions: "1300 x 280 x 100mm", weight: "3000g", competitor: "¥201.65", link: "https://www.ozon.ru/product/test-3258064058/?at=abc" } } },
 };
 const batchMarkdown = core.buildBatchMarkdown({ batch, stores: batchStores, exportedAt: "2026-08-15 12:00:00" });
 assert.match(batchMarkdown, /店铺数量：1 个/);
@@ -173,6 +173,18 @@ assert.match(batchMarkdown, /汽车\\\|扰流板/);
 const batchCsv = core.buildBatchCsv({ batch, stores: batchStores });
 assert.match(batchCsv, /"'=HJ\|025"/);
 assert.match(batchCsv, /"327,28"/);
+const batchQueue = core.buildBatchTaskQueue({ batch, stores: batchStores, exportedAt: "2026-08-15 12:00:00", createdAt: "2026-08-15T04:00:00.000Z" });
+assert.equal(batchQueue.tasks.length, 1);
+assert.equal(batchQueue.batch.declaredProductCount, 1);
+assert.equal(batchQueue.tasks[0].qualification.status, "qualified");
+assert.equal(batchQueue.tasks[0].qualification.source, "batch_store_scan");
+assert.equal(batchQueue.tasks[0].ozon.pagePrice, 327.28);
+assert.equal(batchQueue.tasks[0].ozon.competitorPrice, 201.65);
+assert.equal(batchQueue.tasks[0].ozon.effectiveGreenPrice, 201.65);
+assert.deepEqual(batchQueue.tasks[0].ozon.commissions, [12, 14, 18]);
+assert.equal(batchQueue.tasks[0].ozon.selectedCommission, 14);
+assert.equal(batchQueue.tasks[0].ozon.lengthMm, 1300);
+assert.equal(batchQueue.tasks[0].ozon.weightG, 3000);
 
 const scannerSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/store-scanner.js", import.meta.url), "utf8");
 assert.match(scannerSource, /const SETTLE_DELAY_MS = 1500/);
@@ -273,12 +285,15 @@ const batchSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/bat
 const batchHtmlSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/batch.html", import.meta.url), "utf8");
 assert.match(batchSource, /buildBatchMarkdown/);
 assert.match(batchSource, /buildBatchCsv/);
+assert.match(batchSource, /buildBatchTaskQueue/);
+assert.match(batchSource, /Ozon找品任务_/);
+assert.match(batchSource, /application\/json;charset=utf-8/);
 assert.match(batchSource, /parseStoreUrlList\(\$\("urls"\)\.value, 50\)/);
 assert.match(batchSource, /source: "batch-manager"/);
 assert.match(batchSource, /data-delete-store/);
 assert.match(batchSource, /removeStoreBatchTask/);
 assert.match(batchSource, /type: "clearStoreBatch"/);
-assert.match(batchSource, /已下载到电脑的 Markdown\/CSV 文件以及各店铺历史采集记录都会保留/);
+assert.match(batchSource, /已下载到电脑的 JSON\/Markdown\/CSV 文件以及各店铺历史采集记录都会保留/);
 assert.match(batchSource, /\$\("urls"\)\.value = ""/);
 assert.match(batchSource, /getBatchStoreResults/);
 assert.match(batchSource, /function healthSummary\(task\)/);
@@ -288,9 +303,10 @@ assert.match(batchHtmlSource, /<th>操作<\/th>/);
 assert.match(batchHtmlSource, /<th>扫描动态<\/th>/);
 assert.match(batchHtmlSource, /row-delete/);
 assert.match(batchHtmlSource, /id="clearBatch">清空当前批次/);
+assert.match(batchHtmlSource, /id="exportJson">导出找品任务 JSON/);
 
 const manifest = JSON.parse(fs.readFileSync(new URL("../ozon-erp-collector-extension/manifest.json", import.meta.url), "utf8"));
-assert.equal(manifest.version, "0.6.25");
+assert.equal(manifest.version, "0.6.26");
 assert.ok(manifest.permissions.includes("alarms"));
 assert.ok(manifest.permissions.includes("unlimitedStorage"));
 

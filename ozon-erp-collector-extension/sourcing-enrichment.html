@@ -53,17 +53,18 @@
         <h1>Ozon 任务批量核价补全</h1>
         <p class="subtitle">导入找品任务JSON后，批量补齐同源黑标价、国际运费和18%利润率对应的最高采购成本，再进入拼多多找同款。</p>
       </div>
-      <span class="version">扩展 v0.6.25 · 可信队列快速核价</span>
+      <span class="version">扩展 v0.6.26 · 扫描直出与一键补全</span>
     </header>
     <main class="panel">
       <div class="toolbar">
         <label class="file-label">选择任务JSON<input id="queueFile" type="file" accept=".json,application/json"></label>
+        <button id="startAll" class="primary" type="button" disabled>一键补齐主图和核价</button>
         <button id="startImages" type="button" disabled>自动补齐主图</button>
         <button id="startPricing" type="button" disabled>批量补齐Ozon核价</button>
         <button id="stop" class="stop" type="button" disabled>处理完当前件后停止</button>
         <button id="download" class="secondary" type="button" disabled>下载补齐后的JSON</button>
       </div>
-      <p class="notice">每次只处理一件商品。绿标取页面价与跟卖最低价中的有效低价；黑标严格读取该绿标来源商品的原始黑价；国际运费沿用核价页现行规则；最高采购成本按利润率18%反推并向下保留两位小数。</p>
+      <p class="notice">推荐使用“一键补齐”：每次只处理一件商品，按“主图→核价→保存”串行完成。绿标取页面价与跟卖最低价中的有效低价；黑标严格读取该绿标来源商品的原始黑价；国际运费沿用核价页现行规则；最高采购成本按利润率18%反推并向下保留两位小数。</p>
       <p id="status" aria-live="polite">请先选择 `batch-...-sample-10.json`。</p>
       <section class="stats" aria-label="处理统计">
         <div class="stat"><span>任务总数</span><strong id="totalCount">0</strong></div>
