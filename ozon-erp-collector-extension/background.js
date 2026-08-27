@@ -411,17 +411,32 @@ async function readOzonTaskPricing(rawTask) {
     }
     const sourceUrl = blackPriceCore.normalizeProductUrl(snapshot.sourceUrl || url);
     if (!sourceUrl) throw new Error("未能定位绿标价对应的商品来源链接");
-    let blackPrice = Number(snapshot.currentBlackPrice || 0);
-    if (snapshot.source === "competitor") {
-      await chrome.tabs.update(tab.id, { url: sourceUrl, active: false });
-      await waitForOzonProductNavigation(tab.id, productSkuFromUrl(sourceUrl), 20000, "最低跟卖商品页");
-      blackPrice = await readOriginalBlackPriceAsSoonAsAvailable(tab.id, 8000);
-    } else if (!(blackPrice > 0)) {
-      blackPrice = await readOriginalBlackPriceAsSoonAsAvailable(tab.id, 5000);
+    const basePricing = taskPricingCore.buildTaskPricingBase(task, snapshot, sourceUrl);
+    try {
+      let blackPrice = Number(snapshot.currentBlackPrice || 0);
+      if (snapshot.source === "competitor") {
+        await chrome.tabs.update(tab.id, { url: sourceUrl, active: false });
+        await waitForOzonProductNavigation(tab.id, productSkuFromUrl(sourceUrl), 20000, "最低跟卖商品页");
+        blackPrice = await readOriginalBlackPriceAsSoonAsAvailable(tab.id, 8000);
+      } else if (!(blackPrice > 0)) {
+        blackPrice = await readOriginalBlackPriceAsSoonAsAvailable(tab.id, 5000);
+      }
+      if (!(blackPrice > 0)) throw new Error("未读取到有效绿标来源商品的原始黑标价");
+      const pricing = taskPricingCore.buildTaskPricing(task, snapshot, blackPrice, sourceUrl);
+      return { ok: true, ...pricing, elapsedMs: Date.now() - startedAt, sourceProductUrl: sourceUrl };
+    } catch (error) {
+      return {
+        ok: true,
+        partial: true,
+        partialError: error.message || String(error),
+        ...basePricing,
+        originalBlackPrice: null,
+        maxPurchaseCostAt18Pct: null,
+        calculation: null,
+        elapsedMs: Date.now() - startedAt,
+        sourceProductUrl: sourceUrl,
+      };
     }
-    if (!(blackPrice > 0)) throw new Error("未读取到有效绿标来源商品的原始黑标价");
-    const pricing = taskPricingCore.buildTaskPricing(task, snapshot, blackPrice, sourceUrl);
-    return { ok: true, ...pricing, elapsedMs: Date.now() - startedAt, sourceProductUrl: sourceUrl };
   } finally {
     if (tab?.id) {
       temporaryProductTabs.delete(tab.id);

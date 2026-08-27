@@ -111,7 +111,7 @@
     };
   }
 
-  function buildTaskPricing(task, snapshot, originalBlackPrice, blackPriceSourceUrl) {
+  function buildTaskPricingBase(task, snapshot, blackPriceSourceUrl) {
     const pagePrice = number(snapshot?.pageGreenPrice);
     const competitorPrice = number(snapshot?.minCompetitorPrice);
     const source = snapshot?.source || chooseSource(pagePrice, competitorPrice);
@@ -126,20 +126,10 @@
     if (!(pagePrice > 0)) missing.push("当前页面绿标价");
     if (snapshot?.product?.erpLoaded !== true || snapshot?.product?.competitorPriceResolved !== true) missing.push("当前毛子ERP数据");
     if (source === "none" || !(effectiveGreenPrice > 0)) missing.push("有效绿标价");
-    if (!(number(originalBlackPrice) > 0)) missing.push("同源原始黑标价");
-    else if (number(originalBlackPrice) < effectiveGreenPrice - 0.01) missing.push("黑标价低于同源绿标价");
     if (!(commission > 0)) missing.push("佣金档位");
     if (!(lengthCm > 0 && widthCm > 0 && heightCm > 0 && weightKg > 0)) missing.push("尺寸重量");
     if (!(freight.price > 0)) missing.push("国际运费");
     if (missing.length) throw new Error(`核价字段不完整：${missing.join("、")}`);
-    const calculation = calculateMaxPurchaseCost({
-      greenPrice: effectiveGreenPrice,
-      blackPrice: originalBlackPrice,
-      commission,
-      freight: freight.price,
-      targetMargin: 0.18,
-    });
-    if (!calculation) throw new Error("无法计算18%利润率最高采购成本");
     return {
       pagePrice: round2(pagePrice),
       competitorPrice: competitorPrice > 0 ? round2(competitorPrice) : null,
@@ -150,11 +140,30 @@
       widthMm: round2(widthCm * 10),
       heightMm: round2(heightCm * 10),
       weightG: round2(weightKg * 1000),
-      originalBlackPrice: round2(originalBlackPrice),
       blackPriceSource: source,
       blackPriceSourceUrl: String(blackPriceSourceUrl || snapshot?.sourceUrl || task?.ozon?.productUrl || ""),
       internationalFreight: freight.price,
       freightRoute: freight.route,
+    };
+  }
+
+  function buildTaskPricing(task, snapshot, originalBlackPrice, blackPriceSourceUrl) {
+    const base = buildTaskPricingBase(task, snapshot, blackPriceSourceUrl);
+    const missing = [];
+    if (!(number(originalBlackPrice) > 0)) missing.push("同源原始黑标价");
+    else if (number(originalBlackPrice) < base.effectiveGreenPrice - 0.01) missing.push("黑标价低于同源绿标价");
+    if (missing.length) throw new Error(`核价字段不完整：${missing.join("、")}`);
+    const calculation = calculateMaxPurchaseCost({
+      greenPrice: base.effectiveGreenPrice,
+      blackPrice: originalBlackPrice,
+      commission: base.selectedCommission,
+      freight: base.internationalFreight,
+      targetMargin: 0.18,
+    });
+    if (!calculation) throw new Error("无法计算18%利润率最高采购成本");
+    return {
+      ...base,
+      originalBlackPrice: round2(originalBlackPrice),
       maxPurchaseCostAt18Pct: calculation.maxPurchaseCost,
       calculation,
     };
@@ -162,6 +171,7 @@
 
   return {
     buildTaskPricing,
+    buildTaskPricingBase,
     calculateFreight,
     calculateMaxPurchaseCost,
     chooseSource,

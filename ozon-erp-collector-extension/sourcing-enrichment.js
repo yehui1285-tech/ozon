@@ -6,7 +6,7 @@ const downloadButton = document.getElementById("download");
 const statusElement = document.getElementById("status");
 const rowsElement = document.getElementById("taskRows");
 const SAVED_QUEUE_KEY = "ozonSourcingEnrichmentQueueV1";
-const PRICING_METHOD_VERSION = "live-qualified-v4";
+const PRICING_METHOD_VERSION = "live-partial-green-v5";
 
 let queue = null;
 let sourceFileName = "sourcing-queue.json";
@@ -56,7 +56,28 @@ function syncTaskStage(task) {
   task.status = ready ? "pending_pinduoduo_search" : "pending_ozon_enrichment";
 }
 
-function clearTaskPricingValues(task) {
+function clearTaskPricingValues(task, { preserveLiveBase = false } = {}) {
+  const liveBase = preserveLiveBase && task?.enrichment?.ozonPricingMethodVersion === PRICING_METHOD_VERSION
+    ? {
+        pagePrice: task.ozon?.pagePrice,
+        competitorPrice: task.ozon?.competitorPrice,
+        effectiveGreenPrice: task.ozon?.effectiveGreenPrice,
+        commissions: task.ozon?.commissions,
+        selectedCommission: task.ozon?.selectedCommission,
+        lengthMm: task.ozon?.lengthMm,
+        widthMm: task.ozon?.widthMm,
+        heightMm: task.ozon?.heightMm,
+        weightG: task.ozon?.weightG,
+      }
+    : null;
+  const liveEnrichmentBase = liveBase
+    ? {
+        blackPriceSource: task.enrichment?.blackPriceSource,
+        blackPriceSourceUrl: task.enrichment?.blackPriceSourceUrl,
+        internationalFreight: task.enrichment?.internationalFreight,
+        freightRoute: task.enrichment?.freightRoute,
+      }
+    : null;
   Object.assign(task.ozon, {
     pagePrice: null,
     competitorPrice: null,
@@ -67,6 +88,7 @@ function clearTaskPricingValues(task) {
     widthMm: null,
     heightMm: null,
     weightG: null,
+    ...(liveBase || {}),
   });
   Object.assign(task.enrichment, {
     originalBlackPrice: null,
@@ -76,6 +98,7 @@ function clearTaskPricingValues(task) {
     freightRoute: null,
     maxPurchaseCostAt18Pct: null,
     pricingCalculation: null,
+    ...(liveEnrichmentBase || {}),
   });
 }
 
@@ -204,7 +227,7 @@ async function loadQueue(file) {
     if (!task.enrichment.mainImageUrl && task.enrichment.mainImageStatus === "running") task.enrichment.mainImageStatus = "pending";
     if (task.enrichment.ozonPricingStatus === "running") task.enrichment.ozonPricingStatus = "pending";
     invalidateLegacyPricing(task);
-    if (!["completed", "disqualified"].includes(pricingState(task))) clearTaskPricingValues(task);
+    if (!["completed", "disqualified"].includes(pricingState(task))) clearTaskPricingValues(task, { preserveLiveBase: true });
     syncTaskStage(task);
   });
   queue = parsed;
@@ -242,7 +265,7 @@ async function restoreQueue() {
     if (!task.enrichment.mainImageUrl && task.enrichment.mainImageStatus === "running") task.enrichment.mainImageStatus = "pending";
     if (task.enrichment.ozonPricingStatus === "running") task.enrichment.ozonPricingStatus = "pending";
     invalidateLegacyPricing(task);
-    if (!["completed", "disqualified"].includes(pricingState(task))) clearTaskPricingValues(task);
+    if (!["completed", "disqualified"].includes(pricingState(task))) clearTaskPricingValues(task, { preserveLiveBase: true });
     syncTaskStage(task);
   });
   imageButton.disabled = false;
@@ -348,18 +371,18 @@ async function runPricingEnrichment() {
         weightG: response.weightG,
       });
       Object.assign(task.enrichment, {
-        ozonPricingStatus: "completed",
+        ozonPricingStatus: response.partial ? "failed" : "completed",
         ozonPricingMethodVersion: PRICING_METHOD_VERSION,
-        ozonPricingError: null,
+        ozonPricingError: response.partial ? (response.partialError || "黑标价读取失败，已保留有效绿标价") : null,
         ozonPricingElapsedMs: Number(response.elapsedMs || 0),
         ozonPricingFetchedAt: new Date().toISOString(),
-        originalBlackPrice: response.originalBlackPrice,
+        originalBlackPrice: response.partial ? null : response.originalBlackPrice,
         blackPriceSource: response.blackPriceSource,
         blackPriceSourceUrl: response.blackPriceSourceUrl,
         internationalFreight: response.internationalFreight,
         freightRoute: response.freightRoute,
-        maxPurchaseCostAt18Pct: response.maxPurchaseCostAt18Pct,
-        pricingCalculation: response.calculation,
+        maxPurchaseCostAt18Pct: response.partial ? null : response.maxPurchaseCostAt18Pct,
+        pricingCalculation: response.partial ? null : response.calculation,
       });
       }
     } catch (error) {

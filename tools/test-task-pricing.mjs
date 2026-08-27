@@ -56,6 +56,27 @@ assert.ok(result.maxPurchaseCostAt18Pct > 0);
 assert.equal(result.selectedCommission, 17);
 assert.equal(result.lengthMm, 800);
 
+const partialBase = core.buildTaskPricingBase(task, {
+  source: "competitor",
+  sourceUrl: "https://www.ozon.ru/product/source-5382620664/",
+  pageGreenPrice: 350.9,
+  minCompetitorPrice: 253.85,
+  product: {
+    erpLoaded: true,
+    selectionQualified: true,
+    competitorPriceResolved: true,
+    commissionOptions: [12, 17, 17],
+    lengthCm: 80,
+    widthCm: 12,
+    heightCm: 12,
+    weightKg: 2.1,
+  },
+}, "https://www.ozon.ru/product/source-5382620664/");
+assert.equal(partialBase.effectiveGreenPrice, 253.85);
+assert.equal(partialBase.blackPriceSource, "competitor");
+assert.equal(partialBase.internationalFreight, 80.61);
+assert.equal(partialBase.originalBlackPrice, undefined);
+
 assert.throws(() => core.buildTaskPricing(task, {
   source: "competitor",
   sourceUrl: "https://www.ozon.ru/product/source-5382620664/",
@@ -132,6 +153,8 @@ assert.doesNotMatch(backgroundSource, /tab\.status === "complete" && \(!targetSk
 assert.match(backgroundSource, /任务商品页/);
 assert.match(backgroundSource, /最低跟卖商品页/);
 assert.match(backgroundSource, /snapshot\.disqualified/);
+assert.match(backgroundSource, /partial:\s*true/);
+assert.match(backgroundSource, /buildTaskPricingBase/);
 assert.match(backgroundSource, /try\s*\{\s*await waitForOzonProductNavigation[\s\S]*?await injectTaskPricingCollector/);
 assert.match(contentSource, /collectOzonTaskPricingSnapshot/);
 assert.match(contentSource, /findLowestCompetitorProduct/);
@@ -149,10 +172,13 @@ assert.match(enrichmentSource, /maxPurchaseCostAt18Pct/);
 assert.match(enrichmentSource, /ozonSourcingEnrichmentQueueV1/);
 assert.match(enrichmentSource, /await persistQueue\(\)/);
 assert.match(enrichmentSource, /mainImageState\(task\) === "completed" && pricingState\(task\) === "completed"/);
-assert.match(enrichmentSource, /live-qualified-v4/);
+assert.match(enrichmentSource, /live-partial-green-v5/);
+assert.match(enrichmentSource, /response\.partial \? "failed" : "completed"/);
+assert.match(enrichmentSource, /preserveLiveBase:\s*true/);
+assert.match(enrichmentSource, /liveEnrichmentBase/);
 assert.match(enrichmentSource, /rejected_not_qualified/);
 assert.match(enrichmentSource, /pricingDisqualified/);
-assert.match(enrichmentSource, /function clearTaskPricingValues\(task\)/);
+assert.match(enrichmentSource, /function clearTaskPricingValues\(task,/);
 assert.match(enrichmentSource, /clearTaskPricingValues\(task\);\s*task\.enrichment\.ozonPricingStatus = "running"/);
 assert.match(enrichmentSource, /旧版核价结果已作废/);
 

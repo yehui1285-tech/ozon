@@ -46,7 +46,7 @@ const popupSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/pop
 const enrichmentSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/sourcing-enrichment.js", import.meta.url), "utf8");
 const manifest = JSON.parse(fs.readFileSync(new URL("../ozon-erp-collector-extension/manifest.json", import.meta.url), "utf8"));
 
-assert.equal(manifest.version, "0.6.20");
+assert.equal(manifest.version, "0.6.21");
 assert.match(backgroundSource, /probeMainImageCandidates/);
 assert.match(backgroundSource, /tab-reliable/);
 assert.doesNotMatch(backgroundSource, /readMainImageFromMetadata/);
