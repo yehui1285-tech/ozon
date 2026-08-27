@@ -263,6 +263,39 @@ async function readOriginalBlackPriceAsSoonAsAvailable(tabId, timeoutMs = 8000) 
   return { blackPrice: 0, singlePrice: false, sourceGreenPrice: 0 };
 }
 
+async function readOriginalBlackPriceWithForegroundWakeup(tabId, timeoutMs = 6000) {
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  if (!tab) return { blackPrice: 0, singlePrice: false, sourceGreenPrice: 0 };
+  const [previousActiveTab] = tab.windowId
+    ? await chrome.tabs.query({ active: true, windowId: tab.windowId })
+    : [];
+  let activatedForWakeup = false;
+  try {
+    if (!tab.active) {
+      await chrome.tabs.update(tabId, { active: true });
+      activatedForWakeup = true;
+      await wait(120);
+    }
+    return await readOriginalBlackPriceAsSoonAsAvailable(tabId, timeoutMs);
+  } finally {
+    if (activatedForWakeup && previousActiveTab?.id && previousActiveTab.id !== tabId) {
+      const sourceTab = await chrome.tabs.get(tabId).catch(() => null);
+      if (sourceTab?.active) {
+        await chrome.tabs.update(previousActiveTab.id, { active: true }).catch(() => null);
+      }
+    }
+  }
+}
+
+async function readOriginalBlackPriceWithQuickWakeup(tabId, backgroundTimeoutMs = 6000, foregroundTimeoutMs = 6000) {
+  const backgroundResult = await readOriginalBlackPriceAsSoonAsAvailable(tabId, backgroundTimeoutMs);
+  if (Number(backgroundResult.blackPrice || 0) > 0) {
+    return { ...backgroundResult, wakeupUsed: false };
+  }
+  const foregroundResult = await readOriginalBlackPriceWithForegroundWakeup(tabId, foregroundTimeoutMs);
+  return { ...foregroundResult, wakeupUsed: true };
+}
+
 async function readBlackPriceFromProductUrl(rawUrl) {
   const url = blackPriceCore.normalizeProductUrl(rawUrl);
   if (!url) throw new Error("跟卖商品链接无效，黑标价已留空。");
@@ -271,9 +304,9 @@ async function readBlackPriceFromProductUrl(rawUrl) {
     tab = await chrome.tabs.create({ url, active: false });
     temporaryProductTabs.add(tab.id);
     await chrome.tabs.update(tab.id, { autoDiscardable: false }).catch(() => null);
-    const sourcePricing = await readOriginalBlackPriceAsSoonAsAvailable(tab.id, 8000);
+    const sourcePricing = await readOriginalBlackPriceWithQuickWakeup(tab.id, 6000, 6000);
     const blackPrice = Number(sourcePricing.blackPrice || 0);
-    if (!(blackPrice > 0)) throw new Error("8秒内未读取到跟卖商品页原始黑价，已保留手工填写。");
+    if (!(blackPrice > 0)) throw new Error("后台快速读取及前台短暂唤醒后仍未读取到跟卖商品页原始黑价，已保留手工填写。");
     return {
       ok: true,
       blackPrice,
@@ -449,7 +482,7 @@ async function readOzonTaskPricing(rawTask) {
       if (snapshot.source === "competitor") {
         await chrome.tabs.update(tab.id, { url: sourceUrl, active: false });
         await waitForOzonProductNavigation(tab.id, productSkuFromUrl(sourceUrl), 20000, "最低跟卖商品页");
-        const sourcePricing = await readOriginalBlackPriceAsSoonAsAvailable(tab.id, 8000);
+        const sourcePricing = await readOriginalBlackPriceWithQuickWakeup(tab.id, 6000, 6000);
         blackPrice = Number(sourcePricing.blackPrice || 0);
         if (sourcePricing.singlePrice && Number(sourcePricing.sourceGreenPrice || 0) > 0) {
           pricingSnapshot = {

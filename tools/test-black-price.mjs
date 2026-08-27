@@ -53,7 +53,7 @@ const contentSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/c
 const backgroundSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/background.js", import.meta.url), "utf8");
 const manifest = JSON.parse(fs.readFileSync(new URL("../ozon-erp-collector-extension/manifest.json", import.meta.url), "utf8"));
 
-assert.equal(manifest.version, "0.6.22");
+assert.equal(manifest.version, "0.6.23");
 assert.match(contentSource, /span\.pdp_h0b/);
 assert.match(contentSource, /#mz-black-price-tag/);
 assert.match(contentSource, /readBlackPriceFromProductUrl/);
@@ -63,7 +63,13 @@ assert.match(backgroundSource, /importScripts\("black-price-core\.js", "main-ima
 assert.match(backgroundSource, /files: \["black-price-core\.js", "content\.js", "store-scanner-core\.js", "store-scanner\.js"\]/);
 assert.match(backgroundSource, /message\?\.type === "readBlackPriceFromProductUrl"/);
 assert.match(backgroundSource, /chrome\.tabs\.remove\(tab\.id\)/);
-assert.match(backgroundSource, /readOriginalBlackPriceAsSoonAsAvailable\(tab\.id, 8000\)/);
+assert.match(backgroundSource, /readOriginalBlackPriceWithQuickWakeup\(tab\.id, 6000, 6000\)/);
+assert.match(backgroundSource, /chrome\.tabs\.query\(\{ active: true, windowId: tab\.windowId \}\)/);
+assert.match(backgroundSource, /chrome\.tabs\.update\(tabId, \{ active: true \}\)/);
+assert.match(backgroundSource, /if \(sourceTab\?\.active\)/);
+assert.match(backgroundSource, /wakeupUsed: false/);
+assert.match(backgroundSource, /wakeupUsed: true/);
+assert.doesNotMatch(backgroundSource, /chrome\.windows\.update\([^)]*focused:\s*true/);
 assert.match(backgroundSource, /uniquePrices\.length === 1/);
 assert.match(backgroundSource, /singlePrice:\s*true/);
 assert.match(backgroundSource, /sourceGreenPrice/);
