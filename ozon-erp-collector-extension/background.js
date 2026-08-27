@@ -58,6 +58,41 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function productSkuFromUrl(value) {
+  const normalized = blackPriceCore.normalizeProductUrl(value);
+  if (!normalized) return "";
+  try {
+    return new URL(normalized).pathname.match(/-(\d+)\/?$/)?.[1] || "";
+  } catch {
+    return "";
+  }
+}
+
+async function waitForOzonProductNavigation(tabId, expectedSku, timeoutMs = 20000, label = "Ozon商品页") {
+  const targetSku = String(expectedSku || "").trim();
+  const startedAt = Date.now();
+  let lastUrl = "";
+  let lastSku = "";
+  while (Date.now() - startedAt < timeoutMs) {
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    if (!tab?.id) throw new Error(`${label}在加载完成前被关闭。`);
+    lastUrl = String(tab.url || "");
+    lastSku = productSkuFromUrl(lastUrl);
+    if (!targetSku || lastSku === targetSku) {
+      const probe = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => ({ href: location.href, readyState: document.readyState }),
+      }).catch(() => null);
+      const documentState = probe?.[0]?.result || {};
+      const documentSku = productSkuFromUrl(documentState.href);
+      if ((!targetSku || documentSku === targetSku) && ["interactive", "complete"].includes(documentState.readyState)) return tab;
+    }
+    await wait(150);
+  }
+  const observed = lastSku ? `，当前地址SKU ${lastSku}` : "";
+  throw new Error(`${label}未在${Math.ceil(timeoutMs / 1000)}秒内进入任务SKU ${targetSku || "-"}${observed}`);
+}
+
 function waitForTabLoaded(tabId, timeoutMs = 15000, label = "核价页") {
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -361,6 +396,7 @@ async function readOzonTaskPricing(rawTask) {
     tab = await chrome.tabs.create({ url, active: false });
     temporaryProductTabs.add(tab.id);
     await chrome.tabs.update(tab.id, { autoDiscardable: false }).catch(() => null);
+    await waitForOzonProductNavigation(tab.id, task?.ozon?.sku, 20000, "任务商品页");
     const snapshotResponse = await collectTaskPricingSnapshot(tab.id, task);
     if (!snapshotResponse?.ok) throw new Error(snapshotResponse?.error || "Ozon商品页核价信息读取失败");
     const snapshot = snapshotResponse.snapshot || {};
@@ -369,6 +405,7 @@ async function readOzonTaskPricing(rawTask) {
     let blackPrice = Number(snapshot.currentBlackPrice || 0);
     if (snapshot.source === "competitor") {
       await chrome.tabs.update(tab.id, { url: sourceUrl, active: false });
+      await waitForOzonProductNavigation(tab.id, productSkuFromUrl(sourceUrl), 20000, "最低跟卖商品页");
       blackPrice = await readOriginalBlackPriceAsSoonAsAvailable(tab.id, 8000);
     } else if (!(blackPrice > 0)) {
       blackPrice = await readOriginalBlackPriceAsSoonAsAvailable(tab.id, 5000);

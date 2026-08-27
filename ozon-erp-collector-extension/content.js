@@ -483,9 +483,16 @@ async function collectOzonTaskPricingSnapshot(hints = {}) {
   let source = "none";
   let stableFingerprint = "";
   let stableCount = 0;
+  let lastObservedSku = "";
   while (Date.now() - startedAt < 15000) {
     product = collectProduct({ enrichStoreRecord: false });
-    if (expectedSku && product.sku && product.sku !== expectedSku) throw new Error(`商品SKU不一致：任务${expectedSku}，页面${product.sku}`);
+    lastObservedSku = String(product.sku || "").trim();
+    if (expectedSku && lastObservedSku && lastObservedSku !== expectedSku) {
+      stableCount = 0;
+      stableFingerprint = "";
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      continue;
+    }
     pagePrice = Number(product.pageGreenPrice || 0);
     competitorPrice = Number(product.minCompetitorPrice || 0);
     source = blackPriceCore?.chooseSource(pagePrice, competitorPrice) || "none";
@@ -521,6 +528,9 @@ async function collectOzonTaskPricingSnapshot(hints = {}) {
   if (!(product?.commissionOptions?.length >= 3)) missing.push("当前佣金档位");
   if (!(product?.lengthCm > 0 && product?.widthCm > 0 && product?.heightCm > 0)) missing.push("当前尺寸");
   if (!(product?.weightKg > 0)) missing.push("当前重量");
+  if (expectedSku && lastObservedSku && lastObservedSku !== expectedSku) {
+    throw new Error(`15秒内未切换到任务商品：任务${expectedSku}，页面${lastObservedSku}`);
+  }
   if (stableCount < 3 || source === "none") throw new Error(`15秒内当前页面数据未完整稳定：${missing.join("、") || "价格或ERP字段仍在变化"}`);
   let sourceUrl = location.href;
   let currentBlackPrice = 0;

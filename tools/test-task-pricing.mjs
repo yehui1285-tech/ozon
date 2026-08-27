@@ -106,11 +106,18 @@ const enrichmentSource = fs.readFileSync(new URL("../ozon-erp-collector-extensio
 assert.match(backgroundSource, /readOzonTaskPricing/);
 assert.match(backgroundSource, /task-pricing-core\.js/);
 assert.match(backgroundSource, /await chrome\.tabs\.update\(tab\.id, \{ url: sourceUrl/);
+assert.match(backgroundSource, /waitForOzonProductNavigation/);
+assert.match(backgroundSource, /productSkuFromUrl/);
+assert.match(backgroundSource, /document\.readyState/);
+assert.doesNotMatch(backgroundSource, /tab\.status === "complete" && \(!targetSku/);
+assert.match(backgroundSource, /任务商品页/);
+assert.match(backgroundSource, /最低跟卖商品页/);
 assert.match(contentSource, /collectOzonTaskPricingSnapshot/);
 assert.match(contentSource, /findLowestCompetitorProduct/);
 assert.match(contentSource, /stableCount >= 3/);
 assert.match(contentSource, /competitorPriceResolved/);
 assert.match(contentSource, /collectProduct\(\{ enrichStoreRecord: false \}\)/);
+assert.match(contentSource, /15秒内未切换到任务商品/);
 assert.doesNotMatch(contentSource, /num\(hints\.(?:pagePrice|competitorPrice)\)/);
 assert.doesNotMatch(pricingSource, /task\?\.ozon\?\.(?:pagePrice|competitorPrice|commissions|selectedCommission|lengthMm|weightG)/);
 assert.match(enrichmentSource, /pending_pinduoduo_search/);
@@ -118,7 +125,7 @@ assert.match(enrichmentSource, /maxPurchaseCostAt18Pct/);
 assert.match(enrichmentSource, /ozonSourcingEnrichmentQueueV1/);
 assert.match(enrichmentSource, /await persistQueue\(\)/);
 assert.match(enrichmentSource, /mainImageState\(task\) === "completed" && pricingState\(task\) === "completed"/);
-assert.match(enrichmentSource, /live-stable-v2/);
+assert.match(enrichmentSource, /live-stable-v3/);
 assert.match(enrichmentSource, /旧版核价结果已作废/);
 
 console.log("Ozon task pricing enrichment tests passed.");
