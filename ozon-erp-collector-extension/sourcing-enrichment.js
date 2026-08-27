@@ -6,7 +6,7 @@ const downloadButton = document.getElementById("download");
 const statusElement = document.getElementById("status");
 const rowsElement = document.getElementById("taskRows");
 const SAVED_QUEUE_KEY = "ozonSourcingEnrichmentQueueV1";
-const PRICING_METHOD_VERSION = "live-foreground-wakeup-v7";
+const PRICING_METHOD_VERSION = "live-selection-wakeup-v8";
 
 let queue = null;
 let sourceFileName = "sourcing-queue.json";
@@ -103,12 +103,13 @@ function clearTaskPricingValues(task, { preserveLiveBase = false } = {}) {
 }
 
 function invalidateLegacyPricing(task) {
-  if (task?.enrichment?.ozonPricingStatus !== "completed"
+  if (!["completed", "disqualified"].includes(task?.enrichment?.ozonPricingStatus)
     || task.enrichment.ozonPricingMethodVersion === PRICING_METHOD_VERSION) return;
   clearTaskPricingValues(task);
+  if (task.ozon && typeof task.ozon === "object") task.ozon.selectionQualified = null;
   Object.assign(task.enrichment, {
     ozonPricingStatus: "pending",
-    ozonPricingError: "旧版核价结果已作废，需要按当前页面重新读取",
+    ozonPricingError: "旧版核价或资格结论已作废，需要按当前页面重新读取",
   });
 }
 
@@ -347,7 +348,7 @@ async function runPricingEnrichment() {
         Object.assign(task.enrichment, {
           ozonPricingStatus: "disqualified",
           ozonPricingMethodVersion: PRICING_METHOD_VERSION,
-          ozonPricingError: response.disqualificationReason || "产品不合要求：未发现“选品标签：符合要求”",
+          ozonPricingError: response.disqualificationReason || "产品不合要求：页面明确显示非符合要求的选品标签",
           ozonPricingElapsedMs: Number(response.elapsedMs || 0),
           ozonPricingFetchedAt: new Date().toISOString(),
           originalBlackPrice: null,

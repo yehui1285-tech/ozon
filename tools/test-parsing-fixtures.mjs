@@ -25,7 +25,7 @@ function extractFunction(source, name) {
   return match[0];
 }
 
-const detailFunctionNames = ["num", "first", "normalizeText", "parsePercents", "parseDimensions", "parseWeight", "saleValue", "hasErpPanelData", "hasQualifiedSelection"];
+const detailFunctionNames = ["num", "first", "normalizeText", "parsePercents", "parseDimensions", "parseWeight", "saleValue", "hasErpPanelData", "hasQualifiedSelection", "selectionQualificationState"];
 const detailSource = detailFunctionNames.map((name) => extractFunction(contentSource, name)).join("\n");
 const detailContext = {};
 vm.runInNewContext(
@@ -98,6 +98,9 @@ const fixtures = [
   { fn: "hasErpPanelData", input: "rFBS佣金： - - - SKU：4533215810 月销量：暂无数据 发货模式：暂无数据 长 宽 高：暂无数据 重 量：暂无数据 跟卖列表：xianfa等5个卖家 跟卖最低价：¥124.19", expect: true, note: "真实新版ERP面板无标题文字" },
   { fn: "hasQualifiedSelection", input: "rFBS佣金： - - - SKU：4533215810 跟卖最低价：¥124.19", expect: false, note: "真实无选品标签商品" },
   { fn: "hasQualifiedSelection", input: "选品标签：符合要求 rFBS佣金： 12% 17% 17% SKU：4379290049 跟卖最低价：¥266.44", expect: true, note: "明确符合要求标签" },
+  { fn: "selectionQualificationState", input: "rFBS佣金： 12% 17% 17% SKU：4702633521 跟卖最低价：¥475.60", expect: "pending", note: "标签尚未渲染时保持等待，不得误判" },
+  { fn: "selectionQualificationState", input: "选品标签：符合要求 rFBS佣金： 12% 17% 17%", expect: "qualified", note: "明确符合要求" },
+  { fn: "selectionQualificationState", input: "选品标签：不符合要求 rFBS佣金： - - -", expect: "rejected", note: "只有明确负向标签才拒绝" },
   { fn: "hasErpPanelData", input: "Ozon商品 SKU：4379290049", expect: false, note: "普通页面SKU不是ERP面板" },
 
   // ── competitorState：跟卖最低价（中英文冒号 / 货币 / 无价格）──

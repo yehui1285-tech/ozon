@@ -263,9 +263,9 @@ async function readOriginalBlackPriceAsSoonAsAvailable(tabId, timeoutMs = 8000) 
   return { blackPrice: 0, singlePrice: false, sourceGreenPrice: 0 };
 }
 
-async function readOriginalBlackPriceWithForegroundWakeup(tabId, timeoutMs = 6000) {
+async function runWithForegroundTabWakeup(tabId, operation) {
   const tab = await chrome.tabs.get(tabId).catch(() => null);
-  if (!tab) return { blackPrice: 0, singlePrice: false, sourceGreenPrice: 0 };
+  if (!tab) throw new Error("需要唤醒的Ozon商品页已经关闭");
   const [previousActiveTab] = tab.windowId
     ? await chrome.tabs.query({ active: true, windowId: tab.windowId })
     : [];
@@ -276,7 +276,7 @@ async function readOriginalBlackPriceWithForegroundWakeup(tabId, timeoutMs = 600
       activatedForWakeup = true;
       await wait(120);
     }
-    return await readOriginalBlackPriceAsSoonAsAvailable(tabId, timeoutMs);
+    return await operation();
   } finally {
     if (activatedForWakeup && previousActiveTab?.id && previousActiveTab.id !== tabId) {
       const sourceTab = await chrome.tabs.get(tabId).catch(() => null);
@@ -285,6 +285,13 @@ async function readOriginalBlackPriceWithForegroundWakeup(tabId, timeoutMs = 600
       }
     }
   }
+}
+
+async function readOriginalBlackPriceWithForegroundWakeup(tabId, timeoutMs = 6000) {
+  return runWithForegroundTabWakeup(
+    tabId,
+    () => readOriginalBlackPriceAsSoonAsAvailable(tabId, timeoutMs),
+  );
 }
 
 async function readOriginalBlackPriceWithQuickWakeup(tabId, backgroundTimeoutMs = 6000, foregroundTimeoutMs = 6000) {
@@ -431,7 +438,7 @@ async function injectTaskPricingCollector(tabId, timeoutMs = 5000) {
   throw new Error("Ozon商品页核价采集器未能启动");
 }
 
-async function collectTaskPricingSnapshot(tabId, task) {
+async function collectTaskPricingSnapshot(tabId, task, timeoutMs = 6000) {
   let lastError = null;
   for (let attempt = 0; attempt < 4; attempt += 1) {
     try {
@@ -441,6 +448,7 @@ async function collectTaskPricingSnapshot(tabId, task) {
         type: "collectOzonTaskPricingSnapshot",
         hints: {
           sku: String(task?.ozon?.sku || ""),
+          timeoutMs,
         },
       });
     } catch (error) {
@@ -462,14 +470,23 @@ async function readOzonTaskPricing(rawTask) {
     temporaryProductTabs.add(tab.id);
     await chrome.tabs.update(tab.id, { autoDiscardable: false }).catch(() => null);
     await waitForOzonProductNavigation(tab.id, task?.ozon?.sku, 20000, "任务商品页");
-    const snapshotResponse = await collectTaskPricingSnapshot(tab.id, task);
+    let snapshotResponse = await collectTaskPricingSnapshot(tab.id, task, 6000);
+    if (snapshotResponse?.ok && snapshotResponse.snapshot?.selectionPending) {
+      snapshotResponse = await runWithForegroundTabWakeup(
+        tab.id,
+        () => collectTaskPricingSnapshot(tab.id, task, 6000),
+      );
+    }
     if (!snapshotResponse?.ok) throw new Error(snapshotResponse?.error || "Ozon商品页核价信息读取失败");
     const snapshot = snapshotResponse.snapshot || {};
+    if (snapshot.selectionPending) {
+      throw new Error(snapshot.selectionPendingReason || "选品标签在后台等待及前台唤醒后仍未加载，可稍后重试");
+    }
     if (snapshot.disqualified) {
       return {
         ok: true,
         disqualified: true,
-        disqualificationReason: snapshot.disqualificationReason || "产品不合要求：未发现“选品标签：符合要求”",
+        disqualificationReason: snapshot.disqualificationReason || "产品不合要求：页面明确显示非符合要求的选品标签",
         elapsedMs: Date.now() - startedAt,
       };
     }
