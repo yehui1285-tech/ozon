@@ -441,21 +441,38 @@ async function injectTaskPricingCollector(tabId, timeoutMs = 5000) {
 async function collectTaskPricingSnapshot(tabId, task, timeoutMs = 6000) {
   const trustedQualified = task?.qualification?.status === "qualified"
     && task?.qualification?.source === "batch_store_scan";
+  const snapshotFallback = trustedQualified ? taskPricingCore.trustedBatchScanSnapshot(task) : null;
   let lastError = null;
   for (let attempt = 0; attempt < 4; attempt += 1) {
     try {
       await waitForOzonProductNavigation(tabId, task?.ozon?.sku, 20000, "任务商品页");
       await injectTaskPricingCollector(tabId);
-      return await chrome.tabs.sendMessage(tabId, {
+      const response = await chrome.tabs.sendMessage(tabId, {
         type: "collectOzonTaskPricingSnapshot",
         hints: {
           sku: String(task?.ozon?.sku || ""),
           timeoutMs,
           trustedQualified,
+          snapshotFallback,
         },
       });
+      if (!response?.ok) throw new Error(response?.error || "Ozon商品页核价信息读取失败");
+      return response;
     } catch (error) {
       lastError = error;
+      if (attempt < 3 && /未切换到任务商品|未在\d+秒内进入任务SKU/.test(String(error?.message || error))) {
+        const taskUrl = blackPriceCore.normalizeProductUrl(task?.ozon?.productUrl);
+        if (taskUrl) {
+          const currentTab = await chrome.tabs.get(tabId).catch(() => null);
+          if (productSkuFromUrl(currentTab?.url) === String(task?.ozon?.sku || "")) {
+            await chrome.tabs.reload(tabId);
+          } else {
+            await chrome.tabs.update(tabId, { url: taskUrl, active: false });
+          }
+          await wait(350);
+          await waitForOzonProductNavigation(tabId, task?.ozon?.sku, 20000, "任务商品页");
+        }
+      }
       await wait(200);
     }
   }

@@ -51,6 +51,31 @@
     return number(greenPrice) <= 600 ? values[1] || 0 : values[2] || 0;
   }
 
+  function trustedBatchScanSnapshot(task) {
+    if (task?.qualification?.status !== "qualified" || task?.qualification?.source !== "batch_store_scan") return null;
+    const ozon = task?.ozon || {};
+    const stored = ozon.batchScanSnapshot && typeof ozon.batchScanSnapshot === "object"
+      ? ozon.batchScanSnapshot
+      : ozon;
+    const sku = String(stored.sku || ozon.sku || "").trim();
+    if (!sku || sku !== String(ozon.sku || "").trim()) return null;
+    const commissionOptions = (Array.isArray(stored.commissions) ? stored.commissions : [])
+      .map(number)
+      .filter((value) => value > 0);
+    const lengthCm = number(stored.lengthMm) / 10;
+    const widthCm = number(stored.widthMm) / 10;
+    const heightCm = number(stored.heightMm) / 10;
+    const weightKg = number(stored.weightG) / 1000;
+    return {
+      sku,
+      commissionOptions: commissionOptions.length >= 3 ? commissionOptions.slice(0, 3) : [],
+      lengthCm: lengthCm > 0 ? lengthCm : 0,
+      widthCm: widthCm > 0 ? widthCm : 0,
+      heightCm: heightCm > 0 ? heightCm : 0,
+      weightKg: weightKg > 0 ? weightKg : 0,
+    };
+  }
+
   function saleValue(greenPrice) {
     const price = number(greenPrice);
     if (price < 135) return 200;
@@ -144,6 +169,9 @@
       blackPriceSourceUrl: String(blackPriceSourceUrl || snapshot?.sourceUrl || task?.ozon?.productUrl || ""),
       internationalFreight: freight.price,
       freightRoute: freight.route,
+      snapshotFallbackFields: Array.isArray(snapshot?.product?.snapshotFallbackFields)
+        ? [...snapshot.product.snapshotFallbackFields]
+        : [],
     };
   }
 
@@ -177,5 +205,6 @@
     chooseSource,
     number,
     selectedCommission,
+    trustedBatchScanSnapshot,
   };
 });

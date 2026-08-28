@@ -306,7 +306,7 @@ assert.match(batchHtmlSource, /id="clearBatch">清空当前批次/);
 assert.match(batchHtmlSource, /id="exportJson">导出找品任务 JSON/);
 
 const manifest = JSON.parse(fs.readFileSync(new URL("../ozon-erp-collector-extension/manifest.json", import.meta.url), "utf8"));
-assert.equal(manifest.version, "0.6.26");
+assert.equal(manifest.version, "0.6.27");
 assert.ok(manifest.permissions.includes("alarms"));
 assert.ok(manifest.permissions.includes("unlimitedStorage"));
 

@@ -7,7 +7,7 @@ const downloadButton = document.getElementById("download");
 const statusElement = document.getElementById("status");
 const rowsElement = document.getElementById("taskRows");
 const SAVED_QUEUE_KEY = "ozonSourcingEnrichmentQueueV1";
-const PRICING_METHOD_VERSION = "live-trusted-strict-price-v9";
+const PRICING_METHOD_VERSION = "live-trusted-snapshot-fallback-v10";
 
 let queue = null;
 let sourceFileName = "sourcing-queue.json";
@@ -35,6 +35,24 @@ function mainImageState(task) {
 
 function hasFiniteValue(value) {
   return value !== null && value !== undefined && String(value).trim() !== "" && Number.isFinite(Number(value));
+}
+
+function preserveBatchScanSnapshot(task) {
+  if (task?.qualification?.status !== "qualified" || task?.qualification?.source !== "batch_store_scan") return;
+  task.ozon = task.ozon && typeof task.ozon === "object" ? task.ozon : {};
+  if (task.ozon.batchScanSnapshot && typeof task.ozon.batchScanSnapshot === "object") return;
+  const snapshot = {
+    sku: String(task.ozon.sku || ""),
+    commissions: Array.isArray(task.ozon.commissions) ? [...task.ozon.commissions] : [],
+    lengthMm: task.ozon.lengthMm,
+    widthMm: task.ozon.widthMm,
+    heightMm: task.ozon.heightMm,
+    weightG: task.ozon.weightG,
+  };
+  const hasCommission = snapshot.commissions.filter((value) => Number(value) > 0).length >= 3;
+  const hasDimensionsAndWeight = [snapshot.lengthMm, snapshot.widthMm, snapshot.heightMm, snapshot.weightG]
+    .every((value) => Number(value) > 0);
+  if (snapshot.sku && (hasCommission || hasDimensionsAndWeight)) task.ozon.batchScanSnapshot = snapshot;
 }
 
 function pricingState(task) {
@@ -99,6 +117,7 @@ function clearTaskPricingValues(task, { preserveLiveBase = false } = {}) {
     freightRoute: null,
     maxPurchaseCostAt18Pct: null,
     pricingCalculation: null,
+    ozonPricingFallbackFields: [],
     ...(liveEnrichmentBase || {}),
   });
 }
@@ -199,7 +218,13 @@ function renderRows() {
     const stateLabels = { pending: "等待核价", running: "核价中", completed: "核价完成", failed: "核价失败", disqualified: "产品不合要求" };
     row.append(cell(stateLabels[state] || state, state === "completed" ? "ok" : ["failed", "disqualified"].includes(state) ? "bad" : "muted"));
     const sourceLabels = { page: "当前商品", competitor: "跟卖商品" };
-    const reason = ["failed", "disqualified"].includes(state) ? (task.enrichment?.ozonPricingError || "未知错误") : (sourceLabels[task.enrichment?.blackPriceSource] || "-");
+    const fallbackFields = Array.isArray(task.enrichment?.ozonPricingFallbackFields)
+      ? task.enrichment.ozonPricingFallbackFields.filter(Boolean)
+      : [];
+    const sourceReason = sourceLabels[task.enrichment?.blackPriceSource] || "-";
+    const reason = ["failed", "disqualified"].includes(state)
+      ? (task.enrichment?.ozonPricingError || "未知错误")
+      : fallbackFields.length ? `${sourceReason}；${fallbackFields.join("、")}用扫描快照` : sourceReason;
     row.append(cell(reason, ["failed", "disqualified"].includes(state) ? "bad" : "muted"));
     row.append(cell(task.enrichment?.freightRoute || "-", "muted"));
     row.append(cell(task.enrichment?.ozonPricingElapsedMs ? `${(task.enrichment.ozonPricingElapsedMs / 1000).toFixed(1)}秒` : "-", "muted"));
@@ -241,6 +266,7 @@ async function loadQueue(file) {
     task.enrichment = task.enrichment && typeof task.enrichment === "object" ? task.enrichment : {};
     task.audit = task.audit && typeof task.audit === "object" ? task.audit : {};
     task.ozon = task.ozon && typeof task.ozon === "object" ? task.ozon : {};
+    preserveBatchScanSnapshot(task);
     discardLegacyQualificationMigration(task);
     if (!task.enrichment.mainImageUrl && task.enrichment.mainImageStatus === "running") task.enrichment.mainImageStatus = "pending";
     if (task.enrichment.ozonPricingStatus === "running") task.enrichment.ozonPricingStatus = "pending";
@@ -281,6 +307,7 @@ async function restoreQueue() {
     task.enrichment = task.enrichment && typeof task.enrichment === "object" ? task.enrichment : {};
     task.audit = task.audit && typeof task.audit === "object" ? task.audit : {};
     task.ozon = task.ozon && typeof task.ozon === "object" ? task.ozon : {};
+    preserveBatchScanSnapshot(task);
     discardLegacyQualificationMigration(task);
     if (!task.enrichment.mainImageUrl && task.enrichment.mainImageStatus === "running") task.enrichment.mainImageStatus = "pending";
     if (task.enrichment.ozonPricingStatus === "running") task.enrichment.ozonPricingStatus = "pending";
@@ -334,6 +361,7 @@ async function enrichMainImageTask(task) {
 }
 
 async function enrichPricingTask(task) {
+  preserveBatchScanSnapshot(task);
   clearTaskPricingValues(task);
   task.enrichment.ozonPricingStatus = "running";
   task.enrichment.ozonPricingError = null;
@@ -382,6 +410,7 @@ async function enrichPricingTask(task) {
         freightRoute: response.freightRoute,
         maxPurchaseCostAt18Pct: response.partial ? null : response.maxPurchaseCostAt18Pct,
         pricingCalculation: response.partial ? null : response.calculation,
+        ozonPricingFallbackFields: Array.isArray(response.snapshotFallbackFields) ? response.snapshotFallbackFields : [],
       });
     }
   } catch (error) {

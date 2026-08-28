@@ -14,6 +14,27 @@ assert.equal(core.chooseSource(253.85, 280.74), "page");
 assert.equal(core.selectedCommission(600, [12, 14, 18]), 14);
 assert.equal(core.selectedCommission(600.01, [12, 14, 18]), 18);
 
+const trustedFallbackTask = {
+  qualification: { status: "qualified", source: "batch_store_scan" },
+  ozon: {
+    sku: "5245965643",
+    commissions: [12, 12.5, 12.5],
+    lengthMm: 50,
+    widthMm: 220,
+    heightMm: 150,
+    weightG: 487,
+  },
+};
+assert.deepEqual(JSON.parse(JSON.stringify(core.trustedBatchScanSnapshot(trustedFallbackTask))), {
+  sku: "5245965643",
+  commissionOptions: [12, 12.5, 12.5],
+  lengthCm: 5,
+  widthCm: 22,
+  heightCm: 15,
+  weightKg: 0.487,
+});
+assert.equal(core.trustedBatchScanSnapshot({ ...trustedFallbackTask, qualification: { status: "qualified", source: "legacy" } }), null);
+
 const freight = core.calculateFreight({ greenPrice: 253.85, weightKg: 2.1, lengthCm: 80, widthCm: 12, heightCm: 12 });
 assert.equal(freight.route, "CEL Economy Big");
 assert.equal(freight.price, 80.61);
@@ -201,7 +222,13 @@ assert.match(enrichmentSource, /maxPurchaseCostAt18Pct/);
 assert.match(enrichmentSource, /ozonSourcingEnrichmentQueueV1/);
 assert.match(enrichmentSource, /await persistQueue\(\)/);
 assert.match(enrichmentSource, /mainImageState\(task\) === "completed" && pricingState\(task\) === "completed"/);
-assert.match(enrichmentSource, /live-trusted-strict-price-v9/);
+assert.match(enrichmentSource, /live-trusted-snapshot-fallback-v10/);
+assert.match(enrichmentSource, /preserveBatchScanSnapshot/);
+assert.match(backgroundSource, /trustedBatchScanSnapshot/);
+assert.match(backgroundSource, /snapshotFallback/);
+assert.match(backgroundSource, /未切换到任务商品\|未在\\d\+秒内进入任务SKU/);
+assert.match(backgroundSource, /chrome\.tabs\.reload\(tabId\)/);
+assert.match(contentSource, /snapshotFallbackFields/);
 assert.match(backgroundSource, /snapshotResponse\.snapshot\?\.dataPending/);
 assert.match(backgroundSource, /runWithForegroundTabWakeup\([\s\S]*?collectTaskPricingSnapshot\(tab\.id, task, 6000\)/);
 assert.match(backgroundSource, /trustedQualified/);

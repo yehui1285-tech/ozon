@@ -519,8 +519,39 @@ async function collectOzonTaskPricingSnapshot(hints = {}) {
   let lastObservedSku = "";
   let rejectedFingerprint = "";
   let rejectedStableCount = 0;
+  const applySnapshotFallback = (current) => {
+    const fallback = hints?.snapshotFallback;
+    const currentSku = String(current?.sku || "").trim();
+    const fallbackSku = String(fallback?.sku || "").trim();
+    if (!trustedQualified || !expectedSku || currentSku !== expectedSku || fallbackSku !== expectedSku) return current;
+    const merged = { ...current };
+    const fallbackFields = [];
+    const fallbackCommissions = (Array.isArray(fallback?.commissionOptions) ? fallback.commissionOptions : [])
+      .map(Number)
+      .filter((value) => value > 0);
+    if (!(merged.commissionOptions?.length >= 3) && fallbackCommissions.length >= 3) {
+      merged.commissionOptions = fallbackCommissions.slice(0, 3);
+      merged.commissionText = `${merged.commissionOptions.join("% ")}%（批量扫描快照）`;
+      fallbackFields.push("佣金");
+    }
+    const liveDimensionsComplete = merged.lengthCm > 0 && merged.widthCm > 0 && merged.heightCm > 0;
+    const fallbackDimensions = [fallback?.lengthCm, fallback?.widthCm, fallback?.heightCm].map(Number);
+    if (!liveDimensionsComplete && fallbackDimensions.every((value) => value > 0)) {
+      [merged.lengthCm, merged.widthCm, merged.heightCm] = fallbackDimensions;
+      merged.dimensionsText = `${fallbackDimensions.join(" x ")}cm（批量扫描快照）`;
+      fallbackFields.push("尺寸");
+    }
+    if (!(merged.weightKg > 0) && Number(fallback?.weightKg) > 0) {
+      merged.weightKg = Number(fallback.weightKg);
+      merged.weightText = `${merged.weightKg}kg（批量扫描快照）`;
+      fallbackFields.push("重量");
+    }
+    merged.snapshotFallbackFields = fallbackFields;
+    if (fallbackFields.length && merged.sku && merged.competitorPriceResolved) merged.erpLoaded = true;
+    return merged;
+  };
   while (Date.now() - startedAt < timeoutMs) {
-    product = collectProduct({ enrichStoreRecord: false });
+    product = applySnapshotFallback(collectProduct({ enrichStoreRecord: false }));
     lastObservedSku = String(product.sku || "").trim();
     if (expectedSku && lastObservedSku && lastObservedSku !== expectedSku) {
       stableCount = 0;
