@@ -161,6 +161,34 @@ export function extractPinduoduoCandidates(nodes) {
   }).filter((candidate) => candidate.displayedPrice !== null);
 }
 
+export function reconcilePinduoduoDisplayedPrice(searchPrice, detailPrice, rawPriceText = "") {
+  const search = Number(searchPrice);
+  const detail = Number(detailPrice);
+  if (!(search > 0)) return { displayedPrice: detail > 0 ? detail : null, priceSource: "detail" };
+  if (!(detail > 0)) return { displayedPrice: search, priceSource: "search_result" };
+  if (Math.abs(search - detail) < 0.005) return { displayedPrice: detail, priceSource: "detail" };
+
+  const searchDigits = String(Number(search.toFixed(2))).replace(".", "");
+  const detailDigits = String(Number(detail.toFixed(2))).replace(".", "");
+  const compactRaw = clean(rawPriceText).replace(/[¥￥,.\s]/g, "");
+  const hasCountLabel = /已拼|人付款|付款|销量|售出|件/.test(compactRaw);
+  const looksConcatenated = detailDigits.startsWith(searchDigits)
+    && detailDigits.length > searchDigits.length
+    && detailDigits.length - searchDigits.length <= 6;
+  const ratio = detail / search;
+  const implausibleNonRoundJump = ratio >= 8 && Math.abs(ratio - Math.round(ratio)) > 0.001;
+
+  if (looksConcatenated && (hasCountLabel || implausibleNonRoundJump)) {
+    return {
+      displayedPrice: search,
+      rawDisplayedPrice: detail,
+      priceSource: "search_result_reconciled",
+      priceCorrectionReason: "详情无障碍文本把价格与销量/件数拼接，已使用同一候选的搜索页价格",
+    };
+  }
+  return { displayedPrice: detail, priceSource: "detail" };
+}
+
 export function parsePinduoduoRoute(output) {
   const source = String(output || "");
   const match = /"url"\s*:\s*"(goods\.html\?[^"\r\n]+)"/.exec(source);
@@ -196,6 +224,7 @@ export function extractPinduoduoDetail(nodes, routeInfo = {}) {
   return {
     title: clean(titleNode?.description || titleNode?.text).replace(/&#10;|\n/g, " ").trim(),
     displayedPrice: Number.isFinite(displayedPrice) && displayedPrice > 0 ? displayedPrice : null,
+    rawPriceText: clean(priceText),
     goodsId: clean(routeInfo.goodsId),
     sourceUrl: clean(routeInfo.sourceUrl),
     thumbnailUrl: clean(routeInfo.thumbnailUrl),

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { applySelectedCandidate, extractPinduoduoCandidates, extractPinduoduoDetail, findUiNode, isTrustedOzonImageUrl, parseMumuInfo, parsePinduoduoRoute, parseUiNodes, queueStats, safeTaskFileName, taskReadiness } from "../pinduoduo-agent/core.mjs";
+import { applySelectedCandidate, extractPinduoduoCandidates, extractPinduoduoDetail, findUiNode, isTrustedOzonImageUrl, parseMumuInfo, parsePinduoduoRoute, parseUiNodes, queueStats, reconcilePinduoduoDisplayedPrice, safeTaskFileName, taskReadiness } from "../pinduoduo-agent/core.mjs";
 
 assert.equal(isTrustedOzonImageUrl("https://ir.ozone.ru/s3/multimedia-test/wc1000/1.jpg"), true);
 assert.equal(isTrustedOzonImageUrl("http://ir.ozone.ru/s3/multimedia-test/1.jpg"), false);
@@ -33,6 +33,16 @@ const detail = extractPinduoduoDetail([
 assert.equal(detail.displayedPrice, 70);
 assert.equal(detail.shippingFee, 0);
 assert.equal(detail.detailStatus, "detail_captured");
+assert.equal(detail.rawPriceText, "¥70已拼44件最后6件");
+assert.deepEqual(reconcilePinduoduoDisplayedPrice(416, 4162, "¥4162人付款"), {
+  displayedPrice: 416,
+  rawDisplayedPrice: 4162,
+  priceSource: "search_result_reconciled",
+  priceCorrectionReason: "详情无障碍文本把价格与销量/件数拼接，已使用同一候选的搜索页价格",
+});
+assert.equal(reconcilePinduoduoDisplayedPrice(221, 221110, "¥221110人付款").displayedPrice, 221);
+assert.equal(reconcilePinduoduoDisplayedPrice(411.84, 411.84, "¥411.84").displayedPrice, 411.84);
+assert.equal(reconcilePinduoduoDisplayedPrice(56, 560, "¥560").displayedPrice, 560);
 assert.equal(extractPinduoduoDetail([
   { text: "", description: "¥70", resourceId: "pdd", bounds: [0, 495, 900, 545] },
   { text: "测试商品", description: "", resourceId: "com.xunmeng.pinduoduo:id/tv_title", bounds: [18, 563, 882, 589] },
