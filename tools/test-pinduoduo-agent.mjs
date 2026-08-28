@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { applySelectedCandidate, extractPinduoduoCandidates, findUiNode, isTrustedOzonImageUrl, parseMumuInfo, parseUiNodes, queueStats, safeTaskFileName, taskReadiness } from "../pinduoduo-agent/core.mjs";
+import { applySelectedCandidate, extractPinduoduoCandidates, extractPinduoduoDetail, findUiNode, isTrustedOzonImageUrl, parseMumuInfo, parsePinduoduoRoute, parseUiNodes, queueStats, safeTaskFileName, taskReadiness } from "../pinduoduo-agent/core.mjs";
 
 assert.equal(isTrustedOzonImageUrl("https://ir.ozone.ru/s3/multimedia-test/wc1000/1.jpg"), true);
 assert.equal(isTrustedOzonImageUrl("http://ir.ozone.ru/s3/multimedia-test/1.jpg"), false);
@@ -20,6 +20,24 @@ assert.deepEqual(extractPinduoduoCandidates([
   { text: "23.79", description: "", resourceId: "com.xunmeng.pinduoduo:id/pdd", bounds: [23, 823, 80, 853] },
   { text: "22.24", description: "", resourceId: "com.xunmeng.pinduoduo:id/pdd", bounds: [514, 823, 571, 853] },
 ])[0].displayedPrice, 23.79);
+
+const route = parsePinduoduoRoute('"url": "goods.html?thumb_url=https%3A%2F%2Fimg.pddpic.com%2Fa.jpeg&goods_id=959747943297&page_from=23"');
+assert.equal(route.goodsId, "959747943297");
+assert.equal(route.sourceUrl, "https://mobile.yangkeduo.com/goods.html?goods_id=959747943297");
+assert.equal(route.thumbnailUrl, "https://img.pddpic.com/a.jpeg");
+const detail = extractPinduoduoDetail([
+  { text: "", description: "¥70已拼44件最后6件", resourceId: "pdd", bounds: [0, 495, 900, 545] },
+  { text: "", description: "Milwaukee美沃奇内六角扳手套装", resourceId: "com.xunmeng.pinduoduo:id/tv_title", bounds: [18, 563, 882, 589] },
+  { text: "全场包邮", description: "", resourceId: "", bounds: [432, 886, 516, 915] },
+], route);
+assert.equal(detail.displayedPrice, 70);
+assert.equal(detail.shippingFee, 0);
+assert.equal(detail.detailStatus, "detail_captured");
+assert.equal(extractPinduoduoDetail([
+  { text: "", description: "¥70", resourceId: "pdd", bounds: [0, 495, 900, 545] },
+  { text: "测试商品", description: "", resourceId: "com.xunmeng.pinduoduo:id/tv_title", bounds: [18, 563, 882, 589] },
+  { text: "退货包运费", description: "", resourceId: "", bounds: [18, 886, 156, 915] },
+], route).shippingIncluded, false);
 
 const readyTask = {
   taskId: "ozon-123",

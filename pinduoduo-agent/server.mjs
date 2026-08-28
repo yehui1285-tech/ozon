@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { PINDUODUO_PACKAGE, extractPinduoduoCandidates, findUiNode, isTrustedOzonImageUrl, parseMumuInfo, parseUiNodes, safeTaskFileName } from "./core.mjs";
+import { PINDUODUO_PACKAGE, extractPinduoduoCandidates, extractPinduoduoDetail, findUiNode, isTrustedOzonImageUrl, parseMumuInfo, parsePinduoduoRoute, parseUiNodes, safeTaskFileName } from "./core.mjs";
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(moduleDir, "public");
@@ -164,10 +164,74 @@ async function startImageSearch() {
   return { candidates, visibleCount: candidates.length, message: `已读取当前屏${candidates.length}个拼多多同款候选。` };
 }
 
+async function captureCurrentRoute() {
+  const output = (await adb(["shell", "dumpsys", "activity", "top"], { timeoutMs: 15000 })).output;
+  return parsePinduoduoRoute(output);
+}
+
+async function waitForCandidateDetail(timeoutMs = 12000) {
+  const startedAt = Date.now();
+  let lastDetail = null;
+  while (Date.now() - startedAt < timeoutMs) {
+    const ui = await captureUi();
+    const route = await captureCurrentRoute();
+    lastDetail = extractPinduoduoDetail(ui.nodes, route);
+    if (lastDetail.detailStatus === "detail_captured") return lastDetail;
+    await delay(500);
+  }
+  return lastDetail;
+}
+
+async function returnToSearchResults(maxBackPresses = 3) {
+  for (let attempt = 0; attempt <= maxBackPresses; attempt += 1) {
+    const ui = await captureUi();
+    if (findUiNode(ui.nodes, ["搜图片同款"])) return ui;
+    if (attempt < maxBackPresses) {
+      await adb(["shell", "input", "keyevent", "4"]);
+      await delay(700);
+    }
+  }
+  throw new Error("候选详情核验后未能返回拼多多以图搜索结果页。");
+}
+
+async function inspectVisibleCandidates(candidates, limit = 3) {
+  const inspected = [];
+  for (const candidate of candidates.slice(0, limit)) {
+    let navigationError = null;
+    try {
+      const resultUi = await returnToSearchResults();
+      const currentCandidates = extractPinduoduoCandidates(resultUi.nodes);
+      const current = currentCandidates.find((entry) => entry.title === candidate.title && entry.displayedPrice === candidate.displayedPrice)
+        || currentCandidates.find((entry) => entry.title === candidate.title)
+        || candidate;
+      await tapBounds(current.bounds);
+      const detail = await waitForCandidateDetail(12000);
+      if (!detail || detail.detailStatus !== "detail_captured") throw new Error("详情标题、价格或商品ID未完整加载。");
+      inspected.push({ ...candidate, bounds: current.bounds, priceBounds: current.priceBounds, sourceUrl: detail.sourceUrl, detail });
+    } catch (error) {
+      inspected.push({ ...candidate, detail: { detailStatus: "detail_failed", error: error.message || String(error), capturedAt: new Date().toISOString() } });
+    } finally {
+      try {
+        await returnToSearchResults();
+      } catch (error) {
+        navigationError = error;
+      }
+    }
+    if (navigationError) break;
+  }
+  return inspected;
+}
+
 async function searchTask(body) {
   const prepared = await prepareTask(body);
   const search = await startImageSearch();
-  return { ok: true, taskId: prepared.taskId, remotePath: prepared.remotePath, ...search };
+  const inspected = await inspectVisibleCandidates(search.candidates, 3);
+  const candidates = [
+    ...inspected,
+    ...search.candidates.slice(inspected.length).map((candidate) => ({ ...candidate, detail: { detailStatus: "detail_not_inspected", capturedAt: new Date().toISOString() } })),
+  ];
+  const detailCompleted = candidates.filter((candidate) => candidate.detail?.detailStatus === "detail_captured").length;
+  return { ok: true, taskId: prepared.taskId, remotePath: prepared.remotePath, ...search, candidates, detailCompleted, message: `${search.message} 已完成${detailCompleted}个候选详情核验。` };
 }
 
 async function captureScreenshot() {

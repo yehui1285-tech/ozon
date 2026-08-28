@@ -160,3 +160,49 @@ export function extractPinduoduoCandidates(nodes) {
     };
   }).filter((candidate) => candidate.displayedPrice !== null);
 }
+
+export function parsePinduoduoRoute(output) {
+  const source = String(output || "");
+  const match = /"url"\s*:\s*"(goods\.html\?[^"\r\n]+)"/.exec(source);
+  if (!match) return { goodsId: "", sourceUrl: "", thumbnailUrl: "", rawRoute: "" };
+  let rawRoute = match[1];
+  try {
+    rawRoute = JSON.parse(`"${rawRoute.replace(/"/g, '\\"')}"`);
+  } catch {
+    rawRoute = rawRoute.replace(/\\\//g, "/");
+  }
+  const route = new URL(rawRoute, "https://mobile.yangkeduo.com/");
+  const goodsId = clean(route.searchParams.get("goods_id"));
+  const thumbnailUrl = clean(route.searchParams.get("thumb_url"));
+  return {
+    goodsId,
+    sourceUrl: goodsId ? `https://mobile.yangkeduo.com/goods.html?goods_id=${encodeURIComponent(goodsId)}` : "",
+    thumbnailUrl,
+    rawRoute,
+  };
+}
+
+export function extractPinduoduoDetail(nodes, routeInfo = {}) {
+  const list = Array.isArray(nodes) ? nodes : [];
+  const inRange = (node, minTop, maxTop) => node.bounds && node.bounds[1] >= minTop && node.bounds[1] <= maxTop;
+  const titleNode = list.find((node) => /\/tv_title$/.test(node.resourceId || "") && inRange(node, 450, 700) && (node.description || node.text));
+  const priceGroup = list.find((node) => inRange(node, 450, 620) && /^¥\s*\d+(?:\.\d{1,2})?/.test(node.description || ""));
+  const priceText = priceGroup?.description || list.find((node) => inRange(node, 450, 620) && /^\d+(?:\.\d{1,2})?$/.test(node.text || ""))?.text || "";
+  const priceMatch = /(?:¥\s*)?(\d+(?:\.\d{1,2})?)/.exec(priceText);
+  const visibleText = list.map((node) => `${node.text || ""} ${node.description || ""}`.trim()).filter(Boolean);
+  const visibleLabels = [...new Set(visibleText.filter((text) => /包邮|运费|新客|券后|限购|仅剩|最后\d+件|已拼|先用后付|免拼购买/.test(text)).map((text) => text.replace(/\s+/g, " ").slice(0, 120)))].slice(0, 20);
+  const shippingIncluded = visibleText.some((text) => /全场包邮|商品包邮|卖家包邮|免运费/.test(text));
+  const displayedPrice = Number(priceMatch?.[1]);
+  return {
+    title: clean(titleNode?.description || titleNode?.text).replace(/&#10;|\n/g, " ").trim(),
+    displayedPrice: Number.isFinite(displayedPrice) && displayedPrice > 0 ? displayedPrice : null,
+    goodsId: clean(routeInfo.goodsId),
+    sourceUrl: clean(routeInfo.sourceUrl),
+    thumbnailUrl: clean(routeInfo.thumbnailUrl),
+    shippingIncluded,
+    shippingFee: shippingIncluded ? 0 : null,
+    visibleLabels,
+    detailStatus: titleNode && displayedPrice > 0 && routeInfo.goodsId ? "detail_captured" : "detail_incomplete",
+    capturedAt: new Date().toISOString(),
+  };
+}

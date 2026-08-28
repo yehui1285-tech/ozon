@@ -49,7 +49,7 @@ function render() {
     const ready = readiness(task);
     const row = document.createElement("tr");
     const purchaseCost = Number(task?.pricing?.purchaseCost);
-    const suggestedCost = Number(task?.sourcing?.suggestedCandidate?.displayedPrice);
+    const suggestedCost = Number(task?.sourcing?.suggestedCandidate?.detail?.displayedPrice ?? task?.sourcing?.suggestedCandidate?.displayedPrice);
     const eligible = task?.pricing?.eligibleAt18Pct;
     row.innerHTML = `<td>${index + 1}</td><td></td><td class="name"></td><td class="money">${money(task?.enrichment?.maxPurchaseCostAt18Pct)}</td><td class="${ready.ready ? "ok" : "bad"}">${ready.ready ? task.status : ready.reasons.join("、")}</td><td></td><td></td><td></td><td class="${eligible === true ? "ok" : eligible === false ? "bad" : "muted"}">${eligible === true ? "达到18%" : eligible === false ? "低于18%" : "待判断"}</td><td></td>`;
     const imageCell = row.children[1];
@@ -59,9 +59,21 @@ function render() {
     row.children[2].textContent = `${task?.ozon?.sku || "-"}\n${task?.ozon?.name || "-"}`;
     const deviceCell = row.children[5];
     const prepare = document.createElement("button"); prepare.textContent = "自动以图找同款"; prepare.disabled = !ready.ready; prepare.addEventListener("click", () => searchTask(task, prepare)); deviceCell.append(prepare);
-    if (task?.sourcing?.searchCandidates?.length) { const summary = document.createElement("small"); summary.textContent = `候选价：${task.sourcing.searchCandidates.map((candidate) => money(candidate.displayedPrice)).join("、")}`; deviceCell.append(summary); }
+    if (task?.sourcing?.searchCandidates?.length) {
+      const list = document.createElement("small");
+      task.sourcing.searchCandidates.forEach((candidate, candidateIndex) => {
+        const line = document.createElement("div");
+        const detailPrice = candidate?.detail?.displayedPrice ?? candidate.displayedPrice;
+        const shipping = candidate?.detail?.shippingFee === 0 ? "包邮" : "运费待核";
+        const label = `候选${candidateIndex + 1}：${money(detailPrice)}元，${shipping}`;
+        if (candidate.sourceUrl) { const anchor = document.createElement("a"); anchor.href = candidate.sourceUrl; anchor.target = "_blank"; anchor.rel = "noopener noreferrer"; anchor.textContent = label; line.append(anchor); }
+        else line.textContent = `${label}（链接未取得）`;
+        list.append(line);
+      });
+      deviceCell.append(list);
+    }
     const price = document.createElement("input"); price.className = "price"; price.type = "number"; price.min = "0.01"; price.step = "0.01"; price.placeholder = "含运实付价"; if (purchaseCost > 0) price.value = purchaseCost.toFixed(2); else if (suggestedCost > 0) price.value = suggestedCost.toFixed(2); row.children[6].append(price);
-    const link = document.createElement("input"); link.className = "link"; link.type = "url"; link.placeholder = "候选商品链接（可暂空）"; link.value = task?.pricing?.sourceUrl || ""; row.children[7].append(link);
+    const link = document.createElement("input"); link.className = "link"; link.type = "url"; link.placeholder = "候选商品链接（可暂空）"; link.value = task?.pricing?.sourceUrl || task?.sourcing?.suggestedCandidate?.sourceUrl || ""; row.children[7].append(link);
     const actions = document.createElement("div"); actions.className = "row-actions"; const save = document.createElement("button"); save.textContent = "写入采购价"; save.disabled = !ready.ready; save.addEventListener("click", () => savePrice(task, price.value, link.value)); actions.append(save); row.children[9].append(actions);
     return row;
   }));
@@ -91,9 +103,10 @@ async function searchTask(task, button) {
     task.sourcing = task.sourcing || {};
     task.sourcing.devicePreparation = { status: "completed", remoteImagePath: result.remotePath, completedAt: new Date().toISOString() };
     task.sourcing.searchCandidates = result.candidates;
-    task.sourcing.suggestedCandidate = [...result.candidates].sort((left, right) => left.displayedPrice - right.displayedPrice)[0] || null;
-    task.sourcing.status = "candidates_found_pending_verification";
-    setStatus(`${result.message} 已将最低展示价预填；确认规格和优惠条件后再写入采购价。`, "ok");
+    const detailCandidates = result.candidates.filter((candidate) => candidate?.detail?.detailStatus === "detail_captured");
+    task.sourcing.suggestedCandidate = [...(detailCandidates.length ? detailCandidates : result.candidates)].sort((left, right) => Number(left?.detail?.displayedPrice ?? left.displayedPrice) - Number(right?.detail?.displayedPrice ?? right.displayedPrice))[0] || null;
+    task.sourcing.status = detailCandidates.length ? "candidate_details_captured_pending_verification" : "candidates_found_pending_verification";
+    setStatus(`${result.message} 已预填最低详情展示价及链接；确认规格和优惠条件后再写入采购价。`, detailCandidates.length ? "ok" : "bad");
     render();
   } catch (error) { setStatus(error.message, "bad"); button.disabled = false; }
 }
