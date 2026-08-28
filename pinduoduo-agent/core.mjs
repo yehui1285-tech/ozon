@@ -136,6 +136,27 @@ export function findUiNode(nodes, terms) {
   return candidates.sort((left, right) => Number(right.clickable) - Number(left.clickable) || area(left) - area(right))[0] || null;
 }
 
+export function detectPinduoduoRiskPage(nodes) {
+  const visibleText = (Array.isArray(nodes) ? nodes : [])
+    .flatMap((node) => [clean(node?.text), clean(node?.description)])
+    .filter(Boolean);
+  const pageText = visibleText.join("\n");
+  const rules = [
+    { type: "real_name_verification", signals: ["实名认证提示", "提交实名信息"] },
+    { type: "face_verification", signals: ["请将正脸置于框内"] },
+    { type: "account_risk", signals: ["账号存在风险", "限制部分操作"] },
+    { type: "security_verification", signals: ["请完成安全验证", "安全验证"] },
+    { type: "captcha_verification", signals: ["拖动滑块", "请输入验证码"] },
+  ];
+  const matched = rules.find((rule) => rule.signals.some((signal) => pageText.includes(signal)));
+  if (!matched) return { blocked: false, type: "", matchedText: "" };
+  return {
+    blocked: true,
+    type: matched.type,
+    matchedText: visibleText.filter((text) => matched.signals.some((signal) => text.includes(signal))).join("；").slice(0, 240),
+  };
+}
+
 export function extractPinduoduoCandidates(nodes) {
   const list = Array.isArray(nodes) ? nodes : [];
   const titles = list.filter((node) => /\/tv_title$/.test(node.resourceId || "") && node.text && node.bounds);

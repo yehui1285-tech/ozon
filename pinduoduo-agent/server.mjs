@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { PINDUODUO_PACKAGE, extractPinduoduoCandidates, extractPinduoduoDetail, findUiNode, isTrustedOzonImageUrl, parseMumuInfo, parsePinduoduoRoute, parseUiNodes, reconcilePinduoduoDisplayedPrice, safeTaskFileName } from "./core.mjs";
+import { PINDUODUO_PACKAGE, detectPinduoduoRiskPage, extractPinduoduoCandidates, extractPinduoduoDetail, findUiNode, isTrustedOzonImageUrl, parseMumuInfo, parsePinduoduoRoute, parseUiNodes, reconcilePinduoduoDisplayedPrice, safeTaskFileName } from "./core.mjs";
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(moduleDir, "public");
@@ -15,6 +15,19 @@ const host = "127.0.0.1";
 const port = 17628;
 const localUiHeader = "local-ui-v1";
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+class PinduoduoRiskControlError extends Error {
+  constructor(risk) {
+    super(`检测到拼多多风控页面（${risk.type}），批量任务已暂停，请人工处理后再继续。`);
+    this.code = "PINDUODUO_RISK_CONTROL";
+    this.risk = risk;
+  }
+}
+
+function assertNoPinduoduoRisk(nodes) {
+  const risk = detectPinduoduoRiskPage(nodes);
+  if (risk.blocked) throw new PinduoduoRiskControlError(risk);
+}
 
 function run(executable, args, { timeoutMs = 20000, binary = false } = {}) {
   return new Promise((resolve, reject) => {
@@ -113,6 +126,7 @@ async function captureUi() {
   });
   const xml = (await adb(["exec-out", "cat", "/sdcard/ozon-agent-window.xml"])).output;
   const nodes = parseUiNodes(xml);
+  assertNoPinduoduoRisk(nodes);
   return { nodes, cameraSearch: findUiNode(nodes, ["拍照搜索", "图片搜索"]), capturedAt: new Date().toISOString() };
 }
 
@@ -210,11 +224,13 @@ async function inspectVisibleCandidates(candidates, limit = 3) {
       const reconciledPrice = reconcilePinduoduoDisplayedPrice(current.displayedPrice, detail.displayedPrice, detail.rawPriceText);
       inspected.push({ ...candidate, bounds: current.bounds, priceBounds: current.priceBounds, sourceUrl: detail.sourceUrl, detail: { ...detail, ...reconciledPrice } });
     } catch (error) {
+      if (error?.code === "PINDUODUO_RISK_CONTROL") throw error;
       inspected.push({ ...candidate, detail: { detailStatus: "detail_failed", error: error.message || String(error), capturedAt: new Date().toISOString() } });
     } finally {
       try {
         await returnToSearchResults();
       } catch (error) {
+        if (error?.code === "PINDUODUO_RISK_CONTROL") throw error;
         navigationError = error;
       }
     }
@@ -298,7 +314,8 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "GET" && await staticFile(url.pathname, response)) return;
     json(response, 404, { ok: false, error: "未找到接口或页面。" });
   } catch (error) {
-    json(response, 500, { ok: false, error: error.message || String(error) });
+    const riskControl = error?.code === "PINDUODUO_RISK_CONTROL";
+    json(response, riskControl ? 423 : 500, { ok: false, error: error.message || String(error), code: error?.code || "", risk: error?.risk || null });
   }
 });
 

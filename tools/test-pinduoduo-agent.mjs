@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { applySelectedCandidate, extractPinduoduoCandidates, extractPinduoduoDetail, findUiNode, isTrustedOzonImageUrl, parseMumuInfo, parsePinduoduoRoute, parseUiNodes, queueStats, reconcilePinduoduoDisplayedPrice, safeTaskFileName, taskReadiness } from "../pinduoduo-agent/core.mjs";
+import { applySelectedCandidate, detectPinduoduoRiskPage, extractPinduoduoCandidates, extractPinduoduoDetail, findUiNode, isTrustedOzonImageUrl, parseMumuInfo, parsePinduoduoRoute, parseUiNodes, queueStats, reconcilePinduoduoDisplayedPrice, safeTaskFileName, taskReadiness } from "../pinduoduo-agent/core.mjs";
 
 assert.equal(isTrustedOzonImageUrl("https://ir.ozone.ru/s3/multimedia-test/wc1000/1.jpg"), true);
 assert.equal(isTrustedOzonImageUrl("http://ir.ozone.ru/s3/multimedia-test/1.jpg"), false);
@@ -15,6 +15,9 @@ assert.equal(safeTaskFileName("ozon:123 / test"), "ozon_123_test");
 const uiNodes = parseUiNodes('<?xml version="1.0"?><hierarchy><node text="" resource-id="" class="android.view.View" content-desc="拍照搜索" clickable="false" bounds="[0,0][900,1600]" /><node text="" resource-id="pdd" class="android.view.View" content-desc="拍照搜索" clickable="true" bounds="[831,57][900,90]" /></hierarchy>');
 assert.equal(uiNodes.length, 2);
 assert.deepEqual(findUiNode(uiNodes, ["拍照搜索"])?.bounds, [831, 57, 900, 90]);
+assert.equal(detectPinduoduoRiskPage([{ text: "实名认证提示" }, { text: "检测到账户存在风险，为了账号安全，已限制部分操作" }]).type, "real_name_verification");
+assert.equal(detectPinduoduoRiskPage([{ text: "请将正脸置于框内" }]).type, "face_verification");
+assert.equal(detectPinduoduoRiskPage([{ text: "搜图片同款" }, { text: "全场包邮" }]).blocked, false);
 assert.deepEqual(extractPinduoduoCandidates([
   { text: "皇冠外压条", description: "皇冠外压条\n", resourceId: "com.xunmeng.pinduoduo:id/tv_title", bounds: [12, 759, 436, 783] },
   { text: "23.79", description: "", resourceId: "com.xunmeng.pinduoduo:id/pdd", bounds: [23, 823, 80, 853] },
@@ -74,6 +77,7 @@ assert.match(serverSource, /MuMuManager\.exe/);
 assert.match(serverSource, /PINDUODUO_PACKAGE/);
 assert.match(serverSource, /MEDIA_SCANNER_SCAN_FILE/);
 assert.match(serverSource, /x-ozon-agent/);
+assert.match(serverSource, /PINDUODUO_RISK_CONTROL/);
 assert.match(appSource, /pending_pinduoduo_search/);
 assert.match(appSource, /x-ozon-agent/);
 assert.match(appSource, /eligibleAt18Pct/);
@@ -83,4 +87,6 @@ assert.match(appSource, /async function runBatch/);
 assert.match(appSource, /batch\.paused/);
 assert.match(appSource, /batch\.stopRequested/);
 assert.match(appSource, /search_failed_retryable/);
+assert.match(appSource, /batchDelayRangeMs/);
+assert.match(appSource, /paused_risk_control/);
 console.log("Pinduoduo agent core tests passed.");

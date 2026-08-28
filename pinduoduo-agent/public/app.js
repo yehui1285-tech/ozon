@@ -1,7 +1,8 @@
 let queue = null;
 let sourceName = "ozon-sourcing.json";
 const storageKey = "ozon-pinduoduo-agent-mvp3";
-const batch = { running: false, paused: false, stopRequested: false, cursor: 0, completed: 0, failed: 0 };
+const batch = { running: false, paused: false, riskPaused: false, pauseReason: "", stopRequested: false, cursor: 0, completed: 0, failed: 0 };
+const batchDelayRangeMs = { min: 12000, max: 25000 };
 
 const $ = (id) => document.getElementById(id);
 
@@ -22,7 +23,8 @@ function persistQueue() {
     cursor: batch.cursor,
     completed: batch.completed,
     failed: batch.failed,
-    status: batch.running ? (batch.paused ? "paused" : "running") : (batch.stopRequested ? "stopped" : "idle"),
+    status: batch.running ? (batch.paused ? (batch.riskPaused ? "paused_risk_control" : "paused") : "running") : (batch.stopRequested ? "stopped" : "idle"),
+    pauseReason: batch.pauseReason || null,
     updatedAt: new Date().toISOString(),
   };
   try { localStorage.setItem(storageKey, JSON.stringify({ queue, sourceName })); }
@@ -91,7 +93,8 @@ function render() {
     const purchaseCost = Number(task?.pricing?.purchaseCost);
     const suggestedCost = Number(task?.sourcing?.suggestedCandidate?.detail?.displayedPrice ?? task?.sourcing?.suggestedCandidate?.displayedPrice);
     const eligible = task?.pricing?.eligibleAt18Pct;
-    row.innerHTML = `<td>${index + 1}</td><td></td><td class="name"></td><td class="money">${money(task?.enrichment?.maxPurchaseCostAt18Pct)}</td><td class="${ready.ready ? "ok" : "bad"}">${ready.ready ? task.status : ready.reasons.join("、")}</td><td></td><td></td><td></td><td class="${eligible === true ? "ok" : eligible === false ? "bad" : "muted"}">${eligible === true ? "达到18%" : eligible === false ? "低于18%" : "待判断"}</td><td></td>`;
+    const stage = task?.sourcing?.status === "paused_risk_control" ? "风控暂停" : task.status;
+    row.innerHTML = `<td>${index + 1}</td><td></td><td class="name"></td><td class="money">${money(task?.enrichment?.maxPurchaseCostAt18Pct)}</td><td class="${task?.sourcing?.status === "paused_risk_control" || !ready.ready ? "bad" : "ok"}">${ready.ready ? stage : ready.reasons.join("、")}</td><td></td><td></td><td></td><td class="${eligible === true ? "ok" : eligible === false ? "bad" : "muted"}">${eligible === true ? "达到18%" : eligible === false ? "低于18%" : "待判断"}</td><td></td>`;
     const imageCell = row.children[1];
     if (task?.enrichment?.mainImageUrl) {
       const image = document.createElement("img"); image.className = "thumb"; image.src = task.enrichment.mainImageUrl; image.alt = "主图"; imageCell.append(image);
@@ -122,7 +125,12 @@ function render() {
 async function api(path, options = {}) {
   const response = await fetch(path, { ...options, headers: { "content-type": "application/json", "x-ozon-agent": "local-ui-v1", ...(options.headers || {}) } });
   const payload = await response.json();
-  if (!response.ok || !payload.ok) throw new Error(payload.error || "操作失败");
+  if (!response.ok || !payload.ok) {
+    const error = new Error(payload.error || "操作失败");
+    error.code = payload.code || "";
+    error.details = payload.risk || null;
+    throw error;
+  }
   return payload;
 }
 
@@ -155,9 +163,11 @@ async function searchTask(task, button = null, { batchMode = false } = {}) {
     return result;
   } catch (error) {
     task.sourcing = task.sourcing || {};
-    task.sourcing.status = "search_failed_retryable";
+    const riskControl = error.code === "PINDUODUO_RISK_CONTROL";
+    task.sourcing.status = riskControl ? "paused_risk_control" : "search_failed_retryable";
     task.sourcing.searchLastError = error.message || String(error);
     task.sourcing.searchFailedAt = new Date().toISOString();
+    task.sourcing.riskControl = riskControl ? { ...(error.details || {}), detectedAt: new Date().toISOString() } : null;
     persistQueue();
     if (!batchMode) setStatus(error.message, "bad");
     if (button) button.disabled = false;
@@ -168,11 +178,30 @@ async function searchTask(task, button = null, { batchMode = false } = {}) {
 
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
+function randomBatchDelayMs() {
+  return Math.floor(Math.random() * (batchDelayRangeMs.max - batchDelayRangeMs.min + 1)) + batchDelayRangeMs.min;
+}
+
+async function waitForNextBatchTask(nextIndex, total) {
+  const endsAt = Date.now() + randomBatchDelayMs();
+  while (Date.now() < endsAt) {
+    if (batch.stopRequested) return false;
+    if (batch.paused) {
+      await wait(300);
+      continue;
+    }
+    const seconds = Math.max(1, Math.ceil((endsAt - Date.now()) / 1000));
+    setStatus(`随机间隔中：${seconds}秒后处理第${nextIndex + 1}/${total}件；可随时暂停或停止。`);
+    await wait(Math.min(1000, Math.max(1, endsAt - Date.now())));
+  }
+  return !batch.stopRequested;
+}
+
 async function runBatch() {
   if (!queue || batch.running) return;
   const tasks = queue.tasks || [];
   if (batch.cursor >= tasks.length) batch.cursor = 0;
-  batch.running = true; batch.paused = false; batch.stopRequested = false; batch.completed = 0; batch.failed = 0;
+  batch.running = true; batch.paused = false; batch.riskPaused = false; batch.pauseReason = ""; batch.stopRequested = false; batch.completed = 0; batch.failed = 0;
   render(); persistQueue();
   try {
     for (let index = batch.cursor; index < tasks.length; index += 1) {
@@ -183,14 +212,31 @@ async function runBatch() {
       const task = tasks[index];
       if (!readiness(task).ready || candidateSearchComplete(task)) { batch.cursor = index + 1; persistQueue(); continue; }
       setStatus(`批量找同款 ${index + 1}/${tasks.length}：SKU ${task?.ozon?.sku || "-"}，当前商品完成后可暂停或停止。`);
+      let riskError = null;
       try { await searchTask(task, null, { batchMode: true }); batch.completed += 1; }
-      catch { batch.failed += 1; }
+      catch (error) {
+        if (error.code === "PINDUODUO_RISK_CONTROL") riskError = error;
+        else batch.failed += 1;
+      }
+      if (riskError) {
+        batch.paused = true; batch.riskPaused = true; batch.pauseReason = riskError.message;
+        batch.cursor = index;
+        persistQueue(); render();
+        setStatus(`${riskError.message} 当前SKU ${task?.ozon?.sku || "-"}未跳过，解除限制后点击“继续”将重试本件。`, "bad");
+        while (batch.paused && !batch.stopRequested) await wait(300);
+        if (batch.stopRequested) break;
+        batch.riskPaused = false; batch.pauseReason = "";
+        index -= 1;
+        continue;
+      }
       batch.cursor = index + 1;
       persistQueue(); render();
+      const nextPendingOffset = tasks.slice(index + 1).findIndex((entry) => readiness(entry).ready && !candidateSearchComplete(entry));
+      if (nextPendingOffset >= 0 && !(await waitForNextBatchTask(index + 1 + nextPendingOffset, tasks.length))) break;
     }
   } finally {
     const stopped = batch.stopRequested;
-    batch.running = false; batch.paused = false; batch.stopRequested = false;
+    batch.running = false; batch.paused = false; batch.riskPaused = false; batch.pauseReason = ""; batch.stopRequested = false;
     persistQueue(); render();
     const remaining = tasks.filter((task) => readiness(task).ready && !candidateSearchComplete(task)).length;
     setStatus(`${stopped ? "批量任务已停止" : "批量任务本轮完成"}：新增成功${batch.completed}件，失败${batch.failed}件，剩余${remaining}件；失败项可再次批量重试。`, batch.failed ? "bad" : "ok");
@@ -225,12 +271,16 @@ $("checkDevice").addEventListener("click", checkDevice);
 $("startDevice").addEventListener("click", async () => { try { setStatus("正在请求启动MuMu……"); const result = await api("/api/device/launch", { method: "POST", body: "{}" }); setStatus(`${result.message}请等待安卓桌面出现后再次检查。`, "ok"); } catch (error) { setStatus(error.message, "bad"); } });
 $("openPdd").addEventListener("click", async () => { try { const result = await api("/api/pinduoduo/launch", { method: "POST", body: "{}" }); setStatus(result.message, "ok"); } catch (error) { setStatus(error.message, "bad"); } });
 $("batchStart").addEventListener("click", () => { void runBatch(); });
-$("batchPause").addEventListener("click", () => { if (!batch.running) return; batch.paused = true; persistQueue(); render(); setStatus("已请求暂停；当前商品核验完成后暂停。", ""); });
-$("batchResume").addEventListener("click", () => { if (!batch.running) return; batch.paused = false; persistQueue(); render(); setStatus("批量任务已继续。", "ok"); });
+$("batchPause").addEventListener("click", () => { if (!batch.running) return; batch.paused = true; batch.riskPaused = false; batch.pauseReason = "人工暂停"; persistQueue(); render(); setStatus("已请求暂停；当前商品核验完成后暂停。", ""); });
+$("batchResume").addEventListener("click", () => { if (!batch.running) return; batch.paused = false; batch.riskPaused = false; batch.pauseReason = ""; persistQueue(); render(); setStatus("批量任务已继续。", "ok"); });
 $("batchStop").addEventListener("click", () => { if (!batch.running) return; batch.stopRequested = true; batch.paused = false; persistQueue(); render(); setStatus("已请求停止；当前商品核验完成后停止并保存进度。", ""); });
 $("download").addEventListener("click", () => { if (!queue) return; const blob = new Blob([`${JSON.stringify(queue, null, 2)}\n`], { type: "application/json" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = sourceName.replace(/\.json$/i, "") + "-pinduoduo-pricing.json"; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); });
 
 const restored = restoreQueue();
 render();
-if (restored) setStatus(`已恢复本地任务：${queue.tasks.length}件，已完成找同款${stats().sourced}件，可继续批量处理。`, "ok");
-void checkDevice();
+const restoredRiskPause = restored && queue?.meta?.pinduoduoBatch?.status === "paused_risk_control";
+if (restoredRiskPause) setStatus(`已恢复风控暂停进度：${queue.meta.pinduoduoBatch.pauseReason || "检测到拼多多验证页面"}。人工处理后可重新开始批量任务并重试当前SKU。`, "bad");
+else {
+  if (restored) setStatus(`已恢复本地任务：${queue.tasks.length}件，已完成找同款${stats().sourced}件，可继续批量处理。`, "ok");
+  void checkDevice();
+}
