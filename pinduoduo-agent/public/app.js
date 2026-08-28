@@ -1,11 +1,46 @@
 let queue = null;
 let sourceName = "ozon-sourcing.json";
+const storageKey = "ozon-pinduoduo-agent-mvp3";
+const batch = { running: false, paused: false, stopRequested: false, cursor: 0, completed: 0, failed: 0 };
 
 const $ = (id) => document.getElementById(id);
 
 function setStatus(message, state = "") {
   $("status").textContent = message;
   $("status").className = state;
+}
+
+function candidateSearchComplete(task) {
+  return Array.isArray(task?.sourcing?.searchCandidates)
+    && task.sourcing.searchCandidates.some((candidate) => candidate?.detail?.detailStatus === "detail_captured");
+}
+
+function persistQueue() {
+  if (!queue) return;
+  queue.meta = queue.meta && typeof queue.meta === "object" ? queue.meta : {};
+  queue.meta.pinduoduoBatch = {
+    cursor: batch.cursor,
+    completed: batch.completed,
+    failed: batch.failed,
+    status: batch.running ? (batch.paused ? "paused" : "running") : (batch.stopRequested ? "stopped" : "idle"),
+    updatedAt: new Date().toISOString(),
+  };
+  try { localStorage.setItem(storageKey, JSON.stringify({ queue, sourceName })); }
+  catch (error) { setStatus(`本地保存失败：${error.message}`, "bad"); }
+}
+
+function restoreQueue() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(storageKey) || "null");
+    if (!Array.isArray(saved?.queue?.tasks)) return false;
+    queue = saved.queue;
+    sourceName = saved.sourceName || sourceName;
+    const state = queue?.meta?.pinduoduoBatch || {};
+    batch.cursor = Number(state.cursor) || 0;
+    batch.completed = Number(state.completed) || 0;
+    batch.failed = Number(state.failed) || 0;
+    return true;
+  } catch { return false; }
 }
 
 function readiness(task) {
@@ -24,6 +59,7 @@ function stats() {
     blocked: tasks.filter((task) => !readiness(task).ready).length,
     priced: tasks.filter((task) => Number(task?.pricing?.purchaseCost) > 0).length,
     eligible: tasks.filter((task) => task?.pricing?.eligibleAt18Pct === true).length,
+    sourced: tasks.filter(candidateSearchComplete).length,
   };
 }
 
@@ -40,6 +76,10 @@ function money(value) {
 function render() {
   updateStats();
   $("download").disabled = !queue;
+  $("batchStart").disabled = !queue || batch.running;
+  $("batchPause").disabled = !batch.running || batch.paused;
+  $("batchResume").disabled = !batch.running || !batch.paused;
+  $("batchStop").disabled = !batch.running;
   const tasks = queue?.tasks || [];
   if (!tasks.length) {
     $("rows").innerHTML = '<tr><td colspan="10" class="empty">尚未导入任务。</td></tr>';
@@ -58,7 +98,7 @@ function render() {
     } else imageCell.textContent = "-";
     row.children[2].textContent = `${task?.ozon?.sku || "-"}\n${task?.ozon?.name || "-"}`;
     const deviceCell = row.children[5];
-    const prepare = document.createElement("button"); prepare.textContent = "自动以图找同款"; prepare.disabled = !ready.ready; prepare.addEventListener("click", () => searchTask(task, prepare)); deviceCell.append(prepare);
+    const prepare = document.createElement("button"); prepare.textContent = candidateSearchComplete(task) ? "重新找同款" : "自动以图找同款"; prepare.disabled = !ready.ready || batch.running; prepare.addEventListener("click", async () => { try { await searchTask(task, prepare); } catch {} }); deviceCell.append(prepare);
     if (task?.sourcing?.searchCandidates?.length) {
       const list = document.createElement("small");
       task.sourcing.searchCandidates.forEach((candidate, candidateIndex) => {
@@ -95,10 +135,10 @@ async function checkDevice() {
   } catch (error) { setStatus(error.message, "bad"); }
 }
 
-async function searchTask(task, button) {
-  button.disabled = true;
+async function searchTask(task, button = null, { batchMode = false } = {}) {
+  if (button) button.disabled = true;
   try {
-    setStatus(`SKU ${task.ozon.sku}：正在下发主图并执行拼多多以图搜索……`);
+    if (!batchMode) setStatus(`SKU ${task.ozon.sku}：正在下发主图并执行拼多多以图搜索……`);
     const result = await api("/api/task/search", { method: "POST", body: JSON.stringify({ taskId: task.taskId, mainImageUrl: task.enrichment.mainImageUrl }) });
     task.sourcing = task.sourcing || {};
     task.sourcing.devicePreparation = { status: "completed", remoteImagePath: result.remotePath, completedAt: new Date().toISOString() };
@@ -106,9 +146,55 @@ async function searchTask(task, button) {
     const detailCandidates = result.candidates.filter((candidate) => candidate?.detail?.detailStatus === "detail_captured");
     task.sourcing.suggestedCandidate = [...(detailCandidates.length ? detailCandidates : result.candidates)].sort((left, right) => Number(left?.detail?.displayedPrice ?? left.displayedPrice) - Number(right?.detail?.displayedPrice ?? right.displayedPrice))[0] || null;
     task.sourcing.status = detailCandidates.length ? "candidate_details_captured_pending_verification" : "candidates_found_pending_verification";
-    setStatus(`${result.message} 已预填最低详情展示价及链接；确认规格和优惠条件后再写入采购价。`, detailCandidates.length ? "ok" : "bad");
+    task.sourcing.searchCompletedAt = detailCandidates.length ? new Date().toISOString() : null;
+    task.sourcing.searchLastError = detailCandidates.length ? null : "未取得任何完整候选详情";
+    persistQueue();
+    if (!batchMode) setStatus(`${result.message} 已预填最低详情展示价及链接；确认规格和优惠条件后再写入采购价。`, detailCandidates.length ? "ok" : "bad");
     render();
-  } catch (error) { setStatus(error.message, "bad"); button.disabled = false; }
+    if (!detailCandidates.length) throw new Error("未取得任何完整候选详情，可稍后重试。");
+    return result;
+  } catch (error) {
+    task.sourcing = task.sourcing || {};
+    task.sourcing.status = "search_failed_retryable";
+    task.sourcing.searchLastError = error.message || String(error);
+    task.sourcing.searchFailedAt = new Date().toISOString();
+    persistQueue();
+    if (!batchMode) setStatus(error.message, "bad");
+    if (button) button.disabled = false;
+    render();
+    throw error;
+  }
+}
+
+const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+async function runBatch() {
+  if (!queue || batch.running) return;
+  const tasks = queue.tasks || [];
+  if (batch.cursor >= tasks.length) batch.cursor = 0;
+  batch.running = true; batch.paused = false; batch.stopRequested = false; batch.completed = 0; batch.failed = 0;
+  render(); persistQueue();
+  try {
+    for (let index = batch.cursor; index < tasks.length; index += 1) {
+      batch.cursor = index;
+      if (batch.paused) setStatus(`批量任务已暂停：下一件为第${index + 1}行。`, "");
+      while (batch.paused && !batch.stopRequested) await wait(300);
+      if (batch.stopRequested) break;
+      const task = tasks[index];
+      if (!readiness(task).ready || candidateSearchComplete(task)) { batch.cursor = index + 1; persistQueue(); continue; }
+      setStatus(`批量找同款 ${index + 1}/${tasks.length}：SKU ${task?.ozon?.sku || "-"}，当前商品完成后可暂停或停止。`);
+      try { await searchTask(task, null, { batchMode: true }); batch.completed += 1; }
+      catch { batch.failed += 1; }
+      batch.cursor = index + 1;
+      persistQueue(); render();
+    }
+  } finally {
+    const stopped = batch.stopRequested;
+    batch.running = false; batch.paused = false; batch.stopRequested = false;
+    persistQueue(); render();
+    const remaining = tasks.filter((task) => readiness(task).ready && !candidateSearchComplete(task)).length;
+    setStatus(`${stopped ? "批量任务已停止" : "批量任务本轮完成"}：新增成功${batch.completed}件，失败${batch.failed}件，剩余${remaining}件；失败项可再次批量重试。`, batch.failed ? "bad" : "ok");
+  }
 }
 
 function savePrice(task, value, sourceUrl) {
@@ -121,6 +207,7 @@ function savePrice(task, value, sourceUrl) {
   task.sourcing.platform = "pinduoduo"; task.sourcing.status = "pending_human_review"; task.sourcing.candidates = [...(task.sourcing.candidates || []), candidate]; task.sourcing.selectedCandidate = candidate;
   task.pricing.purchaseCost = candidate.purchaseCost; task.pricing.sourceUrl = candidate.sourceUrl; task.pricing.eligibleAt18Pct = candidate.purchaseCost <= limit;
   task.status = "pending_human_review"; task.audit.updatedAt = new Date().toISOString();
+  persistQueue();
   setStatus(`SKU ${task.ozon.sku}采购价已写入：${candidate.purchaseCost.toFixed(2)}元，${task.pricing.eligibleAt18Pct ? "达到" : "未达到"}18%利润门槛。`, task.pricing.eligibleAt18Pct ? "ok" : "bad");
   render();
 }
@@ -130,14 +217,20 @@ $("queueFile").addEventListener("change", async (event) => {
   try {
     const parsed = JSON.parse(await file.text());
     if (!Array.isArray(parsed.tasks)) throw new Error("JSON中缺少tasks数组。");
-    queue = parsed; sourceName = file.name; render(); setStatus(`已导入${parsed.tasks.length}件，其中${stats().ready}件可进入拼多多找品。`, "ok");
+    queue = parsed; sourceName = file.name; batch.cursor = 0; batch.completed = 0; batch.failed = 0; persistQueue(); render(); setStatus(`已导入${parsed.tasks.length}件，其中${stats().ready}件可进入拼多多找品。`, "ok");
   } catch (error) { queue = null; render(); setStatus(`导入失败：${error.message}`, "bad"); }
 });
 
 $("checkDevice").addEventListener("click", checkDevice);
 $("startDevice").addEventListener("click", async () => { try { setStatus("正在请求启动MuMu……"); const result = await api("/api/device/launch", { method: "POST", body: "{}" }); setStatus(`${result.message}请等待安卓桌面出现后再次检查。`, "ok"); } catch (error) { setStatus(error.message, "bad"); } });
 $("openPdd").addEventListener("click", async () => { try { const result = await api("/api/pinduoduo/launch", { method: "POST", body: "{}" }); setStatus(result.message, "ok"); } catch (error) { setStatus(error.message, "bad"); } });
+$("batchStart").addEventListener("click", () => { void runBatch(); });
+$("batchPause").addEventListener("click", () => { if (!batch.running) return; batch.paused = true; persistQueue(); render(); setStatus("已请求暂停；当前商品核验完成后暂停。", ""); });
+$("batchResume").addEventListener("click", () => { if (!batch.running) return; batch.paused = false; persistQueue(); render(); setStatus("批量任务已继续。", "ok"); });
+$("batchStop").addEventListener("click", () => { if (!batch.running) return; batch.stopRequested = true; batch.paused = false; persistQueue(); render(); setStatus("已请求停止；当前商品核验完成后停止并保存进度。", ""); });
 $("download").addEventListener("click", () => { if (!queue) return; const blob = new Blob([`${JSON.stringify(queue, null, 2)}\n`], { type: "application/json" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = sourceName.replace(/\.json$/i, "") + "-pinduoduo-pricing.json"; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); });
 
+const restored = restoreQueue();
 render();
+if (restored) setStatus(`已恢复本地任务：${queue.tasks.length}件，已完成找同款${stats().sourced}件，可继续批量处理。`, "ok");
 void checkDevice();

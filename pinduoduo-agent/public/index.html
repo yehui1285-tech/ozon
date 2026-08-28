@@ -8,15 +8,16 @@
 </head>
 <body>
   <main class="shell">
-    <header><div><h1>拼多多自动找同款与采购价补全</h1><p>导入已完成Ozon主图与核价的任务JSON，通过MuMu模拟器自动以图搜索并核验前3个候选详情；采购价按拼多多实际含运支付价记录。</p></div><span>MVP 2 · 候选详情与链接采集</span></header>
+    <header><div><h1>拼多多自动找同款与采购价补全</h1><p>导入已完成Ozon主图与核价的任务JSON，通过MuMu模拟器批量以图搜索并核验前3个候选详情；采购价按拼多多实际含运支付价记录。</p></div><span>MVP 3 · 批量执行与断点恢复</span></header>
     <section class="panel toolbar">
       <label class="file">选择Ozon补全JSON<input id="queueFile" type="file" accept=".json,application/json"></label>
       <button id="checkDevice">检查模拟器</button><button id="startDevice" class="secondary">启动模拟器</button><button id="openPdd" class="secondary">启动拼多多</button><button id="download" class="secondary" disabled>下载采购价补全JSON</button>
+      <button id="batchStart">批量自动找同款</button><button id="batchPause" class="secondary" disabled>暂停</button><button id="batchResume" class="secondary" disabled>继续</button><button id="batchStop" class="secondary" disabled>停止</button>
       <p id="status">请先检查模拟器，或导入已完成Ozon核价的任务JSON。</p>
     </section>
-    <section class="stats"><div><small>任务总数</small><strong id="total">0</strong></div><div><small>可进入拼多多</small><strong id="ready">0</strong></div><div><small>前置未完成</small><strong id="blocked">0</strong></div><div><small>已填采购价</small><strong id="priced">0</strong></div><div><small>达到18%</small><strong id="eligible">0</strong></div></section>
+    <section class="stats"><div><small>任务总数</small><strong id="total">0</strong></div><div><small>可进入拼多多</small><strong id="ready">0</strong></div><div><small>已完成找同款</small><strong id="sourced">0</strong></div><div><small>前置未完成</small><strong id="blocked">0</strong></div><div><small>已填采购价</small><strong id="priced">0</strong></div><div><small>达到18%</small><strong id="eligible">0</strong></div></section>
     <section class="panel">
-      <p class="notice">系统会自动下发Ozon主图、进入拼多多拍照搜索、选择最新图片，读取当前屏候选并依次核验前3个详情页的标题、详情展示价、包邮信息和商品链接。最低详情价只作预填：必须核实规格、数量及优惠资格后，才能点击“写入采购价”。</p>
+      <p class="notice">“批量自动找同款”会串行处理全部任务，跳过已完成项，失败记录后继续；暂停和停止在当前商品完成后生效。任务与游标自动保存在浏览器本地，刷新后可继续。最低详情价仍只作预填，核实规格、数量及优惠资格后才能写入采购价。</p>
       <div class="table-wrap"><table><thead><tr><th>#</th><th>主图</th><th>SKU / 商品</th><th>18%最高采购成本</th><th>阶段</th><th>模拟器</th><th>候选采购价</th><th>候选链接</th><th>结果</th><th>操作</th></tr></thead><tbody id="rows"><tr><td colspan="10" class="empty">尚未导入任务。</td></tr></tbody></table></div>
     </section>
   </main>
