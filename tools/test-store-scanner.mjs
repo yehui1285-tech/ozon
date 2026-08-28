@@ -68,6 +68,7 @@ const parsed = core.parseCardText(`
 汽车扰流板, 1 个
 选品标签：
 符合要求
+类目：汽车用品/汽车装饰
 rFBS佣金：
 12%
 14%
@@ -82,6 +83,7 @@ SKU：3258064058
 `);
 
 assert.equal(parsed.qualified, true);
+assert.equal(parsed.category, "汽车用品/汽车装饰");
 assert.equal(parsed.sku, "3258064058");
 assert.equal(parsed.price, "327,28");
 assert.deepEqual(parsed.commissions, ["12%", "14%", "18%"]);
@@ -105,6 +107,19 @@ assert.equal(pendingCompetitor.competitorReady, false);
 
 const notQualified = core.parseCardText(`rFBS佣金：\n12%\n17%\n17%\nSKU：1\n月销量：1`);
 assert.equal(notQualified.qualified, false);
+
+assert.deepEqual(core.classifyShippingRisk("专业汽车诊断仪"), {
+  type: "suspected_prohibited",
+  ruleId: "restricted-meters",
+  label: "汞温度计 / 万用表 / 剂量计 / 编程器 / 汽车诊断仪 / 辐射探测仪",
+  matchedKeyword: "汽车诊断仪",
+});
+assert.equal(core.classifyShippingRisk("无人机收纳保护盒").type, "clear");
+assert.equal(core.classifyShippingRisk("发动机胶垫固定支架").type, "clear");
+assert.equal(core.classifyShippingRisk("气动扳手套装").type, "land_only");
+assert.equal(core.classifyShippingRisk("无油打火机").type, "land_only");
+assert.equal(core.classifyShippingRisk("普通打火机").type, "suspected_prohibited");
+assert.equal(core.productShippingRisk({ name: "俄罗斯商品名", category: "食品/茶叶" }).type, "suspected_prohibited");
 
 const linkA = "https://www.ozon.ru/product/a-100/";
 const linkB = "https://www.ozon.ru/product/b-200/";
@@ -186,6 +201,26 @@ assert.equal(batchQueue.tasks[0].ozon.selectedCommission, 14);
 assert.equal(batchQueue.tasks[0].ozon.lengthMm, 1300);
 assert.equal(batchQueue.tasks[0].ozon.weightG, 3000);
 
+const riskBatchStores = {
+  hj025: {
+    storeName: "HJ025",
+    products: {
+      pending: { sku: "pending", name: "汽车诊断仪", link: "https://www.ozon.ru/product/pending-1/", shippingRisk: core.classifyShippingRisk("汽车诊断仪") },
+      allowed: { sku: "allowed", name: "无人机", link: "https://www.ozon.ru/product/allowed-2/", shippingRisk: core.classifyShippingRisk("无人机"), shippingReviewDecision: "allowed" },
+      excluded: { sku: "excluded", name: "电子烟", link: "https://www.ozon.ru/product/excluded-3/", shippingRisk: core.classifyShippingRisk("电子烟"), shippingReviewDecision: "excluded" },
+      land: { sku: "land", name: "液压钳", link: "https://www.ozon.ru/product/land-4/", shippingRisk: core.classifyShippingRisk("液压钳") },
+      clear: { sku: "clear", name: "汽车脚垫", link: "https://www.ozon.ru/product/clear-5/" },
+    },
+  },
+};
+const riskQueue = core.buildBatchTaskQueue({ batch, stores: riskBatchStores, exportedAt: "2026-08-28 12:00:00", createdAt: "2026-08-28T04:00:00.000Z" });
+assert.deepEqual(riskQueue.tasks.map((entry) => entry.ozon.sku).sort(), ["allowed", "clear", "land"]);
+assert.equal(riskQueue.summary.excludedShippingRiskCount, 2);
+assert.equal(riskQueue.tasks.find((entry) => entry.ozon.sku === "land").ozon.shippingRestriction.type, "land_only");
+assert.equal(riskQueue.tasks.find((entry) => entry.ozon.sku === "allowed").ozon.shippingRestriction, null);
+assert.match(core.buildBatchMarkdown({ batch, stores: riskBatchStores, exportedAt: "2026-08-28 12:00:00" }), /待人工复核/);
+assert.match(core.buildBatchCsv({ batch, stores: riskBatchStores }), /仅限陆运/);
+
 const scannerSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/store-scanner.js", import.meta.url), "utf8");
 assert.match(scannerSource, /const SETTLE_DELAY_MS = 1500/);
 assert.match(scannerSource, /const POLL_INTERVAL_MS = 500/);
@@ -200,6 +235,7 @@ assert.match(scannerSource, /const BACKGROUND_BOUNDARY_STABLE_REQUIRED = 5/);
 assert.match(scannerSource, /storeScanWatchdogTick/);
 assert.match(scannerSource, /document\.hidden \? "后台准确扫描"/);
 assert.match(scannerSource, /ready: parsed\.competitorReady/);
+assert.match(scannerSource, /shippingRisk: core\.classifyShippingRisk/);
 assert.match(scannerSource, /if \(!product\.competitor && previous\?\.competitor\)/);
 assert.match(scannerSource, /const productAnchors = new Set\(\)/);
 assert.match(scannerSource, /const nearbyProductAnchors = new Set\(\)/);
@@ -280,6 +316,7 @@ assert.match(backgroundSource, /message\?\.type === "clearStoreBatch"/);
 assert.match(backgroundSource, /当前批次的店铺已全部删除/);
 assert.match(backgroundSource, /startStoreBatch/);
 assert.match(backgroundSource, /resumeInterruptedBatch/);
+assert.match(backgroundSource, /setStoreProductShippingDecision/);
 
 const batchSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/batch.js", import.meta.url), "utf8");
 const batchHtmlSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/batch.html", import.meta.url), "utf8");
@@ -296,6 +333,8 @@ assert.match(batchSource, /type: "clearStoreBatch"/);
 assert.match(batchSource, /已下载到电脑的 JSON\/Markdown\/CSV 文件以及各店铺历史采集记录都会保留/);
 assert.match(batchSource, /\$\("urls"\)\.value = ""/);
 assert.match(batchSource, /getBatchStoreResults/);
+assert.match(batchSource, /data-risk-action/);
+assert.match(batchSource, /setStoreProductShippingDecision/);
 assert.match(batchSource, /function healthSummary\(task\)/);
 assert.match(batchSource, /连续 \$\{task\.noNewSkuScreens\} 屏无新增/);
 assert.doesNotMatch(batchSource, /ozonStoreQualifiedProductsV1/);
@@ -304,9 +343,11 @@ assert.match(batchHtmlSource, /<th>扫描动态<\/th>/);
 assert.match(batchHtmlSource, /row-delete/);
 assert.match(batchHtmlSource, /id="clearBatch">清空当前批次/);
 assert.match(batchHtmlSource, /id="exportJson">导出找品任务 JSON/);
+assert.match(batchHtmlSource, /id="shippingRisks"/);
+assert.match(batchHtmlSource, /禁运与运输限制复核/);
 
 const manifest = JSON.parse(fs.readFileSync(new URL("../ozon-erp-collector-extension/manifest.json", import.meta.url), "utf8"));
-assert.equal(manifest.version, "0.6.27");
+assert.equal(manifest.version, "0.6.28");
 assert.ok(manifest.permissions.includes("alarms"));
 assert.ok(manifest.permissions.includes("unlimitedStorage"));
 

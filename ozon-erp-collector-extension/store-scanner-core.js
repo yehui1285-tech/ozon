@@ -3,6 +3,68 @@
     return String(value ?? "").replace(/\r/g, "").trim();
   }
 
+  const SHIPPING_RISK_RULES = Object.freeze([
+    { id: "weapons", type: "suspected_prohibited", label: "枪支弹药 / 管制刀具 / 兵器武器", keywords: ["枪支", "枪械", "弹药", "子弹", "管制刀具", "军刀", "兵器", "武器"] },
+    { id: "dangerous-goods", type: "suspected_prohibited", label: "易燃易爆 / 气罐 / 灭火器 / 氟利昂", keywords: ["易燃", "易爆", "瓦斯罐", "煤气罐", "燃气罐", "灭火器", "氟利昂"] },
+    { id: "drugs", type: "suspected_prohibited", label: "毒品及吸毒工具", keywords: ["毒品", "吸毒工具", "冰壶", "吸毒壶"] },
+    { id: "radioactive-military", type: "suspected_prohibited", label: "放射性 / 军用及间谍装备", keywords: ["放射性", "军用装备", "间谍装备", "军用窃听"] },
+    { id: "restricted-media", type: "suspected_prohibited", label: "涉黄涉政宗教书刊影像", keywords: ["色情", "成人影像", "涉政", "宗教书刊", "宗教影像"] },
+    { id: "heritage", type: "suspected_prohibited", label: "文化遗产物品", keywords: ["文化遗产", "文物", "古董原件"] },
+    { id: "agrochemicals", type: "suspected_prohibited", label: "农药及农用化学品 / 除草剂", keywords: ["农药", "农用化学品", "除草剂", "杀虫剂原液"] },
+    { id: "bio-agriculture", type: "suspected_prohibited", label: "种子 / 土壤 / 饲料", keywords: ["种子", "土壤", "饲料"], exceptions: ["种子收纳", "种子盒", "土壤检测仪", "土壤测试仪", "饲料勺", "饲料桶"] },
+    { id: "fishing", type: "suspected_prohibited", label: "捕鱼工具 / 渔网", keywords: ["捕鱼工具", "捕鱼器", "渔网", "撒网", "捕捞网", "电鱼"] },
+    { id: "animal-equipment", type: "suspected_prohibited", label: "牲畜挤奶器 / 蛋孵化器", keywords: ["挤奶器", "挤奶机", "蛋孵化器", "孵蛋器"] },
+    { id: "living-organisms", type: "suspected_prohibited", label: "动物植物 / 骸骨及骨灰", keywords: ["活体动物", "活体植物", "宠物活体", "苗木", "动物骸骨", "人类骸骨", "骨灰"] },
+    { id: "cash-tobacco", type: "suspected_prohibited", label: "现金 / 烟草及烟具", keywords: ["现金", "烟草", "电子烟", "烟油", "水烟壶", "水烟管", "烟斗"] },
+    { id: "food-medicine", type: "suspected_prohibited", label: "食品 / 药品 / 保健品 / 茶叶 / 酒精", keywords: ["食品", "药品", "保健品", "茶叶", "酒精", "白酒", "红酒", "啤酒"], exceptions: ["食品收纳", "食品包装", "食品夹", "食品级", "药品收纳", "药盒", "茶叶罐", "茶具", "酒精测试仪", "酒精棉盒"] },
+    { id: "restricted-meters", type: "suspected_prohibited", label: "汞温度计 / 万用表 / 剂量计 / 编程器 / 汽车诊断仪 / 辐射探测仪", keywords: ["汞温度计", "水银温度计", "万用表", "剂量计", "编程器", "汽车诊断仪", "辐射探测仪"], exceptions: ["万用表表笔", "万用表测试线", "万用表保护套", "编程器外壳", "诊断仪收纳", "探测仪保护套"] },
+    { id: "controlled-machinery", type: "suspected_prohibited", label: "雕刻机 / 无人机 / 矿机", keywords: ["雕刻机", "无人机", "矿机"], exceptions: ["雕刻机配件", "雕刻机夹具", "无人机收纳", "无人机保护", "无人机支架", "无人机配件", "矿机风扇", "矿机电源"] },
+    { id: "vehicles-engine", type: "suspected_prohibited", label: "发动机 / 燃油摩托车 / 电动车 / 电动滑板车", keywords: ["发动机", "燃油摩托车", "电动车整车", "电动滑板车"], exceptions: ["发动机胶垫", "发动机支架", "发动机护板", "发动机滤芯", "发动机垫", "发动机配件", "电动车配件", "滑板车配件"] },
+    { id: "precision-medical", type: "suspected_prohibited", label: "精密仪器 / 医疗牙科美容设备 / 穿刺针", keywords: ["精密仪器", "医疗机器", "医疗设备", "牙科材料", "牙科器械", "美容院线仪器", "穿刺针"] },
+    { id: "surveillance", type: "suspected_prohibited", label: "隐藏摄像 / 干扰跟踪录音设备", keywords: ["隐藏摄像头", "针孔摄像头", "信号干扰器", "GPS跟踪器", "GPS追踪器", "录音笔"] },
+    { id: "theft-infringement", type: "suspected_prohibited", label: "偷盗工具 / 侵权产品 / 商业用品", keywords: ["万能钥匙", "开锁器", "偷盗工具", "侵权产品", "仿牌", "高仿", "复刻版", "商业用品"] },
+    { id: "pneumatic-hydraulic", type: "land_only", label: "气压 / 液压工具（仅限陆运）", keywords: ["气压", "气动", "液压"] },
+    { id: "empty-lighter", type: "land_only", label: "无汽无油打火机（仅限陆运）", keywords: ["无汽打火机", "无气打火机", "无油打火机", "空打火机", "打火机外壳"] },
+    { id: "lighter", type: "suspected_prohibited", label: "打火机（需确认无汽无油）", keywords: ["打火机"] },
+  ]);
+
+  function normalizeRiskText(value) {
+    return cleanText(value).toLocaleLowerCase("zh-CN").replace(/\s+/g, "");
+  }
+
+  function classifyShippingRisk(rawText) {
+    const text = normalizeRiskText(rawText);
+    if (!text) return { type: "clear", ruleId: "", label: "", matchedKeyword: "" };
+    for (const rule of SHIPPING_RISK_RULES) {
+      const keyword = rule.keywords.find((entry) => text.includes(normalizeRiskText(entry)));
+      if (!keyword) continue;
+      const excepted = (rule.exceptions || []).some((entry) => text.includes(normalizeRiskText(entry)));
+      if (excepted) continue;
+      return { type: rule.type, ruleId: rule.id, label: rule.label, matchedKeyword: keyword };
+    }
+    return { type: "clear", ruleId: "", label: "", matchedKeyword: "" };
+  }
+
+  function productShippingRisk(product = {}) {
+    const stored = product.shippingRisk;
+    if (stored?.type && stored.type !== "clear") return stored;
+    return classifyShippingRisk(`${cleanText(product.category)}\n${cleanText(product.name)}\n${cleanText(product.rawRiskText)}`);
+  }
+
+  function shippingReviewLabel(product = {}) {
+    const risk = productShippingRisk(product);
+    if (risk.type === "land_only") return "仅限陆运";
+    if (risk.type !== "suspected_prohibited") return "正常";
+    if (product.shippingReviewDecision === "allowed") return "已允许找品";
+    if (product.shippingReviewDecision === "excluded") return "已确认排除";
+    return "待人工复核";
+  }
+
+  function productAllowedForTaskQueue(product = {}) {
+    const risk = productShippingRisk(product);
+    return risk.type !== "suspected_prohibited" || product.shippingReviewDecision === "allowed";
+  }
+
   function createSerializedExecutor() {
     let queue = Promise.resolve();
     return (operation) => {
@@ -92,6 +154,7 @@
     const competitor = competitorState(text);
     return {
       qualified: /(?:^|\n)[ \t]*符合要求[ \t]*(?:\n|$)/.test(text),
+      category: firstMatch(text, /类目：\s*([^\n]+)/),
       sku: firstMatch(text, /SKU：\s*(\d+)/),
       price: firstMatch(text, /(\d[\d\s\u00a0\u202f]*[,.]\d{2})\s*¥/),
       commissions: [...commissionSection.matchAll(/(\d+(?:[.,]\d+)?)\s*%/g)].map((match) => `${match[1]}%`).slice(0, 3),
@@ -222,26 +285,28 @@
       `- 店铺数量：${tasks.length} 个`,
       `- 符合要求商品：${productCount} 个`,
       `- 批次状态：${batchStatusLabel(batch?.status)}`, "",
-      "| 店铺序号 | 店铺 | 状态 | 商品序号 | 商品名称 | SKU | 价格 | rFBS 佣金 | 月销量 | 发货模式 | 长宽高 | 重量 | 跟卖最低价 | 商品链接 |",
-      "| ---: | --- | --- | ---: | --- | --- | ---: | --- | ---: | --- | --- | --- | ---: | --- |",
+      "| 店铺序号 | 店铺 | 状态 | 商品序号 | 商品名称 | 类目 | SKU | 价格 | rFBS 佣金 | 月销量 | 发货模式 | 长宽高 | 重量 | 跟卖最低价 | 运输风险 | 处理状态 | 命中规则 | 商品链接 |",
+      "| ---: | --- | --- | ---: | --- | --- | --- | ---: | --- | ---: | --- | --- | --- | ---: | --- | --- | --- | --- |",
     ];
     batchProductRows(batch, stores).forEach(({ task, saved, storeIndex, productIndex, product }) => {
       const storeLink = `[${markdownCell(saved.storeName || task.sellerKey)}](${task.url})`;
       if (!product) {
-        lines.push(`| ${storeIndex + 1} | ${storeLink} | ${batchStatusLabel(task.status)} | - | 暂无符合要求的商品 | - | - | - | - | - | - | - | - | - |`);
+        lines.push(`| ${storeIndex + 1} | ${storeLink} | ${batchStatusLabel(task.status)} | - | 暂无符合要求的商品 | - | - | - | - | - | - | - | - | - | - | - | - | - |`);
         return;
       }
-      lines.push(`| ${storeIndex + 1} | ${storeLink} | ${batchStatusLabel(task.status)} | ${productIndex + 1} | ${markdownCell(product.name)} | ${markdownCell(product.sku)} | ${markdownCell(product.price)} | ${markdownCell((product.commissions || []).join(" / "))} | ${markdownCell(product.monthlySales)} | ${markdownCell(product.fulfillment)} | ${markdownCell(product.dimensions)} | ${markdownCell(product.weight)} | ${markdownCell(product.competitor)} | [打开商品](${canonicalProductLink(product.link)}) |`);
+      const risk = productShippingRisk(product);
+      lines.push(`| ${storeIndex + 1} | ${storeLink} | ${batchStatusLabel(task.status)} | ${productIndex + 1} | ${markdownCell(product.name)} | ${markdownCell(product.category)} | ${markdownCell(product.sku)} | ${markdownCell(product.price)} | ${markdownCell((product.commissions || []).join(" / "))} | ${markdownCell(product.monthlySales)} | ${markdownCell(product.fulfillment)} | ${markdownCell(product.dimensions)} | ${markdownCell(product.weight)} | ${markdownCell(product.competitor)} | ${markdownCell(risk.label || "正常")} | ${markdownCell(shippingReviewLabel(product))} | ${markdownCell(risk.matchedKeyword)} | [打开商品](${canonicalProductLink(product.link)}) |`);
     });
     lines.push("", "> 按批量任务中的店铺顺序汇总；只收录毛子 ERP 明确显示“符合要求”的商品。", "");
     return lines.join("\n");
   }
 
   function buildBatchCsv({ batch, stores = {} }) {
-    const header = ["店铺序号", "店铺名称", "店铺地址", "扫描状态", "商品序号", "商品名称", "SKU", "价格", "rFBS佣金", "月销量", "发货模式", "长宽高", "重量", "跟卖最低价", "商品链接"];
+    const header = ["店铺序号", "店铺名称", "店铺地址", "扫描状态", "商品序号", "商品名称", "类目", "SKU", "价格", "rFBS佣金", "月销量", "发货模式", "长宽高", "重量", "跟卖最低价", "运输风险", "处理状态", "命中规则", "商品链接"];
     const lines = [header.map(csvCell).join(",")];
     batchProductRows(batch, stores).forEach(({ task, saved, storeIndex, productIndex, product }) => {
-      const row = [storeIndex + 1, saved.storeName || task.sellerKey, task.url, batchStatusLabel(task.status), product ? productIndex + 1 : "", product?.name || "", product?.sku || "", product?.price || "", (product?.commissions || []).join(" / "), product?.monthlySales || "", product?.fulfillment || "", product?.dimensions || "", product?.weight || "", product?.competitor || "", product ? canonicalProductLink(product.link) : ""];
+      const risk = product ? productShippingRisk(product) : {};
+      const row = [storeIndex + 1, saved.storeName || task.sellerKey, task.url, batchStatusLabel(task.status), product ? productIndex + 1 : "", product?.name || "", product?.category || "", product?.sku || "", product?.price || "", (product?.commissions || []).join(" / "), product?.monthlySales || "", product?.fulfillment || "", product?.dimensions || "", product?.weight || "", product?.competitor || "", risk.label || "", product ? shippingReviewLabel(product) : "", risk.matchedKeyword || "", product ? canonicalProductLink(product.link) : ""];
       lines.push(row.map(csvCell).join(","));
     });
     return lines.join("\r\n");
@@ -249,7 +314,7 @@
 
   function buildBatchTaskQueue({ batch, stores = {}, exportedAt, createdAt = new Date().toISOString() }) {
     const tasks = batchProductRows(batch, stores)
-      .filter((entry) => entry.product)
+      .filter((entry) => entry.product && productAllowedForTaskQueue(entry.product))
       .map(({ task, saved, storeIndex, productIndex, product }) => {
         const pagePrice = numericValue(product.price);
         const competitorPrice = /无|暂无|没有跟卖|^[-—]+$/i.test(cleanText(product.competitor)) ? null : numericValue(product.competitor);
@@ -281,6 +346,7 @@
           ozon: {
             sku: cleanText(product.sku),
             name: cleanText(product.name),
+            category: cleanText(product.category),
             productUrl: canonicalProductLink(product.link),
             pagePrice,
             competitorPrice,
@@ -291,6 +357,10 @@
             fulfillment: cleanText(product.fulfillment),
             ...size,
             weightG: weightGrams(product.weight),
+            shippingRestriction: (() => {
+              const risk = productShippingRisk(product);
+              return risk.type === "land_only" ? { type: "land_only", label: risk.label, matchedKeyword: risk.matchedKeyword } : null;
+            })(),
           },
           enrichment: {
             status: "pending",
@@ -334,6 +404,7 @@
         parsedProductCount: tasks.length,
         storeCount: new Set(tasks.map((entry) => entry.source.storeUrl || entry.source.storeName)).size,
         pendingEnrichmentCount: tasks.length,
+        excludedShippingRiskCount: batchProductRows(batch, stores).filter((entry) => entry.product && !productAllowedForTaskQueue(entry.product)).length,
       },
       selection: { strategy: "all", count: tasks.length },
       tasks,
@@ -402,14 +473,15 @@
       `- 符合要求：${sorted.length} 个`,
       `- 扫描状态：${scanComplete ? "已到达店铺商品末尾" : "阶段性结果，扫描尚未确认完成"}`,
       "",
-      "| 序号 | 商品名称 | SKU | 价格 | rFBS 佣金 | 月销量 | 发货模式 | 长宽高 | 重量 | 跟卖最低价 | 商品链接 |",
-      "| ---: | --- | --- | ---: | --- | ---: | --- | --- | --- | ---: | --- |",
+      "| 序号 | 商品名称 | 类目 | SKU | 价格 | rFBS 佣金 | 月销量 | 发货模式 | 长宽高 | 重量 | 跟卖最低价 | 运输风险 | 处理状态 | 命中规则 | 商品链接 |",
+      "| ---: | --- | --- | --- | ---: | --- | ---: | --- | --- | --- | ---: | --- | --- | --- | --- |",
     ];
     if (!sorted.length) {
-      lines.push("| - | 暂无符合要求的商品 | - | - | - | - | - | - | - | - | - |");
+      lines.push("| - | 暂无符合要求的商品 | - | - | - | - | - | - | - | - | - | - | - | - | - |");
     } else {
       sorted.forEach((product, index) => {
-        lines.push(`| ${index + 1} | ${markdownCell(product.name)} | ${markdownCell(product.sku)} | ${markdownCell(product.price)} | ${markdownCell((product.commissions || []).join(" / "))} | ${markdownCell(product.monthlySales)} | ${markdownCell(product.fulfillment)} | ${markdownCell(product.dimensions)} | ${markdownCell(product.weight)} | ${markdownCell(product.competitor)} | [打开商品](${canonicalProductLink(product.link)}) |`);
+        const risk = productShippingRisk(product);
+        lines.push(`| ${index + 1} | ${markdownCell(product.name)} | ${markdownCell(product.category)} | ${markdownCell(product.sku)} | ${markdownCell(product.price)} | ${markdownCell((product.commissions || []).join(" / "))} | ${markdownCell(product.monthlySales)} | ${markdownCell(product.fulfillment)} | ${markdownCell(product.dimensions)} | ${markdownCell(product.weight)} | ${markdownCell(product.competitor)} | ${markdownCell(risk.label || "正常")} | ${markdownCell(shippingReviewLabel(product))} | ${markdownCell(risk.matchedKeyword)} | [打开商品](${canonicalProductLink(product.link)}) |`);
       });
     }
     lines.push("", "> 只收录毛子 ERP 商品卡片中明确显示“符合要求”标签的商品；“您可能喜欢”区域不计入店铺结果。", "");
@@ -424,6 +496,7 @@
     buildBatchTaskQueue,
     buildMarkdown,
     canonicalProductLink,
+    classifyShippingRisk,
     classifyStoreFinish,
     cleanText,
     competitorState,
@@ -434,11 +507,14 @@
     parseStoreUrlList,
     removeBatchStoreTask,
     safeFilePart,
+    productAllowedForTaskQueue,
+    productShippingRisk,
     sellerKeyFromUrl,
     storeResultStorageKey,
     mergeAttemptObservedSkus,
     mergeStoreState,
     shouldAutoSkipStore,
+    shippingReviewLabel,
     normalizeSellerUrl,
   });
 })(globalThis);

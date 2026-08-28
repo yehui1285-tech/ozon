@@ -257,10 +257,12 @@
           weight: parsed.weight,
           competitor: parsed.competitor,
         };
+        const name = productName(links, link);
         const product = parsed.qualified ? {
           ...parsed,
-          name: productName(links, link),
+          name,
           link,
+          shippingRisk: core.classifyShippingRisk(`${parsed.category}\n${name}\n${text}`),
           foundAt: new Date().toISOString(),
         } : null;
         cached = { signature, link, loaded, product };

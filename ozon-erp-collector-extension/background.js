@@ -703,6 +703,33 @@ async function enrichStoreProductBySku(message = {}) {
   return { ok: true, updatedStores };
 }
 
+async function setStoreProductShippingDecision(message = {}) {
+  const sellerKey = String(message.sellerKey || "").trim();
+  const sku = String(message.sku || "").trim();
+  const decision = String(message.decision || "").trim();
+  if (!sellerKey || !sku) throw new Error("缺少店铺或商品SKU。");
+  if (!["allowed", "excluded", "pending"].includes(decision)) throw new Error("无效的禁运复核操作。");
+  const state = await enqueueStoreOperation(async () => {
+    const storageKey = storeScannerCore.storeResultStorageKey(sellerKey);
+    const current = storageKey ? (await chrome.storage.local.get(storageKey))[storageKey] : null;
+    const product = current?.products?.[sku];
+    if (!product) throw new Error("未找到对应的店铺商品记录。");
+    const nextProduct = {
+      ...product,
+      shippingReviewDecision: decision === "pending" ? null : decision,
+      shippingReviewedAt: decision === "pending" ? null : new Date().toISOString(),
+    };
+    const next = {
+      ...current,
+      products: { ...current.products, [sku]: nextProduct },
+      updatedAt: new Date().toISOString(),
+    };
+    await chrome.storage.local.set({ [storageKey]: next });
+    return next;
+  });
+  return { ok: true, state };
+}
+
 async function getBatchStoreResults(message = {}) {
   const sellerKeys = [...new Set((message.sellerKeys || []).map(String).filter(Boolean))];
   const stores = await enqueueStoreOperation(async () => {
@@ -1231,6 +1258,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   else if (message?.type === "getStoreScanState") operation = getStoreScanState(message);
   else if (message?.type === "saveStoreScanState") operation = saveStoreScanState(message);
   else if (message?.type === "enrichStoreProductBySku") operation = enrichStoreProductBySku(message);
+  else if (message?.type === "setStoreProductShippingDecision") operation = setStoreProductShippingDecision(message);
   else if (message?.type === "getBatchStoreResults") operation = getBatchStoreResults(message);
   else if (message?.type === "openBatchManager") operation = chrome.tabs.create({ url: chrome.runtime.getURL("batch.html") }).then(() => ({ ok: true }));
   else if (message?.type === "openSourcingEnrichment") operation = chrome.tabs.create({ url: chrome.runtime.getURL("sourcing-enrichment.html") }).then(() => ({ ok: true }));
