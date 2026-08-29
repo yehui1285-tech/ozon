@@ -303,7 +303,7 @@ async function waitForFavoriteControl(goodsId, { requireFavorited = false, timeo
   return { ...lastState, route: null };
 }
 
-async function favoriteCandidate(body = {}) {
+async function openCandidateDetail(body = {}) {
   const sourceUrl = String(body.sourceUrl || "").trim();
   const goodsId = pinduoduoProductGoodsId(sourceUrl);
   if (!goodsId) throw new Error("候选商品链接不是受信任的拼多多商品地址。");
@@ -313,6 +313,19 @@ async function favoriteCandidate(body = {}) {
   const canonicalUrl = `https://mobile.yangkeduo.com/goods.html?goods_id=${goodsId}`;
   await adb(["shell", "am", "start", "-a", "android.intent.action.VIEW", "-d", canonicalUrl, "-p", PINDUODUO_PACKAGE]);
   const initial = await waitForFavoriteControl(goodsId, { timeoutMs: 15000 });
+  if (!initial.route || initial.status === "unknown") throw new Error("拼多多App未能打开指定候选商品详情页。");
+  return { goodsId, sourceUrl: canonicalUrl, favoriteState: initial.status, favoriteNode: initial.node };
+}
+
+async function openCandidate(body = {}) {
+  const opened = await openCandidateDetail(body);
+  return { ok: true, status: "opened_in_app", goodsId: opened.goodsId, sourceUrl: opened.sourceUrl, favoriteState: opened.favoriteState, message: "已在MuMu拼多多App中打开候选商品。" };
+}
+
+async function favoriteCandidate(body = {}) {
+  const opened = await openCandidateDetail(body);
+  const { goodsId, sourceUrl: canonicalUrl } = opened;
+  const initial = { status: opened.favoriteState, node: opened.favoriteNode };
   if (initial.status === "favorited") {
     return { ok: true, status: "favorited", alreadyFavorited: true, goodsId, sourceUrl: canonicalUrl, message: "该候选商品已经收藏。" };
   }
@@ -402,6 +415,7 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "POST" && url.pathname === "/api/device/screenshot") return json(response, 200, await captureScreenshot());
     if (request.method === "POST" && url.pathname === "/api/task/prepare") return json(response, 200, await prepareTask(await readJsonBody(request)));
     if (request.method === "POST" && url.pathname === "/api/task/search") return json(response, 200, await searchTask(await readJsonBody(request)));
+    if (request.method === "POST" && url.pathname === "/api/pinduoduo/open") return json(response, 200, await openCandidate(await readJsonBody(request)));
     if (request.method === "POST" && url.pathname === "/api/pinduoduo/favorite") return json(response, 200, await favoriteCandidate(await readJsonBody(request)));
     if (request.method === "POST" && url.pathname === "/api/ai/judge") return json(response, 200, { ok: true, ...(await judgeTaskWithQwen(await readJsonBody(request))) });
     if (request.method === "GET" && await evidenceFile(url.pathname, response)) return;

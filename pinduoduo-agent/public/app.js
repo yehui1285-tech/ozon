@@ -1,7 +1,7 @@
 let queue = null;
 let sourceName = "ozon-sourcing.json";
 const storageKey = "ozon-pinduoduo-agent-mvp3";
-const appVersion = "MVP 4.3";
+const appVersion = "MVP 4.4";
 const batch = { running: false, paused: false, riskPaused: false, pauseReason: "", stopRequested: false, cursor: 0, completed: 0, failed: 0 };
 const aiBatch = { running: false, completed: 0, failed: 0, riskPaused: false, pauseReason: "" };
 const batchDelayRangeMs = { min: 12000, max: 25000 };
@@ -149,7 +149,9 @@ function render() {
         const detailPrice = candidate?.detail?.displayedPrice ?? candidate.displayedPrice;
         const shipping = candidate?.detail?.shippingFee === 0 ? "包邮" : "运费待核";
         const label = `候选${candidateIndex + 1}：${money(detailPrice)}元，${shipping}`;
-        if (candidate.sourceUrl) { const anchor = document.createElement("a"); anchor.href = candidate.sourceUrl; anchor.target = "_blank"; anchor.rel = "noopener noreferrer"; anchor.textContent = label; line.append(anchor); }
+        if (candidate.sourceUrl) {
+          const open = document.createElement("button"); open.className = "candidate-app-open"; open.textContent = `${label} · 在App打开`; open.disabled = batch.running || aiBatch.running; open.addEventListener("click", async () => { await openCandidateInApp(task, candidate, open); }); line.append(open);
+        }
         else {
           const detailStatus = candidate?.detail?.detailStatus;
           const stateText = detailStatus === "detail_not_inspected" ? "未核验"
@@ -265,6 +267,23 @@ async function searchTask(task, button = null, { batchMode = false } = {}) {
     if (button) button.disabled = false;
     render();
     throw error;
+  }
+}
+
+async function openCandidateInApp(task, candidate, button = null) {
+  const sourceUrl = candidate?.sourceUrl || candidate?.detail?.sourceUrl || "";
+  if (!sourceUrl) return;
+  if (button) { button.disabled = true; button.textContent = "正在MuMu中打开……"; }
+  setStatus(`SKU ${task?.ozon?.sku || "-"}：正在MuMu拼多多App中打开候选商品……`);
+  try {
+    const result = await api("/api/pinduoduo/open", { method: "POST", body: JSON.stringify({ taskId: task.taskId, sourceUrl }) });
+    if (button) button.textContent = "App已打开";
+    setStatus(`SKU ${task?.ozon?.sku || "-"}：${result.message || "已在拼多多App中打开候选商品。"}`, "ok");
+  } catch (error) {
+    if (button) button.textContent = "打开失败，重试";
+    setStatus(error.message || String(error), "bad");
+  } finally {
+    if (button) button.disabled = batch.running || aiBatch.running;
   }
 }
 

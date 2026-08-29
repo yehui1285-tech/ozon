@@ -3,4 +3,6 @@
 .ai-result{min-width:150px;max-width:260px;line-height:1.45}
 .ai-result strong,.ai-result small{display:block}
 .ai-result small{margin-top:3px;color:#68758e}
+.candidate-app-open{min-height:0;padding:0;border:0;border-radius:0;background:transparent;color:#315bd6;font-size:11px;font-weight:500;text-align:left}
+.candidate-app-open:hover{text-decoration:underline}
 @media(max-width:1100px){.stats{grid-template-columns:repeat(4,1fr)}}
