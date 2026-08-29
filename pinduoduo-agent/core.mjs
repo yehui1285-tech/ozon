@@ -251,6 +251,19 @@ export function reconcilePinduoduoDisplayedPrice(searchPrice, detailPrice, rawPr
   return { displayedPrice: detail, priceSource: "detail" };
 }
 
+export function candidateInspectionOrder(candidates = []) {
+  const list = Array.isArray(candidates) ? candidates : [];
+  if (!list.length) return [];
+  const lowestIndex = list.reduce((bestIndex, candidate, index) => {
+    const price = Number(candidate?.displayedPrice);
+    const bestPrice = Number(list[bestIndex]?.displayedPrice);
+    if (!(price > 0)) return bestIndex;
+    if (!(bestPrice > 0) || price < bestPrice) return index;
+    return bestIndex;
+  }, 0);
+  return [lowestIndex, ...list.map((_, index) => index).filter((index) => index !== lowestIndex)];
+}
+
 export function parsePinduoduoRoute(output) {
   const source = String(output || "");
   const match = /"url"\s*:\s*"(goods\.html\?[^"\r\n]+)"/.exec(source);

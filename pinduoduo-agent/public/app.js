@@ -127,7 +127,14 @@ function render() {
         const shipping = candidate?.detail?.shippingFee === 0 ? "包邮" : "运费待核";
         const label = `候选${candidateIndex + 1}：${money(detailPrice)}元，${shipping}`;
         if (candidate.sourceUrl) { const anchor = document.createElement("a"); anchor.href = candidate.sourceUrl; anchor.target = "_blank"; anchor.rel = "noopener noreferrer"; anchor.textContent = label; line.append(anchor); }
-        else line.textContent = `${label}（链接未取得）`;
+        else {
+          const detailStatus = candidate?.detail?.detailStatus;
+          const stateText = detailStatus === "detail_not_inspected" ? "未核验"
+            : detailStatus === "detail_failed" ? `详情读取失败（已重试${candidate?.detail?.attemptCount || 2}次）`
+              : "链接解析失败";
+          line.textContent = `${label}（${stateText}）`;
+          if (candidate?.detail?.error) line.title = candidate.detail.error;
+        }
         if (candidate?.evidence?.localRef) { const evidence = document.createElement("a"); evidence.href = candidate.evidence.localRef; evidence.target = "_blank"; evidence.rel = "noopener noreferrer"; evidence.textContent = " [证据图]"; line.append(evidence); }
         list.append(line);
       });
@@ -174,11 +181,11 @@ async function checkDevice() {
 async function checkAiStatus() {
   try {
     const result = await api("/api/ai/status");
-    $("modelStatus").textContent = result.status.configured ? `MVP 4 · ${result.status.model}已配置` : `MVP 4 · ${result.status.model}待配置密钥`;
+    $("modelStatus").textContent = result.status.configured ? `MVP 4.1 · ${result.status.model}已配置` : `MVP 4.1 · ${result.status.model}待配置密钥`;
     $("modelStatus").className = result.status.configured ? "ok" : "bad";
     return result.status;
   } catch {
-    $("modelStatus").textContent = "MVP 4 · AI状态检查失败";
+    $("modelStatus").textContent = "MVP 4.1 · AI状态检查失败";
     $("modelStatus").className = "bad";
     return null;
   }

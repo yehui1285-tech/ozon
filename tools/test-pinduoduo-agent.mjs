@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { aiJudgementReadiness, applySelectedCandidate, detectPinduoduoRiskPage, extractPinduoduoCandidates, extractPinduoduoDetail, findUiNode, isTrustedOzonImageUrl, normalizeAiJudgement, parseMumuInfo, parsePinduoduoRoute, parseUiNodes, queueStats, reconcilePinduoduoDisplayedPrice, safeTaskFileName, taskReadiness } from "../pinduoduo-agent/core.mjs";
+import { aiJudgementReadiness, applySelectedCandidate, candidateInspectionOrder, detectPinduoduoRiskPage, extractPinduoduoCandidates, extractPinduoduoDetail, findUiNode, isTrustedOzonImageUrl, normalizeAiJudgement, parseMumuInfo, parsePinduoduoRoute, parseUiNodes, queueStats, reconcilePinduoduoDisplayedPrice, safeTaskFileName, taskReadiness } from "../pinduoduo-agent/core.mjs";
 
 assert.equal(isTrustedOzonImageUrl("https://ir.ozone.ru/s3/multimedia-test/wc1000/1.jpg"), true);
 assert.equal(isTrustedOzonImageUrl("http://ir.ozone.ru/s3/multimedia-test/1.jpg"), false);
@@ -77,6 +77,8 @@ assert.deepEqual(normalizeAiJudgement({ bestCandidateIndex: 1, verdict: "same_pr
   candidateAssessments: [{ candidateIndex: 1, verdict: "same_product", confidence: 91, differences: [] }],
 });
 assert.equal(normalizeAiJudgement({ bestCandidateIndex: 4, verdict: "same_product", confidence: 70, needsHumanReview: false }, 3).needsHumanReview, true);
+assert.deepEqual(candidateInspectionOrder([{ displayedPrice: 160.36 }, { displayedPrice: 180 }, { displayedPrice: 139 }, { displayedPrice: 188 }]), [2, 0, 1, 3]);
+assert.deepEqual(candidateInspectionOrder([{ displayedPrice: 67.2 }, { displayedPrice: 139 }, { displayedPrice: 71 }, { displayedPrice: 48 }]), [3, 0, 1, 2]);
 
 const serverSource = fs.readFileSync(new URL("../pinduoduo-agent/server.mjs", import.meta.url), "utf8");
 const appSource = fs.readFileSync(new URL("../pinduoduo-agent/public/app.js", import.meta.url), "utf8");
@@ -89,6 +91,9 @@ assert.match(serverSource, /x-ozon-agent/);
 assert.match(serverSource, /PINDUODUO_RISK_CONTROL/);
 assert.match(serverSource, /captureCandidateEvidence/);
 assert.match(serverSource, /\/api\/ai\/judge/);
+assert.match(serverSource, /inspectCandidateDetail/);
+assert.match(serverSource, /maxAttempts = 2/);
+assert.match(serverSource, /completed >= successLimit/);
 assert.match(appSource, /pending_pinduoduo_search/);
 assert.match(appSource, /x-ozon-agent/);
 assert.match(appSource, /eligibleAt18Pct/);
@@ -102,6 +107,9 @@ assert.match(appSource, /batchDelayRangeMs/);
 assert.match(appSource, /paused_risk_control/);
 assert.match(appSource, /async function runAiBatch/);
 assert.match(appSource, /aiJudgement/);
+assert.match(appSource, /detail_not_inspected/);
+assert.match(appSource, /详情读取失败/);
+assert.doesNotMatch(appSource, /链接未取得/);
 assert.match(qwenSource, /qwen3\.7-flash/);
 assert.match(qwenSource, /enable_thinking: false/);
 assert.match(qwenSource, /response_format/);

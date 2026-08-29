@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { PINDUODUO_PACKAGE, detectPinduoduoRiskPage, extractPinduoduoCandidates, extractPinduoduoDetail, findUiNode, isTrustedOzonImageUrl, parseMumuInfo, parsePinduoduoRoute, parseUiNodes, reconcilePinduoduoDisplayedPrice, safeTaskFileName } from "./core.mjs";
+import { PINDUODUO_PACKAGE, candidateInspectionOrder, detectPinduoduoRiskPage, extractPinduoduoCandidates, extractPinduoduoDetail, findUiNode, isTrustedOzonImageUrl, parseMumuInfo, parsePinduoduoRoute, parseUiNodes, reconcilePinduoduoDisplayedPrice, safeTaskFileName } from "./core.mjs";
 import { judgeTaskWithQwen, qwenStatus } from "./qwen-client.mjs";
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
@@ -228,10 +228,9 @@ async function captureCandidateEvidence(taskId, candidateId, goodsId) {
   };
 }
 
-async function inspectVisibleCandidates(taskId, candidates, limit = 3) {
-  const inspected = [];
-  for (const [index, candidate] of candidates.slice(0, limit).entries()) {
-    let navigationError = null;
+async function inspectCandidateDetail(taskId, candidate, index, maxAttempts = 2) {
+  let lastError = "";
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
       const resultUi = await returnToSearchResults();
       const currentCandidates = extractPinduoduoCandidates(resultUi.nodes);
@@ -244,31 +243,47 @@ async function inspectVisibleCandidates(taskId, candidates, limit = 3) {
       const reconciledPrice = reconcilePinduoduoDisplayedPrice(current.displayedPrice, detail.displayedPrice, detail.rawPriceText);
       const evidence = await captureCandidateEvidence(taskId, candidate.candidateId || `candidate-${index + 1}`, detail.goodsId)
         .catch((error) => ({ status: "capture_failed", error: error.message || String(error), capturedAt: new Date().toISOString() }));
-      inspected.push({ ...candidate, bounds: current.bounds, priceBounds: current.priceBounds, sourceUrl: detail.sourceUrl, detail: { ...detail, ...reconciledPrice }, evidence });
+      return { ...candidate, bounds: current.bounds, priceBounds: current.priceBounds, sourceUrl: detail.sourceUrl, detail: { ...detail, ...reconciledPrice, attemptCount: attempt }, evidence };
     } catch (error) {
       if (error?.code === "PINDUODUO_RISK_CONTROL") throw error;
-      inspected.push({ ...candidate, detail: { detailStatus: "detail_failed", error: error.message || String(error), capturedAt: new Date().toISOString() } });
+      lastError = error.message || String(error);
     } finally {
       try {
         await returnToSearchResults();
       } catch (error) {
         if (error?.code === "PINDUODUO_RISK_CONTROL") throw error;
-        navigationError = error;
+        lastError = lastError || error.message || String(error);
       }
     }
-    if (navigationError) break;
+    if (attempt < maxAttempts) await delay(700);
   }
-  return inspected;
+  return { ...candidate, detail: { detailStatus: "detail_failed", error: lastError || "候选详情读取失败。", attemptCount: maxAttempts, capturedAt: new Date().toISOString() } };
+}
+
+async function inspectVisibleCandidates(taskId, candidates, successLimit = 3) {
+  const list = Array.isArray(candidates) ? candidates : [];
+  const inspectedByIndex = new Map();
+  let completed = 0;
+  for (const index of candidateInspectionOrder(list)) {
+    if (completed >= successLimit) break;
+    const result = await inspectCandidateDetail(taskId, list[index], index, 2);
+    inspectedByIndex.set(index, result);
+    if (result.detail?.detailStatus === "detail_captured") completed += 1;
+  }
+  return list.map((candidate, index) => inspectedByIndex.get(index) || {
+    ...candidate,
+    detail: {
+      detailStatus: "detail_not_inspected",
+      reason: completed >= successLimit ? `已取得${successLimit}个完整候选` : "本轮未进入详情核验",
+      capturedAt: new Date().toISOString(),
+    },
+  });
 }
 
 async function searchTask(body) {
   const prepared = await prepareTask(body);
   const search = await startImageSearch();
-  const inspected = await inspectVisibleCandidates(prepared.taskId, search.candidates, 3);
-  const candidates = [
-    ...inspected,
-    ...search.candidates.slice(inspected.length).map((candidate) => ({ ...candidate, detail: { detailStatus: "detail_not_inspected", capturedAt: new Date().toISOString() } })),
-  ];
+  const candidates = await inspectVisibleCandidates(prepared.taskId, search.candidates, 3);
   const detailCompleted = candidates.filter((candidate) => candidate.detail?.detailStatus === "detail_captured").length;
   return { ok: true, taskId: prepared.taskId, remotePath: prepared.remotePath, ...search, candidates, detailCompleted, message: `${search.message} 已完成${detailCompleted}个候选详情核验。` };
 }
