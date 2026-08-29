@@ -169,8 +169,12 @@ function findUiNodeContaining(nodes, terms) {
 
 async function closeSkuSheet() {
   const ui = await captureUi().catch(() => null);
-  const close = findUiNode(ui?.nodes, ["关闭"]);
+  const sheet = ui ? extractPinduoduoSkuSheet(ui.nodes) : null;
+  const hasPurchaseOverlay = Boolean(ui && (sheet?.selectedText || Number(sheet?.submitPrice) > 0 || findUiNodeContaining(ui.nodes, ["提交订单", "已选:", "已选："])));
+  const close = hasPurchaseOverlay ? findUiNode(ui?.nodes, ["关闭"]) : null;
   if (close?.bounds) await tapBounds(close.bounds);
+  if (close?.bounds) await delay(350);
+  return Boolean(close?.bounds);
 }
 
 async function waitForSkuSheet(timeoutMs = 10000) {
@@ -281,19 +285,44 @@ async function captureCurrentRoute() {
 
 async function waitForCandidateDetail(timeoutMs = 12000) {
   const startedAt = Date.now();
-  let lastDetail = null;
+  let bestDetail = null;
   while (Date.now() - startedAt < timeoutMs) {
     const ui = await captureUi();
+    if (findUiNode(ui.nodes, ["搜图片同款"])) {
+      await delay(500);
+      continue;
+    }
     const route = await captureCurrentRoute();
-    lastDetail = extractPinduoduoDetail(ui.nodes, route);
-    if (lastDetail.detailStatus === "detail_captured") return lastDetail;
+    const current = extractPinduoduoDetail(ui.nodes, route);
+    const merged = {
+      ...(bestDetail || {}),
+      ...current,
+      title: current.title || bestDetail?.title || "",
+      displayedPrice: current.displayedPrice || bestDetail?.displayedPrice || null,
+      rawPriceText: current.rawPriceText || bestDetail?.rawPriceText || "",
+      goodsId: current.goodsId || bestDetail?.goodsId || "",
+      sourceUrl: current.sourceUrl || bestDetail?.sourceUrl || "",
+      thumbnailUrl: current.thumbnailUrl || bestDetail?.thumbnailUrl || "",
+      shippingIncluded: Boolean(current.shippingIncluded || bestDetail?.shippingIncluded),
+      shippingFee: current.shippingFee === 0 || bestDetail?.shippingFee === 0 ? 0 : null,
+      visibleLabels: [...new Set([...(bestDetail?.visibleLabels || []), ...(current.visibleLabels || [])])].slice(0, 20),
+    };
+    merged.missingFields = [
+      ...(!merged.goodsId ? ["goods_id"] : []),
+      ...(!merged.title ? ["title"] : []),
+      ...(!(Number(merged.displayedPrice) > 0) ? ["price"] : []),
+    ];
+    merged.detailStatus = merged.missingFields.length === 0 ? "detail_captured" : merged.goodsId ? "detail_partial" : "detail_incomplete";
+    bestDetail = merged;
+    if (bestDetail.detailStatus === "detail_captured") return bestDetail;
     await delay(500);
   }
-  return lastDetail;
+  return bestDetail;
 }
 
 async function returnToSearchResults(maxBackPresses = 3) {
   for (let attempt = 0; attempt <= maxBackPresses; attempt += 1) {
+    await closeSkuSheet();
     const ui = await captureUi();
     if (findUiNode(ui.nodes, ["搜图片同款"])) return ui;
     if (attempt < maxBackPresses) {
@@ -325,6 +354,9 @@ async function captureCandidateEvidence(taskId, candidateId, goodsId) {
 
 async function inspectCandidateDetail(taskId, candidate, index, maxAttempts = 2) {
   let lastError = "";
+  let bestPartial = null;
+  let bestObserved = null;
+  let bestPartialEvidence = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
       const resultUi = await returnToSearchResults();
@@ -334,7 +366,16 @@ async function inspectCandidateDetail(taskId, candidate, index, maxAttempts = 2)
         || candidate;
       await tapBounds(current.bounds);
       const detail = await waitForCandidateDetail(12000);
-      if (!detail || detail.detailStatus !== "detail_captured") throw new Error("详情标题、价格或商品ID未完整加载。");
+      if (detail && (!bestObserved || (detail.missingFields?.length || 3) < (bestObserved.missingFields?.length || 3))) bestObserved = detail;
+      if (detail?.sourceUrl && (!bestPartial || (detail.missingFields?.length || 3) < (bestPartial.missingFields?.length || 3))) {
+        bestPartial = detail;
+        bestPartialEvidence = await captureCandidateEvidence(taskId, candidate.candidateId || `candidate-${index + 1}`, detail.goodsId)
+          .catch((error) => ({ status: "capture_failed", error: error.message || String(error), capturedAt: new Date().toISOString() }));
+      }
+      if (!detail || detail.detailStatus !== "detail_captured") {
+        const missing = detail?.missingFields?.length ? detail.missingFields.join(",") : "unknown";
+        throw new Error(`候选详情未完整加载，缺少字段：${missing}`);
+      }
       const reconciledPrice = reconcilePinduoduoDisplayedPrice(current.displayedPrice, detail.displayedPrice, detail.rawPriceText);
       const evidence = await captureCandidateEvidence(taskId, candidate.candidateId || `candidate-${index + 1}`, detail.goodsId)
         .catch((error) => ({ status: "capture_failed", error: error.message || String(error), capturedAt: new Date().toISOString() }));
@@ -350,9 +391,17 @@ async function inspectCandidateDetail(taskId, candidate, index, maxAttempts = 2)
         lastError = lastError || error.message || String(error);
       }
     }
-    if (attempt < maxAttempts) await delay(700);
+    if (attempt < maxAttempts) await delay(700 + Math.floor(Math.random() * 500));
   }
-  return { ...candidate, detail: { detailStatus: "detail_failed", error: lastError || "候选详情读取失败。", attemptCount: maxAttempts, capturedAt: new Date().toISOString() } };
+  if (bestPartial?.sourceUrl) {
+    return {
+      ...candidate,
+      sourceUrl: bestPartial.sourceUrl,
+      detail: { ...bestPartial, detailStatus: "detail_partial", error: lastError, attemptCount: maxAttempts },
+      evidence: bestPartialEvidence,
+    };
+  }
+  return { ...candidate, detail: { ...(bestObserved || {}), detailStatus: "detail_failed", missingFields: bestObserved?.missingFields || ["goods_id", "title", "price"], error: lastError || "候选详情读取失败。", attemptCount: maxAttempts, capturedAt: new Date().toISOString() } };
 }
 
 async function inspectVisibleCandidates(taskId, candidates, successLimit = 3) {
@@ -364,6 +413,7 @@ async function inspectVisibleCandidates(taskId, candidates, successLimit = 3) {
     const result = await inspectCandidateDetail(taskId, list[index], index, 2);
     inspectedByIndex.set(index, result);
     if (result.detail?.detailStatus === "detail_captured") completed += 1;
+    if (completed < successLimit) await delay(1200 + Math.floor(Math.random() * 1401));
   }
   return list.map((candidate, index) => inspectedByIndex.get(index) || {
     ...candidate,

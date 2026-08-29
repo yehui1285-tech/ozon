@@ -3,7 +3,7 @@ import { applyFinalOzonPricing, preliminaryPricingDecision } from "./pricing-flo
 let queue = null;
 let sourceName = "ozon-sourcing.json";
 const storageKey = "ozon-pinduoduo-agent-mvp3";
-const appVersion = "MVP 5.0";
+const appVersion = "MVP 5.1";
 const batch = { running: false, paused: false, riskPaused: false, pauseReason: "", stopRequested: false, cursor: 0, completed: 0, failed: 0 };
 const aiBatch = { running: false, completed: 0, failed: 0, riskPaused: false, pauseReason: "" };
 const skuBatch = { running: false, completed: 0, failed: 0 };
@@ -161,16 +161,21 @@ function render() {
       const list = document.createElement("small");
       task.sourcing.searchCandidates.forEach((candidate, candidateIndex) => {
         const line = document.createElement("div");
-        const detailPrice = candidate?.detail?.displayedPrice ?? candidate.displayedPrice;
+        const detailStatus = candidate?.detail?.detailStatus;
+        const hasDetailPrice = Number(candidate?.detail?.displayedPrice) > 0;
+        const detailPrice = hasDetailPrice ? candidate.detail.displayedPrice : candidate.displayedPrice;
         const shipping = candidate?.detail?.shippingFee === 0 ? "包邮" : "运费待核";
-        const label = `候选${candidateIndex + 1}：页面最低价${money(detailPrice)}元，${shipping}`;
+        const priceSource = hasDetailPrice ? "详情价" : "搜索页价";
+        const missingLabels = (candidate?.detail?.missingFields || []).map((field) => ({ goods_id: "商品ID", title: "标题", price: "价格" }[field] || field));
+        const partialState = detailStatus === "detail_partial" ? `，链接已取得，详情缺${missingLabels.join("/") || "字段"}` : "";
+        const label = `候选${candidateIndex + 1}：${priceSource}${money(detailPrice)}元，${shipping}${partialState}`;
         if (candidate.sourceUrl) {
           const open = document.createElement("button"); open.className = "candidate-app-open"; open.textContent = `${label} · 在App打开`; open.disabled = batch.running || aiBatch.running || skuBatch.running; open.addEventListener("click", async () => { await openCandidateInApp(task, candidate, open); }); line.append(open);
+          if (detailStatus === "detail_partial" && candidate?.detail?.error) line.title = candidate.detail.error;
         }
         else {
-          const detailStatus = candidate?.detail?.detailStatus;
           const stateText = detailStatus === "detail_not_inspected" ? "未核验"
-            : detailStatus === "detail_failed" ? `详情读取失败（已重试${candidate?.detail?.attemptCount || 2}次）`
+            : detailStatus === "detail_failed" ? `详情读取失败（已重试${candidate?.detail?.attemptCount || 2}次${missingLabels.length ? `，缺${missingLabels.join("/")}` : ""}）`
               : "链接解析失败";
           line.textContent = `${label}（${stateText}）`;
           if (candidate?.detail?.error) line.title = candidate.detail.error;
@@ -437,11 +442,14 @@ async function searchTask(task, button = null, { batchMode = false } = {}) {
     task.sourcing.suggestedCandidate = [...(detailCandidates.length ? detailCandidates : result.candidates)].sort((left, right) => Number(left?.detail?.displayedPrice ?? left.displayedPrice) - Number(right?.detail?.displayedPrice ?? right.displayedPrice))[0] || null;
     task.sourcing.status = detailCandidates.length ? "candidate_details_captured_pending_verification" : "candidates_found_pending_verification";
     task.sourcing.searchCompletedAt = detailCandidates.length ? new Date().toISOString() : null;
-    task.sourcing.searchLastError = detailCandidates.length ? null : "未取得任何完整候选详情";
+    const linkedPartialCount = result.candidates.filter((candidate) => candidate?.detail?.detailStatus === "detail_partial" && candidate?.sourceUrl).length;
+    task.sourcing.searchLastError = detailCandidates.length ? null : linkedPartialCount ? `已保留${linkedPartialCount}个候选链接，详情字段待重试` : "未取得任何完整候选详情";
     persistQueue();
-    if (!batchMode) setStatus(`${result.message} 已预填最低详情展示价及链接；确认规格和优惠条件后再写入采购价。`, detailCandidates.length ? "ok" : "bad");
+    if (!batchMode) setStatus(`${result.message}${linkedPartialCount ? ` 已先保留${linkedPartialCount}个候选链接。` : ""} 已记录候选详情价和链接；确认规格与优惠条件后再写入采购价。`, detailCandidates.length ? "ok" : "bad");
     render();
-    if (!detailCandidates.length) throw new Error("未取得任何完整候选详情，可稍后重试。");
+    if (!detailCandidates.length) throw new Error(linkedPartialCount
+      ? `已保留${linkedPartialCount}个可打开候选链接，但详情字段尚未完整，可直接查看或稍后重试。`
+      : "未取得任何完整候选详情，可稍后重试。");
     return result;
   } catch (error) {
     task.sourcing = task.sourcing || {};

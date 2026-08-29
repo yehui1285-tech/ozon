@@ -389,17 +389,29 @@ export function extractPinduoduoDetail(nodes, routeInfo = {}) {
   const visibleLabels = [...new Set(visibleText.filter((text) => /包邮|运费|新客|券后|限购|仅剩|最后\d+件|已拼|先用后付|免拼购买/.test(text)).map((text) => text.replace(/\s+/g, " ").slice(0, 120)))].slice(0, 20);
   const shippingIncluded = visibleText.some((text) => /全场包邮|商品包邮|卖家包邮|免运费/.test(text));
   const displayedPrice = Number(priceMatch?.[1]);
+  const title = clean(titleNode?.description || titleNode?.text).replace(/&#10;|\n/g, " ").trim();
+  const goodsId = clean(routeInfo.goodsId);
+  const sourceUrl = goodsId
+    ? clean(routeInfo.sourceUrl) || `https://mobile.yangkeduo.com/goods.html?goods_id=${encodeURIComponent(goodsId)}`
+    : "";
+  const normalizedPrice = Number.isFinite(displayedPrice) && displayedPrice > 0 ? displayedPrice : null;
+  const missingFields = [
+    ...(!goodsId ? ["goods_id"] : []),
+    ...(!title ? ["title"] : []),
+    ...(!(normalizedPrice > 0) ? ["price"] : []),
+  ];
   return {
-    title: clean(titleNode?.description || titleNode?.text).replace(/&#10;|\n/g, " ").trim(),
-    displayedPrice: Number.isFinite(displayedPrice) && displayedPrice > 0 ? displayedPrice : null,
+    title,
+    displayedPrice: normalizedPrice,
     rawPriceText: clean(priceText),
-    goodsId: clean(routeInfo.goodsId),
-    sourceUrl: clean(routeInfo.sourceUrl),
+    goodsId,
+    sourceUrl,
     thumbnailUrl: clean(routeInfo.thumbnailUrl),
     shippingIncluded,
     shippingFee: shippingIncluded ? 0 : null,
     visibleLabels,
-    detailStatus: titleNode && displayedPrice > 0 && routeInfo.goodsId ? "detail_captured" : "detail_incomplete",
+    missingFields,
+    detailStatus: missingFields.length === 0 ? "detail_captured" : goodsId ? "detail_partial" : "detail_incomplete",
     capturedAt: new Date().toISOString(),
   };
 }

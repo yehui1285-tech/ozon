@@ -9,7 +9,7 @@
 </head>
 <body>
   <main class="shell">
-    <header><div><h1>拼多多自动找同款与采购价补全</h1><p>候选最低价仅用于找款；确认同款后读取目标规格常规价，只有通过历史成本上限的商品才执行一次Ozon最终实时复价。</p></div><span id="modelStatus">MVP 5.0 · AI尚未检查</span></header>
+    <header><div><h1>拼多多自动找同款与采购价补全</h1><p>候选最低价仅用于找款；详情加载较慢时先保留商品链接，再补标题、详情价和运费；确认同款后才核验目标规格常规价。</p></div><span id="modelStatus">MVP 5.1 · AI尚未检查</span></header>
     <section class="panel toolbar">
       <label class="file">选择Ozon补全JSON<input id="queueFile" type="file" accept=".json,application/json"></label>
       <button id="checkDevice">检查模拟器</button><button id="startDevice" class="secondary">启动模拟器</button><button id="openPdd" class="secondary">启动拼多多</button><button id="download" class="secondary" disabled>下载采购价补全JSON</button>

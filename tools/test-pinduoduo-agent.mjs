@@ -69,7 +69,20 @@ const detail = extractPinduoduoDetail([
 assert.equal(detail.displayedPrice, 70);
 assert.equal(detail.shippingFee, 0);
 assert.equal(detail.detailStatus, "detail_captured");
+assert.deepEqual(detail.missingFields, []);
 assert.equal(detail.rawPriceText, "¥70已拼44件最后6件");
+const partialDetail = extractPinduoduoDetail([
+  { text: "慢加载商品", description: "", resourceId: "com.xunmeng.pinduoduo:id/tv_title", bounds: [18, 563, 882, 589] },
+], { goodsId: "123456", sourceUrl: "", thumbnailUrl: "" });
+assert.equal(partialDetail.detailStatus, "detail_partial");
+assert.equal(partialDetail.sourceUrl, "https://mobile.yangkeduo.com/goods.html?goods_id=123456");
+assert.deepEqual(partialDetail.missingFields, ["price"]);
+const missingRouteDetail = extractPinduoduoDetail([
+  { text: "", description: "¥51", resourceId: "pdd", bounds: [0, 495, 900, 545] },
+  { text: "测试商品", description: "", resourceId: "com.xunmeng.pinduoduo:id/tv_title", bounds: [18, 563, 882, 589] },
+], {});
+assert.equal(missingRouteDetail.detailStatus, "detail_incomplete");
+assert.deepEqual(missingRouteDetail.missingFields, ["goods_id"]);
 assert.deepEqual(reconcilePinduoduoDisplayedPrice(416, 4162, "¥4162人付款"), {
   displayedPrice: 416,
   rawDisplayedPrice: 4162,
@@ -146,6 +159,10 @@ assert.doesNotMatch(serverSource, /tapBounds\([^\n]*提交订单/);
 assert.match(serverSource, /inspectCandidateDetail/);
 assert.match(serverSource, /maxAttempts = 2/);
 assert.match(serverSource, /completed >= successLimit/);
+assert.match(serverSource, /detail_partial/);
+assert.match(serverSource, /findUiNode\(ui\.nodes, \["搜图片同款"\]\)/);
+assert.match(serverSource, /1200 \+ Math\.floor\(Math\.random\(\) \* 1401\)/);
+assert.match(serverSource, /hasPurchaseOverlay/);
 assert.match(appSource, /pending_pinduoduo_search/);
 assert.match(appSource, /x-ozon-agent/);
 assert.match(appSource, /eligibleAt18Pct/);
@@ -157,7 +174,7 @@ assert.match(appSource, /batch\.stopRequested/);
 assert.match(appSource, /search_failed_retryable/);
 assert.match(appSource, /AI判断失败/);
 assert.match(qwenSource, /evidenceWarnings/);
-assert.match(appSource, /const appVersion = "MVP 5\.0"/);
+assert.match(appSource, /const appVersion = "MVP 5\.1"/);
 assert.doesNotMatch(appSource, /MVP 4\.1/);
 assert.match(appSource, /batchDelayRangeMs/);
 assert.match(appSource, /paused_risk_control/);
@@ -166,12 +183,14 @@ assert.match(appSource, /async function favoriteRecommendedCandidate/);
 assert.match(appSource, /async function openCandidateInApp/);
 assert.match(appSource, /在App打开/);
 assert.match(appSource, /已收藏/);
-assert.match(appSource, /页面最低价/);
+assert.match(appSource, /搜索页价/);
 assert.match(appSource, /requestFinalOzonPricing/);
 assert.match(appSource, /preliminaryPricingDecision/);
 assert.match(appSource, /aiJudgement/);
 assert.match(appSource, /detail_not_inspected/);
 assert.match(appSource, /详情读取失败/);
+assert.match(appSource, /链接已取得/);
+assert.match(appSource, /详情缺/);
 assert.doesNotMatch(appSource, /链接未取得/);
 assert.match(qwenSource, /qwen3\.7-flash/);
 assert.match(qwenSource, /enable_thinking: false/);
