@@ -52,6 +52,47 @@ export function queueStats(queue = {}) {
   };
 }
 
+export function aiJudgementReadiness(task = {}) {
+  const reasons = [];
+  if (!isTrustedOzonImageUrl(task?.enrichment?.mainImageUrl)) reasons.push("缺少可信Ozon主图");
+  const candidates = Array.isArray(task?.sourcing?.searchCandidates)
+    ? task.sourcing.searchCandidates.filter((candidate) => candidate?.detail?.detailStatus === "detail_captured").slice(0, 3)
+    : [];
+  if (!candidates.length) reasons.push("缺少已核验的拼多多候选详情");
+  return { ready: reasons.length === 0, reasons, candidates };
+}
+
+export function normalizeAiJudgement(raw = {}, candidateCount = 0) {
+  const allowedVerdicts = new Set(["same_product", "possible_match", "no_match", "insufficient_evidence"]);
+  const verdict = allowedVerdicts.has(clean(raw.verdict)) ? clean(raw.verdict) : "insufficient_evidence";
+  const candidateIndex = Number(raw.bestCandidateIndex);
+  const bestCandidateIndex = Number.isInteger(candidateIndex) && candidateIndex >= 1 && candidateIndex <= candidateCount ? candidateIndex : null;
+  const confidence = Math.max(0, Math.min(100, Math.round(Number(raw.confidence) || 0)));
+  const specConflicts = Array.isArray(raw.specConflicts) ? raw.specConflicts.map(clean).filter(Boolean).slice(0, 12) : [];
+  const assessments = Array.isArray(raw.candidateAssessments) ? raw.candidateAssessments.map((entry) => {
+    const index = Number(entry?.candidateIndex);
+    const itemVerdict = ["same_product", "possible_match", "different_product", "insufficient_evidence"].includes(clean(entry?.verdict))
+      ? clean(entry.verdict)
+      : "insufficient_evidence";
+    return {
+      candidateIndex: Number.isInteger(index) && index >= 1 && index <= candidateCount ? index : null,
+      verdict: itemVerdict,
+      confidence: Math.max(0, Math.min(100, Math.round(Number(entry?.confidence) || 0))),
+      differences: Array.isArray(entry?.differences) ? entry.differences.map(clean).filter(Boolean).slice(0, 8) : [],
+    };
+  }).filter((entry) => entry.candidateIndex !== null).slice(0, candidateCount) : [];
+  const needsHumanReview = raw.needsHumanReview !== false || verdict !== "same_product" || confidence < 85 || specConflicts.length > 0;
+  return {
+    bestCandidateIndex,
+    verdict,
+    confidence,
+    specConflicts,
+    reason: clean(raw.reason).slice(0, 800),
+    needsHumanReview,
+    candidateAssessments: assessments,
+  };
+}
+
 export function normalizeCandidate(candidate = {}) {
   const purchaseCost = Number(candidate.purchaseCost);
   let sourceUrl = clean(candidate.sourceUrl);

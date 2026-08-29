@@ -5,19 +5,21 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>拼多多自动找同款与采购价补全</title>
   <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="ai.css">
 </head>
 <body>
   <main class="shell">
-    <header><div><h1>拼多多自动找同款与采购价补全</h1><p>导入已完成Ozon主图与核价的任务JSON，通过MuMu模拟器批量以图搜索并核验前3个候选详情；采购价按拼多多实际含运支付价记录。</p></div><span>MVP 3.1 · 随机间隔与风控暂停</span></header>
+    <header><div><h1>拼多多自动找同款与采购价补全</h1><p>导入已完成Ozon主图与核价的任务JSON，通过MuMu模拟器批量采集前3个候选，再由千问多模态模型辅助判断同款。</p></div><span id="modelStatus">MVP 4 · AI尚未检查</span></header>
     <section class="panel toolbar">
       <label class="file">选择Ozon补全JSON<input id="queueFile" type="file" accept=".json,application/json"></label>
       <button id="checkDevice">检查模拟器</button><button id="startDevice" class="secondary">启动模拟器</button><button id="openPdd" class="secondary">启动拼多多</button><button id="download" class="secondary" disabled>下载采购价补全JSON</button>
       <button id="batchStart">批量自动找同款</button><button id="batchPause" class="secondary" disabled>暂停</button><button id="batchResume" class="secondary" disabled>继续</button><button id="batchStop" class="secondary" disabled>停止</button>
+      <button id="aiBatchStart">批量AI判断同款</button>
       <p id="status">请先检查模拟器，或导入已完成Ozon核价的任务JSON。</p>
     </section>
-    <section class="stats"><div><small>任务总数</small><strong id="total">0</strong></div><div><small>可进入拼多多</small><strong id="ready">0</strong></div><div><small>已完成找同款</small><strong id="sourced">0</strong></div><div><small>前置未完成</small><strong id="blocked">0</strong></div><div><small>已填采购价</small><strong id="priced">0</strong></div><div><small>达到18%</small><strong id="eligible">0</strong></div></section>
+    <section class="stats"><div><small>任务总数</small><strong id="total">0</strong></div><div><small>可进入拼多多</small><strong id="ready">0</strong></div><div><small>已完成找同款</small><strong id="sourced">0</strong></div><div><small>AI已判断</small><strong id="judged">0</strong></div><div><small>前置未完成</small><strong id="blocked">0</strong></div><div><small>已填采购价</small><strong id="priced">0</strong></div><div><small>达到18%</small><strong id="eligible">0</strong></div></section>
     <section class="panel">
-      <p class="notice">“批量自动找同款”会串行处理全部任务，每件之间随机等待12–25秒；检测到实名认证、账号风险、安全验证或验证码页面时立即保存进度并暂停，当前商品不会被跳过。任务与游标自动保存在浏览器本地，刷新后可继续。</p>
+      <p class="notice">“批量自动找同款”负责采集候选并保存详情截图；“批量AI判断同款”只处理已有候选证据的商品。AI结果仅作推荐，首轮不会自动确认采购成本；置信度不足或规格冲突仍需人工复核。</p>
       <div class="table-wrap"><table><thead><tr><th>#</th><th>主图</th><th>SKU / 商品</th><th>18%最高采购成本</th><th>阶段</th><th>模拟器</th><th>候选采购价</th><th>候选链接</th><th>结果</th><th>操作</th></tr></thead><tbody id="rows"><tr><td colspan="10" class="empty">尚未导入任务。</td></tr></tbody></table></div>
     </section>
   </main>

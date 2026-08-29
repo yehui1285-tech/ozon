@@ -4,6 +4,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { PINDUODUO_PACKAGE, detectPinduoduoRiskPage, extractPinduoduoCandidates, extractPinduoduoDetail, findUiNode, isTrustedOzonImageUrl, parseMumuInfo, parsePinduoduoRoute, parseUiNodes, reconcilePinduoduoDisplayedPrice, safeTaskFileName } from "./core.mjs";
+import { judgeTaskWithQwen, qwenStatus } from "./qwen-client.mjs";
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(moduleDir, "public");
@@ -208,9 +209,28 @@ async function returnToSearchResults(maxBackPresses = 3) {
   throw new Error("候选详情核验后未能返回拼多多以图搜索结果页。");
 }
 
-async function inspectVisibleCandidates(candidates, limit = 3) {
+async function captureCandidateEvidence(taskId, candidateId, goodsId) {
+  const screenshot = (await adb(["exec-out", "screencap", "-p"], { binary: true, timeoutMs: 10000 })).output;
+  if (!screenshot.length || screenshot.length > 15 * 1024 * 1024) throw new Error("候选详情截图为空或超过15MB。");
+  const taskDirName = safeTaskFileName(taskId);
+  const evidenceDir = path.join(runtimeDir, "evidence", taskDirName);
+  await fs.mkdir(evidenceDir, { recursive: true });
+  const fileName = `${safeTaskFileName(candidateId)}-${safeTaskFileName(goodsId)}.png`;
+  const localPath = path.join(evidenceDir, fileName);
+  await fs.writeFile(localPath, screenshot);
+  const relativePath = path.relative(runtimeDir, localPath).split(path.sep).join("/");
+  return {
+    status: "captured",
+    type: "pinduoduo_detail_screenshot",
+    localRef: `/api/evidence/${encodeURIComponent(relativePath)}`,
+    bytes: screenshot.length,
+    capturedAt: new Date().toISOString(),
+  };
+}
+
+async function inspectVisibleCandidates(taskId, candidates, limit = 3) {
   const inspected = [];
-  for (const candidate of candidates.slice(0, limit)) {
+  for (const [index, candidate] of candidates.slice(0, limit).entries()) {
     let navigationError = null;
     try {
       const resultUi = await returnToSearchResults();
@@ -222,7 +242,9 @@ async function inspectVisibleCandidates(candidates, limit = 3) {
       const detail = await waitForCandidateDetail(12000);
       if (!detail || detail.detailStatus !== "detail_captured") throw new Error("详情标题、价格或商品ID未完整加载。");
       const reconciledPrice = reconcilePinduoduoDisplayedPrice(current.displayedPrice, detail.displayedPrice, detail.rawPriceText);
-      inspected.push({ ...candidate, bounds: current.bounds, priceBounds: current.priceBounds, sourceUrl: detail.sourceUrl, detail: { ...detail, ...reconciledPrice } });
+      const evidence = await captureCandidateEvidence(taskId, candidate.candidateId || `candidate-${index + 1}`, detail.goodsId)
+        .catch((error) => ({ status: "capture_failed", error: error.message || String(error), capturedAt: new Date().toISOString() }));
+      inspected.push({ ...candidate, bounds: current.bounds, priceBounds: current.priceBounds, sourceUrl: detail.sourceUrl, detail: { ...detail, ...reconciledPrice }, evidence });
     } catch (error) {
       if (error?.code === "PINDUODUO_RISK_CONTROL") throw error;
       inspected.push({ ...candidate, detail: { detailStatus: "detail_failed", error: error.message || String(error), capturedAt: new Date().toISOString() } });
@@ -242,7 +264,7 @@ async function inspectVisibleCandidates(candidates, limit = 3) {
 async function searchTask(body) {
   const prepared = await prepareTask(body);
   const search = await startImageSearch();
-  const inspected = await inspectVisibleCandidates(search.candidates, 3);
+  const inspected = await inspectVisibleCandidates(prepared.taskId, search.candidates, 3);
   const candidates = [
     ...inspected,
     ...search.candidates.slice(inspected.length).map((candidate) => ({ ...candidate, detail: { detailStatus: "detail_not_inspected", capturedAt: new Date().toISOString() } })),
@@ -292,11 +314,30 @@ async function staticFile(requestPath, response) {
   }
 }
 
+async function evidenceFile(requestPath, response) {
+  const prefix = "/api/evidence/";
+  if (!requestPath.startsWith(prefix)) return false;
+  const relative = decodeURIComponent(requestPath.slice(prefix.length)).replaceAll("/", path.sep);
+  const target = path.resolve(runtimeDir, relative);
+  const root = path.resolve(runtimeDir);
+  if (!target.startsWith(`${root}${path.sep}`) || !/\.(?:png|jpe?g)$/i.test(target)) return false;
+  try {
+    const content = await fs.readFile(target);
+    const contentType = /\.jpe?g$/i.test(target) ? "image/jpeg" : "image/png";
+    response.writeHead(200, { "content-type": contentType, "content-length": content.length, "cache-control": "no-store" });
+    response.end(content);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const server = http.createServer(async (request, response) => {
   try {
     const url = new URL(request.url || "/", `http://${host}:${port}`);
     if (request.method === "POST" && request.headers["x-ozon-agent"] !== localUiHeader) return json(response, 403, { ok: false, error: "拒绝非本地控制页面的操作请求。" });
     if (request.method === "GET" && url.pathname === "/api/status") return json(response, 200, { ok: true, status: await deviceStatus() });
+    if (request.method === "GET" && url.pathname === "/api/ai/status") return json(response, 200, { ok: true, status: await qwenStatus() });
     if (request.method === "POST" && url.pathname === "/api/device/launch") {
       await manager(["main", "launch"]);
       await manager(["control", "-v", "0", "launch"]);
@@ -311,6 +352,8 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "POST" && url.pathname === "/api/device/screenshot") return json(response, 200, await captureScreenshot());
     if (request.method === "POST" && url.pathname === "/api/task/prepare") return json(response, 200, await prepareTask(await readJsonBody(request)));
     if (request.method === "POST" && url.pathname === "/api/task/search") return json(response, 200, await searchTask(await readJsonBody(request)));
+    if (request.method === "POST" && url.pathname === "/api/ai/judge") return json(response, 200, { ok: true, ...(await judgeTaskWithQwen(await readJsonBody(request))) });
+    if (request.method === "GET" && await evidenceFile(url.pathname, response)) return;
     if (request.method === "GET" && await staticFile(url.pathname, response)) return;
     json(response, 404, { ok: false, error: "未找到接口或页面。" });
   } catch (error) {

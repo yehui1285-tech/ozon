@@ -2,6 +2,7 @@ let queue = null;
 let sourceName = "ozon-sourcing.json";
 const storageKey = "ozon-pinduoduo-agent-mvp3";
 const batch = { running: false, paused: false, riskPaused: false, pauseReason: "", stopRequested: false, cursor: 0, completed: 0, failed: 0 };
+const aiBatch = { running: false, completed: 0, failed: 0 };
 const batchDelayRangeMs = { min: 12000, max: 25000 };
 
 const $ = (id) => document.getElementById(id);
@@ -14,6 +15,17 @@ function setStatus(message, state = "") {
 function candidateSearchComplete(task) {
   return Array.isArray(task?.sourcing?.searchCandidates)
     && task.sourcing.searchCandidates.some((candidate) => candidate?.detail?.detailStatus === "detail_captured");
+}
+
+function aiJudgementComplete(task) {
+  return Boolean(task?.sourcing?.aiJudgement?.judgedAt && task?.sourcing?.aiJudgement?.verdict);
+}
+
+function aiReady(task) {
+  const candidates = Array.isArray(task?.sourcing?.searchCandidates)
+    ? task.sourcing.searchCandidates.filter((candidate) => candidate?.detail?.detailStatus === "detail_captured")
+    : [];
+  return { ready: Boolean(task?.enrichment?.mainImageUrl && candidates.length), candidates };
 }
 
 function persistQueue() {
@@ -62,6 +74,7 @@ function stats() {
     priced: tasks.filter((task) => Number(task?.pricing?.purchaseCost) > 0).length,
     eligible: tasks.filter((task) => task?.pricing?.eligibleAt18Pct === true).length,
     sourced: tasks.filter(candidateSearchComplete).length,
+    judged: tasks.filter(aiJudgementComplete).length,
   };
 }
 
@@ -79,6 +92,7 @@ function render() {
   updateStats();
   $("download").disabled = !queue;
   $("batchStart").disabled = !queue || batch.running;
+  $("aiBatchStart").disabled = !queue || batch.running || aiBatch.running;
   $("batchPause").disabled = !batch.running || batch.paused;
   $("batchResume").disabled = !batch.running || !batch.paused;
   $("batchStop").disabled = !batch.running;
@@ -91,7 +105,10 @@ function render() {
     const ready = readiness(task);
     const row = document.createElement("tr");
     const purchaseCost = Number(task?.pricing?.purchaseCost);
-    const suggestedCost = Number(task?.sourcing?.suggestedCandidate?.detail?.displayedPrice ?? task?.sourcing?.suggestedCandidate?.displayedPrice);
+    const judgement = task?.sourcing?.aiJudgement;
+    const judgedCandidate = judgement?.bestCandidateIndex ? task?.sourcing?.searchCandidates?.[judgement.bestCandidateIndex - 1] : null;
+    const suggestedCandidate = judgedCandidate || task?.sourcing?.suggestedCandidate;
+    const suggestedCost = Number(suggestedCandidate?.detail?.displayedPrice ?? suggestedCandidate?.displayedPrice);
     const eligible = task?.pricing?.eligibleAt18Pct;
     const stage = task?.sourcing?.status === "paused_risk_control" ? "风控暂停" : task.status;
     row.innerHTML = `<td>${index + 1}</td><td></td><td class="name"></td><td class="money">${money(task?.enrichment?.maxPurchaseCostAt18Pct)}</td><td class="${task?.sourcing?.status === "paused_risk_control" || !ready.ready ? "bad" : "ok"}">${ready.ready ? stage : ready.reasons.join("、")}</td><td></td><td></td><td></td><td class="${eligible === true ? "ok" : eligible === false ? "bad" : "muted"}">${eligible === true ? "达到18%" : eligible === false ? "低于18%" : "待判断"}</td><td></td>`;
@@ -111,13 +128,24 @@ function render() {
         const label = `候选${candidateIndex + 1}：${money(detailPrice)}元，${shipping}`;
         if (candidate.sourceUrl) { const anchor = document.createElement("a"); anchor.href = candidate.sourceUrl; anchor.target = "_blank"; anchor.rel = "noopener noreferrer"; anchor.textContent = label; line.append(anchor); }
         else line.textContent = `${label}（链接未取得）`;
+        if (candidate?.evidence?.localRef) { const evidence = document.createElement("a"); evidence.href = candidate.evidence.localRef; evidence.target = "_blank"; evidence.rel = "noopener noreferrer"; evidence.textContent = " [证据图]"; line.append(evidence); }
         list.append(line);
       });
       deviceCell.append(list);
     }
     const price = document.createElement("input"); price.className = "price"; price.type = "number"; price.min = "0.01"; price.step = "0.01"; price.placeholder = "含运实付价"; if (purchaseCost > 0) price.value = purchaseCost.toFixed(2); else if (suggestedCost > 0) price.value = suggestedCost.toFixed(2); row.children[6].append(price);
-    const link = document.createElement("input"); link.className = "link"; link.type = "url"; link.placeholder = "候选商品链接（可暂空）"; link.value = task?.pricing?.sourceUrl || task?.sourcing?.suggestedCandidate?.sourceUrl || ""; row.children[7].append(link);
-    const actions = document.createElement("div"); actions.className = "row-actions"; const save = document.createElement("button"); save.textContent = "写入采购价"; save.disabled = !ready.ready; save.addEventListener("click", () => savePrice(task, price.value, link.value)); actions.append(save); row.children[9].append(actions);
+    const link = document.createElement("input"); link.className = "link"; link.type = "url"; link.placeholder = "候选商品链接（可暂空）"; link.value = task?.pricing?.sourceUrl || suggestedCandidate?.sourceUrl || suggestedCandidate?.detail?.sourceUrl || ""; row.children[7].append(link);
+    const resultCell = row.children[8]; resultCell.className = "ai-result";
+    if (judgement) {
+      const title = document.createElement("strong");
+      title.className = judgement.verdict === "same_product" && !judgement.needsHumanReview ? "ok" : judgement.verdict === "no_match" ? "bad" : "muted";
+      title.textContent = `${judgement.verdict === "same_product" ? "推荐同款" : judgement.verdict === "no_match" ? "未找到同款" : "需要复核"} · ${judgement.confidence}%`;
+      const reason = document.createElement("small"); reason.textContent = judgement.reason || "无判断理由";
+      resultCell.replaceChildren(title, reason);
+    } else resultCell.textContent = eligible === true ? "达到18%" : eligible === false ? "低于18%" : "待AI判断";
+    const actions = document.createElement("div"); actions.className = "row-actions";
+    const judge = document.createElement("button"); judge.textContent = aiJudgementComplete(task) ? "重新AI判断" : "AI判断"; judge.disabled = !aiReady(task).ready || batch.running || aiBatch.running; judge.addEventListener("click", async () => { try { await judgeTask(task, judge); } catch {} }); actions.append(judge);
+    const save = document.createElement("button"); save.textContent = "写入采购价"; save.disabled = !ready.ready; save.addEventListener("click", () => savePrice(task, price.value, link.value)); actions.append(save); row.children[9].append(actions);
     return row;
   }));
 }
@@ -143,6 +171,19 @@ async function checkDevice() {
   } catch (error) { setStatus(error.message, "bad"); }
 }
 
+async function checkAiStatus() {
+  try {
+    const result = await api("/api/ai/status");
+    $("modelStatus").textContent = result.status.configured ? `MVP 4 · ${result.status.model}已配置` : `MVP 4 · ${result.status.model}待配置密钥`;
+    $("modelStatus").className = result.status.configured ? "ok" : "bad";
+    return result.status;
+  } catch {
+    $("modelStatus").textContent = "MVP 4 · AI状态检查失败";
+    $("modelStatus").className = "bad";
+    return null;
+  }
+}
+
 async function searchTask(task, button = null, { batchMode = false } = {}) {
   if (button) button.disabled = true;
   try {
@@ -151,6 +192,9 @@ async function searchTask(task, button = null, { batchMode = false } = {}) {
     task.sourcing = task.sourcing || {};
     task.sourcing.devicePreparation = { status: "completed", remoteImagePath: result.remotePath, completedAt: new Date().toISOString() };
     task.sourcing.searchCandidates = result.candidates;
+    task.sourcing.aiJudgement = null;
+    task.sourcing.judgeProvider = null;
+    task.sourcing.judgeResult = null;
     const detailCandidates = result.candidates.filter((candidate) => candidate?.detail?.detailStatus === "detail_captured");
     task.sourcing.suggestedCandidate = [...(detailCandidates.length ? detailCandidates : result.candidates)].sort((left, right) => Number(left?.detail?.displayedPrice ?? left.displayedPrice) - Number(right?.detail?.displayedPrice ?? right.displayedPrice))[0] || null;
     task.sourcing.status = detailCandidates.length ? "candidate_details_captured_pending_verification" : "candidates_found_pending_verification";
@@ -173,6 +217,52 @@ async function searchTask(task, button = null, { batchMode = false } = {}) {
     if (button) button.disabled = false;
     render();
     throw error;
+  }
+}
+
+async function judgeTask(task, button = null, { batchMode = false } = {}) {
+  if (button) button.disabled = true;
+  try {
+    if (!batchMode) setStatus(`SKU ${task?.ozon?.sku || "-"}：正在由千问判断前3个候选……`);
+    const result = await api("/api/ai/judge", { method: "POST", body: JSON.stringify(task) });
+    task.sourcing = task.sourcing || {};
+    task.sourcing.aiJudgement = { ...result.judgement, provider: result.provider, model: result.model, usage: result.usage, judgedAt: result.judgedAt };
+    task.sourcing.judgeProvider = result.provider;
+    task.sourcing.judgeResult = task.sourcing.aiJudgement;
+    task.sourcing.status = result.judgement.needsHumanReview ? "pending_human_review" : "ai_match_recommended_pending_confirmation";
+    task.status = "pending_human_review";
+    task.audit = task.audit || {};
+    task.audit.updatedAt = new Date().toISOString();
+    persistQueue(); render();
+    if (!batchMode) setStatus(`SKU ${task?.ozon?.sku || "-"}：AI判断完成，${result.judgement.confidence}%置信度；请确认后再写入采购价。`, result.judgement.verdict === "same_product" ? "ok" : "bad");
+    return result;
+  } catch (error) {
+    task.sourcing = task.sourcing || {};
+    task.sourcing.aiLastError = error.message || String(error);
+    task.sourcing.aiFailedAt = new Date().toISOString();
+    persistQueue(); render();
+    if (!batchMode) setStatus(error.message, "bad");
+    throw error;
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function runAiBatch() {
+  if (!queue || aiBatch.running || batch.running) return;
+  const tasks = queue.tasks || [];
+  aiBatch.running = true; aiBatch.completed = 0; aiBatch.failed = 0; render();
+  try {
+    for (let index = 0; index < tasks.length; index += 1) {
+      const task = tasks[index];
+      if (!aiReady(task).ready || aiJudgementComplete(task)) continue;
+      setStatus(`批量AI判断 ${index + 1}/${tasks.length}：SKU ${task?.ozon?.sku || "-"}`);
+      try { await judgeTask(task, null, { batchMode: true }); aiBatch.completed += 1; }
+      catch { aiBatch.failed += 1; }
+    }
+  } finally {
+    aiBatch.running = false; persistQueue(); render();
+    setStatus(`批量AI判断完成：成功${aiBatch.completed}件，失败${aiBatch.failed}件；结果仅作推荐，仍需确认采购规格和实付价。`, aiBatch.failed ? "bad" : "ok");
   }
 }
 
@@ -271,6 +361,7 @@ $("checkDevice").addEventListener("click", checkDevice);
 $("startDevice").addEventListener("click", async () => { try { setStatus("正在请求启动MuMu……"); const result = await api("/api/device/launch", { method: "POST", body: "{}" }); setStatus(`${result.message}请等待安卓桌面出现后再次检查。`, "ok"); } catch (error) { setStatus(error.message, "bad"); } });
 $("openPdd").addEventListener("click", async () => { try { const result = await api("/api/pinduoduo/launch", { method: "POST", body: "{}" }); setStatus(result.message, "ok"); } catch (error) { setStatus(error.message, "bad"); } });
 $("batchStart").addEventListener("click", () => { void runBatch(); });
+$("aiBatchStart").addEventListener("click", () => { void runAiBatch(); });
 $("batchPause").addEventListener("click", () => { if (!batch.running) return; batch.paused = true; batch.riskPaused = false; batch.pauseReason = "人工暂停"; persistQueue(); render(); setStatus("已请求暂停；当前商品核验完成后暂停。", ""); });
 $("batchResume").addEventListener("click", () => { if (!batch.running) return; batch.paused = false; batch.riskPaused = false; batch.pauseReason = ""; persistQueue(); render(); setStatus("批量任务已继续。", "ok"); });
 $("batchStop").addEventListener("click", () => { if (!batch.running) return; batch.stopRequested = true; batch.paused = false; persistQueue(); render(); setStatus("已请求停止；当前商品核验完成后停止并保存进度。", ""); });
@@ -284,3 +375,4 @@ else {
   if (restored) setStatus(`已恢复本地任务：${queue.tasks.length}件，已完成找同款${stats().sourced}件，可继续批量处理。`, "ok");
   void checkDevice();
 }
+void checkAiStatus();
