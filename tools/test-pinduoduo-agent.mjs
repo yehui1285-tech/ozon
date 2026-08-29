@@ -110,6 +110,8 @@ assert.match(appSource, /batch\.stopRequested/);
 assert.match(appSource, /search_failed_retryable/);
 assert.match(appSource, /AI判断失败/);
 assert.match(qwenSource, /evidenceWarnings/);
+assert.match(appSource, /const appVersion = "MVP 4\.2"/);
+assert.doesNotMatch(appSource, /MVP 4\.1/);
 assert.match(appSource, /batchDelayRangeMs/);
 assert.match(appSource, /paused_risk_control/);
 assert.match(appSource, /async function runAiBatch/);

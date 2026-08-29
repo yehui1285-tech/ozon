@@ -1,6 +1,7 @@
 let queue = null;
 let sourceName = "ozon-sourcing.json";
 const storageKey = "ozon-pinduoduo-agent-mvp3";
+const appVersion = "MVP 4.2";
 const batch = { running: false, paused: false, riskPaused: false, pauseReason: "", stopRequested: false, cursor: 0, completed: 0, failed: 0 };
 const aiBatch = { running: false, completed: 0, failed: 0 };
 const batchDelayRangeMs = { min: 12000, max: 25000 };
@@ -185,11 +186,11 @@ async function checkDevice() {
 async function checkAiStatus() {
   try {
     const result = await api("/api/ai/status");
-    $("modelStatus").textContent = result.status.configured ? `MVP 4.1 · ${result.status.model}已配置` : `MVP 4.1 · ${result.status.model}待配置密钥`;
+    $("modelStatus").textContent = result.status.configured ? `${appVersion} · ${result.status.model}已配置` : `${appVersion} · ${result.status.model}待配置密钥`;
     $("modelStatus").className = result.status.configured ? "ok" : "bad";
     return result.status;
   } catch {
-    $("modelStatus").textContent = "MVP 4.1 · AI状态检查失败";
+    $("modelStatus").textContent = `${appVersion} · AI状态检查失败`;
     $("modelStatus").className = "bad";
     return null;
   }
