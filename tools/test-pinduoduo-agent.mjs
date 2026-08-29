@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { aiJudgementReadiness, applySelectedCandidate, candidateInspectionOrder, detectPinduoduoRiskPage, extractPinduoduoCandidates, extractPinduoduoDetail, findUiNode, isTrustedOzonImageUrl, normalizeAiJudgement, parseMumuInfo, parsePinduoduoRoute, parseUiNodes, pinduoduoFavoriteState, pinduoduoProductGoodsId, queueStats, reconcilePinduoduoDisplayedPrice, resolveAiRecommendedCandidate, safeTaskFileName, taskReadiness } from "../pinduoduo-agent/core.mjs";
+import { aiJudgementReadiness, applySelectedCandidate, candidateInspectionOrder, detectPinduoduoRiskPage, extractPinduoduoCandidates, extractPinduoduoDetail, extractPinduoduoSkuSheet, findUiNode, isTrustedOzonImageUrl, normalizeAiJudgement, normalizeSkuSelection, parseMumuInfo, parsePinduoduoRoute, parseUiNodes, pinduoduoFavoriteState, pinduoduoProductGoodsId, queueStats, reconcilePinduoduoDisplayedPrice, resolveAiRecommendedCandidate, safeTaskFileName, taskReadiness } from "../pinduoduo-agent/core.mjs";
+import { applyFinalOzonPricing, preliminaryPricingDecision } from "../pinduoduo-agent/public/pricing-flow.js";
 import { isTrustedPinduoduoImageUrl } from "../pinduoduo-agent/qwen-client.mjs";
 
 assert.equal(isTrustedOzonImageUrl("https://ir.ozone.ru/s3/multimedia-test/wc1000/1.jpg"), true);
@@ -38,6 +39,28 @@ const route = parsePinduoduoRoute('"url": "goods.html?thumb_url=https%3A%2F%2Fim
 assert.equal(route.goodsId, "959747943297");
 assert.equal(route.sourceUrl, "https://mobile.yangkeduo.com/goods.html?goods_id=959747943297");
 assert.equal(route.thumbnailUrl, "https://img.pddpic.com/a.jpeg");
+assert.equal(parsePinduoduoRoute('"url": "https:\\/\\/mobile.yangkeduo.com\\/goods.html?source_app=com.android.shell&goods_id=338478848894&pr_force_native=1"').goodsId, "338478848894");
+const skuSheet = extractPinduoduoSkuSheet([
+  { text: "已选: 丝杠组合", clickable: false, bounds: [216, 355, 886, 388] },
+  { text: "丝杠组合  ¥51", clickable: true, bounds: [18, 635, 200, 681] },
+  { text: "挡片一套  ¥31", clickable: true, bounds: [210, 635, 390, 681] },
+  { text: "使用多多支付余额¥5.05，更换支付方式", clickable: false, bounds: [237, 1468, 644, 1497] },
+  { text: "提交订单 ¥45.95", clickable: false, bounds: [357, 1538, 542, 1573] },
+]);
+assert.equal(skuSheet.options.length, 2);
+assert.equal(skuSheet.options[0].price, 51);
+assert.equal(skuSheet.selectedOptionId, "sku-option-1");
+assert.equal(skuSheet.accountSpecificDiscountVisible, true);
+assert.equal(skuSheet.submitPrice, 45.95);
+assert.equal(skuSheet.multiDimension, false);
+assert.equal(extractPinduoduoSkuSheet([
+  { text: "颜色", clickable: false },
+  { text: "黑色  ¥20", clickable: true, bounds: [1, 1, 20, 20] },
+  { text: "尺寸", clickable: false },
+  { text: "大号  ¥30", clickable: true, bounds: [1, 30, 20, 50] },
+]).multiDimension, true);
+assert.equal(normalizeSkuSelection({ verdict: "exact_match", selectedOptionId: "sku-option-1", confidence: 93, reason: "套装一致", needsHumanReview: false }, skuSheet.options).needsHumanReview, false);
+assert.equal(normalizeSkuSelection({ verdict: "exact_match", selectedOptionId: "missing", confidence: 99, needsHumanReview: false }, skuSheet.options).needsHumanReview, true);
 const detail = extractPinduoduoDetail([
   { text: "", description: "¥70已拼44件最后6件", resourceId: "pdd", bounds: [0, 495, 900, 545] },
   { text: "", description: "Milwaukee美沃奇内六角扳手套装", resourceId: "com.xunmeng.pinduoduo:id/tv_title", bounds: [18, 563, 882, 589] },
@@ -79,6 +102,15 @@ assert.equal(readyTask.pricing.eligibleAt18Pct, true);
 assert.equal(readyTask.status, "pending_human_review");
 assert.equal(applySelectedCandidate({ ...readyTask, status: "pending_pinduoduo_search", enrichment: { ...readyTask.enrichment, maxPurchaseCostAt18Pct: 70 }, sourcing: { candidates: [] }, pricing: {}, audit: {} }, { purchaseCost: 80 }).eligibleAt18Pct, false);
 assert.deepEqual(queueStats({ tasks: [readyTask, { status: "pending_ozon_enrichment" }] }), { total: 2, ready: 1, blocked: 1, priced: 1, eligible: 1 });
+const preliminaryTask = { enrichment: { maxPurchaseCostAt18Pct: 50.93 }, pricing: {} };
+assert.deepEqual(preliminaryPricingDecision(preliminaryTask, 51, Date.parse("2026-08-29T00:00:00Z")), { status: "rejected_preliminary", needsRefresh: false, eligible: false, preliminaryLimit: 50.93 });
+assert.equal(preliminaryPricingDecision(preliminaryTask, 50, Date.parse("2026-08-29T00:00:00Z")).needsRefresh, true);
+const refreshedTask = { enrichment: { maxPurchaseCostAt18Pct: 50.93 }, pricing: { finalOzonPricing: { status: "completed", fetchedAt: "2026-08-29T00:00:00Z", maxPurchaseCostAt18Pct: 36.17 } } };
+assert.equal(preliminaryPricingDecision(refreshedTask, 50, Date.parse("2026-08-29T00:10:00Z")).eligible, false);
+assert.equal(preliminaryPricingDecision(refreshedTask, 20, Date.parse("2026-08-29T00:31:00Z")).needsRefresh, true);
+const appliedTask = { ozon: {}, enrichment: { maxPurchaseCostAt18Pct: 50.93 }, pricing: {} };
+assert.equal(applyFinalOzonPricing(appliedTask, { ok: true, effectiveGreenPrice: 121.18, originalBlackPrice: 128.95, internationalFreight: 52.52, selectedCommission: 20, maxPurchaseCostAt18Pct: 36.17, calculation: {} }, 51, "2026-08-29T00:00:00Z").eligibleAt18Pct, false);
+assert.equal(appliedTask.pricing.preliminaryMaxPurchaseCostAt18Pct, 50.93);
 const aiTask = { ...readyTask, sourcing: { searchCandidates: [{ detail: { detailStatus: "detail_captured" } }] } };
 assert.equal(aiJudgementReadiness(aiTask).ready, true);
 assert.equal(aiJudgementReadiness({ ...aiTask, sourcing: { searchCandidates: [] } }).ready, false);
@@ -95,6 +127,8 @@ assert.deepEqual(candidateInspectionOrder([{ displayedPrice: 67.2 }, { displayed
 const serverSource = fs.readFileSync(new URL("../pinduoduo-agent/server.mjs", import.meta.url), "utf8");
 const appSource = fs.readFileSync(new URL("../pinduoduo-agent/public/app.js", import.meta.url), "utf8");
 const qwenSource = fs.readFileSync(new URL("../pinduoduo-agent/qwen-client.mjs", import.meta.url), "utf8");
+const bridgeSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/pinduoduo-bridge.js", import.meta.url), "utf8");
+const extensionManifest = JSON.parse(fs.readFileSync(new URL("../ozon-erp-collector-extension/manifest.json", import.meta.url), "utf8"));
 assert.match(serverSource, /127\.0\.0\.1/);
 assert.match(serverSource, /MuMuManager\.exe/);
 assert.match(serverSource, /PINDUODUO_PACKAGE/);
@@ -105,6 +139,10 @@ assert.match(serverSource, /captureCandidateEvidence/);
 assert.match(serverSource, /\/api\/ai\/judge/);
 assert.match(serverSource, /\/api\/pinduoduo\/favorite/);
 assert.match(serverSource, /\/api\/pinduoduo\/open/);
+assert.match(serverSource, /\/api\/pinduoduo\/sku-options/);
+assert.match(serverSource, /\/api\/pinduoduo\/select-sku/);
+assert.match(serverSource, /\/api\/ai\/select-sku/);
+assert.doesNotMatch(serverSource, /tapBounds\([^\n]*提交订单/);
 assert.match(serverSource, /inspectCandidateDetail/);
 assert.match(serverSource, /maxAttempts = 2/);
 assert.match(serverSource, /completed >= successLimit/);
@@ -119,7 +157,7 @@ assert.match(appSource, /batch\.stopRequested/);
 assert.match(appSource, /search_failed_retryable/);
 assert.match(appSource, /AI判断失败/);
 assert.match(qwenSource, /evidenceWarnings/);
-assert.match(appSource, /const appVersion = "MVP 4\.4"/);
+assert.match(appSource, /const appVersion = "MVP 5\.0"/);
 assert.doesNotMatch(appSource, /MVP 4\.1/);
 assert.match(appSource, /batchDelayRangeMs/);
 assert.match(appSource, /paused_risk_control/);
@@ -128,6 +166,9 @@ assert.match(appSource, /async function favoriteRecommendedCandidate/);
 assert.match(appSource, /async function openCandidateInApp/);
 assert.match(appSource, /在App打开/);
 assert.match(appSource, /已收藏/);
+assert.match(appSource, /页面最低价/);
+assert.match(appSource, /requestFinalOzonPricing/);
+assert.match(appSource, /preliminaryPricingDecision/);
 assert.match(appSource, /aiJudgement/);
 assert.match(appSource, /detail_not_inspected/);
 assert.match(appSource, /详情读取失败/);
@@ -136,5 +177,11 @@ assert.match(qwenSource, /qwen3\.7-flash/);
 assert.match(qwenSource, /enable_thinking: false/);
 assert.match(qwenSource, /response_format/);
 assert.match(qwenSource, /bestCandidateId/);
+assert.match(qwenSource, /selectSkuOptionWithQwen/);
+assert.match(bridgeSource, /OZON_FINAL_REPRICE_REQUEST_V1/);
+assert.match(bridgeSource, /http:\/\/127\.0\.0\.1:17628/);
+assert.match(bridgeSource, /validTask/);
+assert.equal(extensionManifest.version, "0.6.29");
+assert.ok(extensionManifest.content_scripts.some((entry) => entry.matches?.includes("http://127.0.0.1:17628/*") && entry.js?.includes("pinduoduo-bridge.js")));
 assert.doesNotMatch(qwenSource, /sk-[A-Za-z0-9]{12,}/);
 console.log("Pinduoduo agent core tests passed.");

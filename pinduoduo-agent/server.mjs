@@ -3,8 +3,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { PINDUODUO_PACKAGE, candidateInspectionOrder, detectPinduoduoRiskPage, extractPinduoduoCandidates, extractPinduoduoDetail, findUiNode, isTrustedOzonImageUrl, parseMumuInfo, parsePinduoduoRoute, parseUiNodes, pinduoduoFavoriteState, pinduoduoProductGoodsId, reconcilePinduoduoDisplayedPrice, safeTaskFileName } from "./core.mjs";
-import { judgeTaskWithQwen, qwenStatus } from "./qwen-client.mjs";
+import { PINDUODUO_PACKAGE, candidateInspectionOrder, detectPinduoduoRiskPage, extractPinduoduoCandidates, extractPinduoduoDetail, extractPinduoduoSkuSheet, findUiNode, isTrustedOzonImageUrl, parseMumuInfo, parsePinduoduoRoute, parseUiNodes, pinduoduoFavoriteState, pinduoduoProductGoodsId, reconcilePinduoduoDisplayedPrice, safeTaskFileName } from "./core.mjs";
+import { judgeTaskWithQwen, qwenStatus, selectSkuOptionWithQwen } from "./qwen-client.mjs";
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(moduleDir, "public");
@@ -13,7 +13,7 @@ const managerPath = "E:\\Program Files\\Netease\\MuMu\\nx_main\\MuMuManager.exe"
 const adbPath = "E:\\Program Files\\Netease\\MuMu\\nx_main\\adb.exe";
 const adbSerial = "127.0.0.1:16384";
 const host = "127.0.0.1";
-const port = 17628;
+const port = Number(process.env.OZON_PDD_AGENT_PORT) || 17628;
 const localUiHeader = "local-ui-v1";
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -158,6 +158,101 @@ async function waitForUiNode(terms, timeoutMs = 12000) {
     await delay(500);
   }
   return { node: null, ui: lastUi };
+}
+
+function findUiNodeContaining(nodes, terms) {
+  const wanted = (Array.isArray(terms) ? terms : [terms]).map((term) => String(term || "").trim()).filter(Boolean);
+  const candidates = (nodes || []).filter((node) => wanted.some((term) => String(node.text || node.description || "").includes(term)));
+  const area = (node) => node.bounds ? Math.max(0, node.bounds[2] - node.bounds[0]) * Math.max(0, node.bounds[3] - node.bounds[1]) : Number.MAX_SAFE_INTEGER;
+  return candidates.sort((left, right) => Number(right.clickable) - Number(left.clickable) || area(left) - area(right))[0] || null;
+}
+
+async function closeSkuSheet() {
+  const ui = await captureUi().catch(() => null);
+  const close = findUiNode(ui?.nodes, ["关闭"]);
+  if (close?.bounds) await tapBounds(close.bounds);
+}
+
+async function waitForSkuSheet(timeoutMs = 10000) {
+  const startedAt = Date.now();
+  let lastSheet = { status: "sku_options_missing", options: [] };
+  while (Date.now() - startedAt < timeoutMs) {
+    const ui = await captureUi();
+    lastSheet = extractPinduoduoSkuSheet(ui.nodes);
+    if (lastSheet.options.length) return { ui, sheet: lastSheet };
+    if (findUiNodeContaining(ui.nodes, ["提交订单"])) return { ui, sheet: lastSheet };
+    await delay(400);
+  }
+  return { ui: null, sheet: lastSheet };
+}
+
+async function openSkuSheet(sourceUrl) {
+  const opened = await openCandidateDetail({ sourceUrl });
+  const ui = await captureUi();
+  const purchase = ["免拼购买", "直接拼成", "单独购买"].map((term) => findUiNodeContaining(ui.nodes, [term])).find(Boolean);
+  if (!purchase?.bounds) throw new Error("商品详情页未加载出安全的规格选择入口。");
+  await tapBounds(purchase.bounds);
+  const captured = await waitForSkuSheet(10000);
+  if (!captured.sheet.options.length) {
+    await closeSkuSheet();
+    throw new Error("已打开购买页，但未读取到可选规格；程序未点击提交订单，请人工确认该商品是否只有单一规格。");
+  }
+  return { ...opened, ...captured };
+}
+
+async function captureSkuOptions(body = {}) {
+  const opened = await openSkuSheet(String(body.sourceUrl || "").trim());
+  const evidence = await captureScreenshot().catch(() => null);
+  await closeSkuSheet();
+  return {
+    ok: true,
+    status: "sku_options_captured",
+    goodsId: opened.goodsId,
+    sourceUrl: opened.sourceUrl,
+    skuSheet: opened.sheet,
+    evidencePath: evidence?.localPath || null,
+    message: `已读取${opened.sheet.options.length}个可选规格；尚未触发下单。`,
+  };
+}
+
+async function selectSkuOption(body = {}) {
+  const optionId = String(body.optionId || "").trim();
+  const expectedLabel = String(body.optionLabel || "").trim();
+  if (!optionId) throw new Error("缺少要核验的规格编号。");
+  const opened = await openSkuSheet(String(body.sourceUrl || "").trim());
+  const option = opened.sheet.options.find((entry) => entry.optionId === optionId);
+  if (!option?.bounds || (expectedLabel && option.label !== expectedLabel)) {
+    await closeSkuSheet();
+    throw new Error("规格弹窗已变化，未找到AI选择的规格；请重新读取规格。");
+  }
+  await tapBounds(option.bounds);
+  let verified = null;
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 6000) {
+    const ui = await captureUi();
+    const sheet = extractPinduoduoSkuSheet(ui.nodes);
+    if (sheet.selectedText && (sheet.selectedText.includes(option.label) || option.label.includes(sheet.selectedText))) {
+      verified = sheet;
+      break;
+    }
+    await delay(350);
+  }
+  const evidence = await captureScreenshot().catch(() => null);
+  await closeSkuSheet();
+  if (!verified) throw new Error("已点击规格，但未能从页面确认“已选”规格一致；未写入采购价。");
+  return {
+    ok: true,
+    status: "sku_price_verified",
+    goodsId: opened.goodsId,
+    sourceUrl: opened.sourceUrl,
+    selectedOption: { optionId: option.optionId, label: option.label, price: option.price, rawText: option.rawText },
+    stableUnitPrice: option.price,
+    accountSpecificDiscountIgnored: Boolean(verified.accountSpecificDiscountVisible),
+    submitPriceIgnored: verified.submitPrice,
+    evidencePath: evidence?.localPath || null,
+    verifiedAt: new Date().toISOString(),
+    message: `已确认规格“${option.label}”常规标价${option.price.toFixed(2)}元；未使用账号余额优惠，未提交订单。`,
+  };
 }
 
 async function startImageSearch() {
@@ -417,7 +512,13 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "POST" && url.pathname === "/api/task/search") return json(response, 200, await searchTask(await readJsonBody(request)));
     if (request.method === "POST" && url.pathname === "/api/pinduoduo/open") return json(response, 200, await openCandidate(await readJsonBody(request)));
     if (request.method === "POST" && url.pathname === "/api/pinduoduo/favorite") return json(response, 200, await favoriteCandidate(await readJsonBody(request)));
+    if (request.method === "POST" && url.pathname === "/api/pinduoduo/sku-options") return json(response, 200, await captureSkuOptions(await readJsonBody(request)));
+    if (request.method === "POST" && url.pathname === "/api/pinduoduo/select-sku") return json(response, 200, await selectSkuOption(await readJsonBody(request)));
     if (request.method === "POST" && url.pathname === "/api/ai/judge") return json(response, 200, { ok: true, ...(await judgeTaskWithQwen(await readJsonBody(request))) });
+    if (request.method === "POST" && url.pathname === "/api/ai/select-sku") {
+      const body = await readJsonBody(request);
+      return json(response, 200, { ok: true, ...(await selectSkuOptionWithQwen(body.task, body.candidate, body.skuSheet)) });
+    }
     if (request.method === "GET" && await evidenceFile(url.pathname, response)) return;
     if (request.method === "GET" && await staticFile(url.pathname, response)) return;
     json(response, 404, { ok: false, error: "未找到接口或页面。" });

@@ -196,6 +196,67 @@ export function pinduoduoFavoriteState(nodes) {
   return { status: "unknown", node: null };
 }
 
+function parseYuanAmount(value) {
+  const match = /[¥￥]\s*(\d+(?:\.\d{1,2})?)/.exec(clean(value).replaceAll(",", ""));
+  const amount = Number(match?.[1]);
+  return Number.isFinite(amount) && amount > 0 ? Number(amount.toFixed(2)) : null;
+}
+
+export function extractPinduoduoSkuSheet(nodes) {
+  const list = Array.isArray(nodes) ? nodes : [];
+  const selectedNode = list.find((node) => /^已选\s*[:：]/.test(clean(node?.text || node?.description)));
+  const selectedText = clean(selectedNode?.text || selectedNode?.description).replace(/^已选\s*[:：]\s*/, "");
+  const options = [];
+  const seen = new Set();
+  let currentGroup = "";
+  for (const node of list) {
+    const label = clean(node?.text || node?.description).replace(/\s+/g, " ");
+    if (!node?.clickable && /^(?:颜色分类|颜色|型号|规格|尺寸|款式|套餐|数量|类型)$/.test(label)) {
+      currentGroup = label;
+      continue;
+    }
+    if (!node?.clickable || !node?.bounds || !/[¥￥]\s*\d/.test(label)) continue;
+    if (/提交订单|单独购买|免拼购买|仅\d+件|快要抢光|到手价|券后/.test(label)) continue;
+    const price = parseYuanAmount(label);
+    const optionLabel = label.replace(/\s*[¥￥]\s*\d+(?:\.\d{1,2})?\s*$/, "").trim();
+    if (!optionLabel || !(price > 0)) continue;
+    const key = `${optionLabel}\u0000${price}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    options.push({ optionId: `sku-option-${options.length + 1}`, group: currentGroup || "规格", label: optionLabel, price, rawText: label, bounds: node.bounds });
+  }
+  const groups = [...new Set(options.map((option) => option.group))];
+  const paymentBalanceNode = list.find((node) => /多多支付余额/.test(clean(node?.text || node?.description)));
+  const submitNode = list.find((node) => /提交订单/.test(clean(node?.text || node?.description)));
+  const selectedOption = options.find((option) => selectedText && (selectedText === option.label || selectedText.includes(option.label) || option.label.includes(selectedText))) || null;
+  return {
+    status: options.length ? "sku_options_captured" : "sku_options_missing",
+    selectedText,
+    selectedOptionId: selectedOption?.optionId || null,
+    options,
+    groups,
+    multiDimension: groups.length > 1,
+    accountSpecificDiscountVisible: Boolean(paymentBalanceNode),
+    submitPrice: parseYuanAmount(submitNode?.text || submitNode?.description),
+  };
+}
+
+export function normalizeSkuSelection(raw = {}, options = []) {
+  const allowed = new Set(["exact_match", "no_match", "insufficient_evidence"]);
+  const verdict = allowed.has(clean(raw?.verdict)) ? clean(raw.verdict) : "insufficient_evidence";
+  const optionId = clean(raw?.selectedOptionId);
+  const selectedOption = (Array.isArray(options) ? options : []).find((option) => clean(option?.optionId) === optionId) || null;
+  const confidence = Math.max(0, Math.min(100, Math.round(Number(raw?.confidence) || 0)));
+  const needsHumanReview = raw?.needsHumanReview !== false || verdict !== "exact_match" || !selectedOption || confidence < 85;
+  return {
+    verdict,
+    selectedOptionId: selectedOption?.optionId || null,
+    confidence,
+    reason: clean(raw?.reason).slice(0, 600),
+    needsHumanReview,
+  };
+}
+
 export function resolveAiRecommendedCandidate(task = {}, judgement = task?.sourcing?.aiJudgement || {}) {
   const candidates = Array.isArray(task?.sourcing?.searchCandidates)
     ? task.sourcing.searchCandidates.filter((candidate) => candidate?.detail?.detailStatus === "detail_captured").slice(0, 3)
@@ -298,7 +359,7 @@ export function candidateInspectionOrder(candidates = []) {
 
 export function parsePinduoduoRoute(output) {
   const source = String(output || "");
-  const match = /"url"\s*:\s*"(goods\.html\?[^"\r\n]+)"/.exec(source);
+  const match = /"url"\s*:\s*"((?:https?:\\?\/\\?\/mobile\.yangkeduo\.com\\?\/)?goods\.html\?[^"\r\n]+)"/.exec(source);
   if (!match) return { goodsId: "", sourceUrl: "", thumbnailUrl: "", rawRoute: "" };
   let rawRoute = match[1];
   try {

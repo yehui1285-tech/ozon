@@ -1,12 +1,13 @@
 {
   "manifest_version": 3,
   "name": "OZON ERP Detail Sender",
-  "version": "0.6.28",
+  "version": "0.6.29",
   "description": "Collect OZON data, scan stores, and batch-complete sourcing tasks with pricing thresholds.",
   "permissions": ["storage", "unlimitedStorage", "activeTab", "tabs", "scripting", "alarms"],
   "host_permissions": [
     "https://www.ozon.ru/*",
-    "https://yehui1285-tech.github.io/ozon/*"
+    "https://yehui1285-tech.github.io/ozon/*",
+    "http://127.0.0.1:17628/*"
   ],
   "action": {
     "default_title": "OZON ERP Detail Sender",
@@ -22,6 +23,11 @@
       ],
       "js": ["content.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["http://127.0.0.1:17628/*"],
+      "js": ["pinduoduo-bridge.js"],
+      "run_at": "document_start"
     }
   ]
 }

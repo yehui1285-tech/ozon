@@ -1,9 +1,12 @@
+import { applyFinalOzonPricing, preliminaryPricingDecision } from "./pricing-flow.js";
+
 let queue = null;
 let sourceName = "ozon-sourcing.json";
 const storageKey = "ozon-pinduoduo-agent-mvp3";
-const appVersion = "MVP 4.4";
+const appVersion = "MVP 5.0";
 const batch = { running: false, paused: false, riskPaused: false, pauseReason: "", stopRequested: false, cursor: 0, completed: 0, failed: 0 };
 const aiBatch = { running: false, completed: 0, failed: 0, riskPaused: false, pauseReason: "" };
+const skuBatch = { running: false, completed: 0, failed: 0 };
 const batchDelayRangeMs = { min: 12000, max: 25000 };
 
 const $ = (id) => document.getElementById(id);
@@ -50,6 +53,16 @@ function favoriteComplete(task) {
   return task?.sourcing?.favorite?.status === "favorited";
 }
 
+function skuVerificationComplete(task) {
+  return task?.sourcing?.skuVerification?.status === "sku_price_verified";
+}
+
+function finalEligibility(task) {
+  const status = task?.pricing?.finalOzonPricing?.status;
+  if (status === "completed" || status === "rejected_preliminary") return task?.pricing?.eligibleAt18Pct === true;
+  return null;
+}
+
 function persistQueue() {
   if (!queue) return;
   queue.meta = queue.meta && typeof queue.meta === "object" ? queue.meta : {};
@@ -94,10 +107,11 @@ function stats() {
     ready: tasks.filter((task) => readiness(task).ready).length,
     blocked: tasks.filter((task) => !readiness(task).ready).length,
     priced: tasks.filter((task) => Number(task?.pricing?.purchaseCost) > 0).length,
-    eligible: tasks.filter((task) => task?.pricing?.eligibleAt18Pct === true).length,
+    eligible: tasks.filter((task) => finalEligibility(task) === true).length,
     sourced: tasks.filter(candidateSearchComplete).length,
     judged: tasks.filter(aiJudgementComplete).length,
     favorited: tasks.filter(favoriteComplete).length,
+    skuVerified: tasks.filter(skuVerificationComplete).length,
   };
 }
 
@@ -114,8 +128,9 @@ function money(value) {
 function render() {
   updateStats();
   $("download").disabled = !queue;
-  $("batchStart").disabled = !queue || batch.running;
-  $("aiBatchStart").disabled = !queue || batch.running || aiBatch.running;
+  $("batchStart").disabled = !queue || batch.running || aiBatch.running || skuBatch.running;
+  $("aiBatchStart").disabled = !queue || batch.running || aiBatch.running || skuBatch.running;
+  $("skuBatchStart").disabled = !queue || batch.running || aiBatch.running || skuBatch.running;
   $("batchPause").disabled = !batch.running || batch.paused;
   $("batchResume").disabled = !batch.running || !batch.paused;
   $("batchStop").disabled = !batch.running;
@@ -131,8 +146,8 @@ function render() {
     const judgement = task?.sourcing?.aiJudgement;
     const judgedCandidate = resolveRecommendedCandidate(task);
     const suggestedCandidate = judgedCandidate || task?.sourcing?.suggestedCandidate;
-    const suggestedCost = Number(suggestedCandidate?.detail?.displayedPrice ?? suggestedCandidate?.displayedPrice);
-    const eligible = task?.pricing?.eligibleAt18Pct;
+    const verifiedCost = Number(task?.sourcing?.skuVerification?.purchaseCost);
+    const eligible = finalEligibility(task);
     const stage = task?.sourcing?.status === "paused_risk_control" ? "风控暂停" : task.status;
     row.innerHTML = `<td>${index + 1}</td><td></td><td class="name"></td><td class="money">${money(task?.enrichment?.maxPurchaseCostAt18Pct)}</td><td class="${task?.sourcing?.status === "paused_risk_control" || !ready.ready ? "bad" : "ok"}">${ready.ready ? stage : ready.reasons.join("、")}</td><td></td><td></td><td></td><td class="${eligible === true ? "ok" : eligible === false ? "bad" : "muted"}">${eligible === true ? "达到18%" : eligible === false ? "低于18%" : "待判断"}</td><td></td>`;
     const imageCell = row.children[1];
@@ -141,16 +156,16 @@ function render() {
     } else imageCell.textContent = "-";
     row.children[2].textContent = `${task?.ozon?.sku || "-"}\n${task?.ozon?.name || "-"}`;
     const deviceCell = row.children[5];
-    const prepare = document.createElement("button"); prepare.textContent = candidateSearchComplete(task) ? "重新找同款" : "自动以图找同款"; prepare.disabled = !ready.ready || batch.running; prepare.addEventListener("click", async () => { try { await searchTask(task, prepare); } catch {} }); deviceCell.append(prepare);
+    const prepare = document.createElement("button"); prepare.textContent = candidateSearchComplete(task) ? "重新找同款" : "自动以图找同款"; prepare.disabled = !ready.ready || batch.running || aiBatch.running || skuBatch.running; prepare.addEventListener("click", async () => { try { await searchTask(task, prepare); } catch {} }); deviceCell.append(prepare);
     if (task?.sourcing?.searchCandidates?.length) {
       const list = document.createElement("small");
       task.sourcing.searchCandidates.forEach((candidate, candidateIndex) => {
         const line = document.createElement("div");
         const detailPrice = candidate?.detail?.displayedPrice ?? candidate.displayedPrice;
         const shipping = candidate?.detail?.shippingFee === 0 ? "包邮" : "运费待核";
-        const label = `候选${candidateIndex + 1}：${money(detailPrice)}元，${shipping}`;
+        const label = `候选${candidateIndex + 1}：页面最低价${money(detailPrice)}元，${shipping}`;
         if (candidate.sourceUrl) {
-          const open = document.createElement("button"); open.className = "candidate-app-open"; open.textContent = `${label} · 在App打开`; open.disabled = batch.running || aiBatch.running; open.addEventListener("click", async () => { await openCandidateInApp(task, candidate, open); }); line.append(open);
+          const open = document.createElement("button"); open.className = "candidate-app-open"; open.textContent = `${label} · 在App打开`; open.disabled = batch.running || aiBatch.running || skuBatch.running; open.addEventListener("click", async () => { await openCandidateInApp(task, candidate, open); }); line.append(open);
         }
         else {
           const detailStatus = candidate?.detail?.detailStatus;
@@ -165,7 +180,7 @@ function render() {
       });
       deviceCell.append(list);
     }
-    const price = document.createElement("input"); price.className = "price"; price.type = "number"; price.min = "0.01"; price.step = "0.01"; price.placeholder = "含运实付价"; if (purchaseCost > 0) price.value = purchaseCost.toFixed(2); else if (suggestedCost > 0) price.value = suggestedCost.toFixed(2); row.children[6].append(price);
+    const price = document.createElement("input"); price.className = "price"; price.type = "number"; price.min = "0.01"; price.step = "0.01"; price.placeholder = "目标规格常规价"; if (purchaseCost > 0) price.value = purchaseCost.toFixed(2); else if (verifiedCost > 0) price.value = verifiedCost.toFixed(2); row.children[6].append(price);
     const link = document.createElement("input"); link.className = "link"; link.type = "url"; link.placeholder = "候选商品链接（可暂空）"; link.value = task?.pricing?.sourceUrl || suggestedCandidate?.sourceUrl || suggestedCandidate?.detail?.sourceUrl || ""; row.children[7].append(link);
     const resultCell = row.children[8]; resultCell.className = "ai-result";
     if (judgement) {
@@ -184,6 +199,16 @@ function render() {
               : favoriteStatus === "failed" ? `收藏失败：${task.sourcing.favorite.error || "未知错误"}`
                 : "等待自动收藏";
         resultCell.append(favorite);
+        const sku = document.createElement("small");
+        const verification = task?.sourcing?.skuVerification;
+        sku.className = verification?.status === "sku_price_verified" ? "ok" : verification?.status === "failed" || verification?.status === "pending_human_review" ? "bad" : "muted";
+        sku.textContent = verification?.status === "sku_price_verified"
+          ? `规格已核验：${verification.optionLabel}，${money(verification.purchaseCost)}元${verification.finalPricingError ? `；最终复价失败：${verification.finalPricingError}` : ""}`
+          : verification?.status === "pending_human_review" ? `规格需复核：${verification.reason || "证据不足"}`
+            : verification?.status === "failed" ? `规格核验失败：${verification.error || "未知错误"}`
+              : "等待规格实价核验";
+        resultCell.append(sku);
+        if (verification?.finalPricingError) sku.className = "bad";
       }
     } else if (task?.sourcing?.aiLastError) {
       const title = document.createElement("strong"); title.className = "bad"; title.textContent = "AI判断失败";
@@ -191,11 +216,14 @@ function render() {
       resultCell.replaceChildren(title, reason);
     } else resultCell.textContent = eligible === true ? "达到18%" : eligible === false ? "低于18%" : "待AI判断";
     const actions = document.createElement("div"); actions.className = "row-actions";
-    const judge = document.createElement("button"); judge.textContent = aiJudgementComplete(task) ? "重新AI判断" : "AI判断"; judge.disabled = !aiReady(task).ready || batch.running || aiBatch.running; judge.addEventListener("click", async () => { try { await judgeTask(task, judge); } catch {} }); actions.append(judge);
+    const judge = document.createElement("button"); judge.textContent = aiJudgementComplete(task) ? "重新AI判断" : "AI判断"; judge.disabled = !aiReady(task).ready || batch.running || aiBatch.running || skuBatch.running; judge.addEventListener("click", async () => { try { await judgeTask(task, judge); } catch {} }); actions.append(judge);
     if (aiRecommendsSameProduct(task) && !favoriteComplete(task)) {
-      const favorite = document.createElement("button"); favorite.textContent = task?.sourcing?.favorite?.status === "favoriting" ? "收藏中" : "重试收藏"; favorite.disabled = batch.running || aiBatch.running || task?.sourcing?.favorite?.status === "favoriting"; favorite.addEventListener("click", async () => { await favoriteRecommendedCandidate(task, favorite); }); actions.append(favorite);
+      const favorite = document.createElement("button"); favorite.textContent = task?.sourcing?.favorite?.status === "favoriting" ? "收藏中" : "重试收藏"; favorite.disabled = batch.running || aiBatch.running || skuBatch.running || task?.sourcing?.favorite?.status === "favoriting"; favorite.addEventListener("click", async () => { await favoriteRecommendedCandidate(task, favorite); }); actions.append(favorite);
     }
-    const save = document.createElement("button"); save.textContent = "写入采购价"; save.disabled = !ready.ready; save.addEventListener("click", () => savePrice(task, price.value, link.value)); actions.append(save); row.children[9].append(actions);
+    if (aiRecommendsSameProduct(task) && !skuVerificationComplete(task)) {
+      const verifySku = document.createElement("button"); verifySku.textContent = "核验规格价"; verifySku.disabled = batch.running || aiBatch.running || skuBatch.running; verifySku.addEventListener("click", async () => { await verifyRecommendedSku(task, verifySku); }); actions.append(verifySku);
+    }
+    const save = document.createElement("button"); save.textContent = "手动确认并复价"; save.disabled = !ready.ready; save.addEventListener("click", async () => { await savePrice(task, price.value, link.value); }); actions.append(save); row.children[9].append(actions);
     return row;
   }));
 }
@@ -210,6 +238,166 @@ async function api(path, options = {}) {
     throw error;
   }
   return payload;
+}
+
+function pingFinalPricingBridge(timeoutMs = 2500) {
+  return new Promise((resolve, reject) => {
+    const requestId = `ping-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    const timer = setTimeout(() => {
+      window.removeEventListener("message", onMessage);
+      reject(new Error("未检测到Ozon最终复价桥接；请在扩展管理页重新加载0.6.29后刷新本页。"));
+    }, timeoutMs);
+    function onMessage(event) {
+      if (event.source !== window || event.origin !== window.location.origin || event.data?.type !== "OZON_FINAL_REPRICE_READY_V1" || event.data?.requestId !== requestId) return;
+      clearTimeout(timer); window.removeEventListener("message", onMessage); resolve(event.data);
+    }
+    window.addEventListener("message", onMessage);
+    window.postMessage({ type: "OZON_FINAL_REPRICE_PING_V1", requestId }, window.location.origin);
+  });
+}
+
+async function requestFinalOzonPricing(task, timeoutMs = 90000) {
+  await pingFinalPricingBridge();
+  return new Promise((resolve, reject) => {
+    const requestId = `ozon-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    const timer = setTimeout(() => {
+      window.removeEventListener("message", onMessage);
+      reject(new Error("Ozon最终复价超时；请确认0.6.29扩展已重新加载，然后重试。"));
+    }, timeoutMs);
+    function onMessage(event) {
+      if (event.source !== window || event.origin !== window.location.origin || event.data?.type !== "OZON_FINAL_REPRICE_RESPONSE_V1" || event.data?.requestId !== requestId) return;
+      clearTimeout(timer);
+      window.removeEventListener("message", onMessage);
+      if (!event.data?.ok) reject(new Error(event.data?.error || "Ozon最终复价失败"));
+      else resolve(event.data);
+    }
+    window.addEventListener("message", onMessage);
+    window.postMessage({ type: "OZON_FINAL_REPRICE_REQUEST_V1", requestId, task }, window.location.origin);
+  });
+}
+
+async function commitPurchaseCostWithFinalPricing(task, purchaseCost, sourceUrl, verification, { batchMode = false } = {}) {
+  const cost = Number(Number(purchaseCost).toFixed(2));
+  task.sourcing = task.sourcing || {};
+  task.pricing = task.pricing || {};
+  task.audit = task.audit || {};
+  if (!(Number(task.pricing.preliminaryMaxPurchaseCostAt18Pct) >= 0)) task.pricing.preliminaryMaxPurchaseCostAt18Pct = Number(task?.enrichment?.maxPurchaseCostAt18Pct);
+  task.pricing.purchaseCost = cost;
+  task.pricing.sourceUrl = String(sourceUrl || "").trim() || null;
+  task.pricing.eligibleAt18Pct = null;
+  if (verification) task.sourcing.skuVerification = verification;
+  const decision = preliminaryPricingDecision(task, cost);
+  if (decision.status === "rejected_preliminary") {
+    task.pricing.eligibleAt18Pct = false;
+    task.pricing.finalOzonPricing = {
+      status: "rejected_preliminary",
+      checkedAt: new Date().toISOString(),
+      preliminaryMaxPurchaseCostAt18Pct: decision.preliminaryLimit,
+      purchaseCost: cost,
+      reason: "目标规格采购价已高于历史成本上限，按条件规则跳过Ozon实时复价。",
+    };
+    task.status = "pending_human_review";
+    task.audit.updatedAt = new Date().toISOString();
+    persistQueue(); render();
+    if (!batchMode) setStatus(`SKU ${task.ozon.sku}：目标规格价${cost.toFixed(2)}元高于历史上限${decision.preliminaryLimit.toFixed(2)}元，已淘汰并跳过Ozon实时复价。`, "bad");
+    return { eligibleAt18Pct: false, skippedFinalReprice: true };
+  }
+  if (decision.status !== "requires_final_reprice" && decision.cacheFresh) {
+    task.pricing.eligibleAt18Pct = decision.eligible;
+    persistQueue(); render();
+    return { eligibleAt18Pct: decision.eligible, cacheHit: true };
+  }
+  task.pricing.finalOzonPricing = { status: "running", startedAt: new Date().toISOString(), purchaseCost: cost };
+  persistQueue(); render();
+  if (!batchMode) setStatus(`SKU ${task.ozon.sku}：规格实价通过历史上限，正在执行一次Ozon最终实时复价……`);
+  try {
+    const response = await requestFinalOzonPricing(task);
+    const final = applyFinalOzonPricing(task, response, cost);
+    task.status = "pending_human_review";
+    task.audit.updatedAt = new Date().toISOString();
+    persistQueue(); render();
+    if (!batchMode) setStatus(`SKU ${task.ozon.sku}：最终成本上限${final.finalLimit.toFixed(2)}元，采购价${cost.toFixed(2)}元，${final.eligibleAt18Pct ? "达到" : "未达到"}18%利润门槛。`, final.eligibleAt18Pct ? "ok" : "bad");
+    return final;
+  } catch (error) {
+    task.pricing.finalOzonPricing = { status: "failed", failedAt: new Date().toISOString(), purchaseCost: cost, error: error.message || String(error) };
+    task.pricing.eligibleAt18Pct = null;
+    persistQueue(); render();
+    if (!batchMode) setStatus(`规格实价已保留，但Ozon最终复价失败：${error.message || error}`, "bad");
+    throw error;
+  }
+}
+
+async function verifyRecommendedSku(task, button = null, { batchMode = false } = {}) {
+  if (!aiRecommendsSameProduct(task)) return { skipped: true };
+  const candidate = resolveRecommendedCandidate(task);
+  const sourceUrl = candidate?.sourceUrl || candidate?.detail?.sourceUrl || "";
+  if (!sourceUrl) throw new Error("AI推荐候选缺少商品链接。");
+  if (button) button.disabled = true;
+  task.sourcing = task.sourcing || {};
+  task.sourcing.skuVerification = { status: "reading_options", sourceUrl, startedAt: new Date().toISOString() };
+  persistQueue(); render();
+  if (!batchMode) setStatus(`SKU ${task.ozon.sku}：正在打开拼多多规格弹窗并读取规格实价……`);
+  try {
+    const captured = await api("/api/pinduoduo/sku-options", { method: "POST", body: JSON.stringify({ taskId: task.taskId, sourceUrl }) });
+    if (captured.skuSheet.multiDimension) {
+      task.sourcing.skuVerification = {
+        status: "pending_human_review",
+        sourceUrl,
+        options: captured.skuSheet.options,
+        reason: `检测到多规格维度（${captured.skuSheet.groups.join("、")}），当前安全版本不自动组合选择。`,
+        updatedAt: new Date().toISOString(),
+      };
+      persistQueue(); render();
+      if (!batchMode) setStatus(`SKU ${task.ozon.sku}：检测到多规格维度，已保留规格列表并转人工复核。`, "bad");
+      return { ok: false, needsHumanReview: true };
+    }
+    const ai = await api("/api/ai/select-sku", { method: "POST", body: JSON.stringify({ task, candidate, skuSheet: captured.skuSheet }) });
+    const selected = captured.skuSheet.options.find((option) => option.optionId === ai.selection.selectedOptionId) || null;
+    if (ai.selection.needsHumanReview || !selected) {
+      task.sourcing.skuVerification = {
+        status: "pending_human_review",
+        sourceUrl,
+        options: captured.skuSheet.options,
+        selection: ai.selection,
+        reason: ai.selection.reason || "AI无法确认完全一致的规格",
+        updatedAt: new Date().toISOString(),
+      };
+      persistQueue(); render();
+      if (!batchMode) setStatus(`SKU ${task.ozon.sku}：规格无法自动确认，已保留${captured.skuSheet.options.length}个规格供人工复核。`, "bad");
+      return { ok: false, needsHumanReview: true };
+    }
+    const confirmed = await api("/api/pinduoduo/select-sku", { method: "POST", body: JSON.stringify({ taskId: task.taskId, sourceUrl, optionId: selected.optionId, optionLabel: selected.label }) });
+    if (candidate?.detail?.shippingFee !== 0) throw new Error("目标规格已确认，但商品运费不是明确包邮，暂不写入采购成本。");
+    const purchaseCost = Number(confirmed.stableUnitPrice);
+    const verification = {
+      status: "sku_price_verified",
+      sourceUrl: confirmed.sourceUrl || sourceUrl,
+      candidateId: candidate?.candidateId || null,
+      optionId: confirmed.selectedOption.optionId,
+      optionLabel: confirmed.selectedOption.label,
+      optionPrice: purchaseCost,
+      shippingFee: 0,
+      purchaseCost,
+      aiSelection: ai.selection,
+      accountSpecificDiscountIgnored: Boolean(confirmed.accountSpecificDiscountIgnored),
+      submitPriceIgnored: confirmed.submitPriceIgnored,
+      verifiedAt: confirmed.verifiedAt || new Date().toISOString(),
+    };
+    task.sourcing.skuVerification = verification;
+    persistQueue(); render();
+    const result = await commitPurchaseCostWithFinalPricing(task, purchaseCost, sourceUrl, verification, { batchMode });
+    return { ok: true, purchaseCost, ...result };
+  } catch (error) {
+    const priceAlreadyVerified = task?.sourcing?.skuVerification?.status === "sku_price_verified";
+    task.sourcing.skuVerification = priceAlreadyVerified
+      ? { ...task.sourcing.skuVerification, finalPricingError: error.message || String(error) }
+      : { ...task.sourcing.skuVerification, status: error.code === "PINDUODUO_RISK_CONTROL" ? "paused_risk_control" : "failed", error: error.message || String(error), failedAt: new Date().toISOString() };
+    persistQueue(); render();
+    if (!batchMode) setStatus(error.message || String(error), "bad");
+    return { ok: false, priceVerified: priceAlreadyVerified, riskControl: error.code === "PINDUODUO_RISK_CONTROL", error: error.message || String(error) };
+  } finally {
+    if (button) button.disabled = false;
+  }
 }
 
 async function checkDevice() {
@@ -343,7 +531,8 @@ async function judgeTask(task, button = null, { batchMode = false } = {}) {
     task.audit.updatedAt = new Date().toISOString();
     persistQueue(); render();
     const favoriteResult = await favoriteRecommendedCandidate(task, null, { batchMode });
-    if (!batchMode && favoriteResult?.skipped) setStatus(`SKU ${task?.ozon?.sku || "-"}：AI判断完成，${result.judgement.confidence}%置信度；请确认后再写入采购价。`, result.judgement.verdict === "same_product" ? "ok" : "bad");
+    if (aiRecommendsSameProduct(task)) await verifyRecommendedSku(task, null, { batchMode });
+    else if (!batchMode && favoriteResult?.skipped) setStatus(`SKU ${task?.ozon?.sku || "-"}：AI判断完成，${result.judgement.confidence}%置信度；未达到自动规格核验条件。`, result.judgement.verdict === "same_product" ? "ok" : "bad");
     return result;
   } catch (error) {
     task.sourcing = task.sourcing || {};
@@ -354,6 +543,28 @@ async function judgeTask(task, button = null, { batchMode = false } = {}) {
     throw error;
   } finally {
     if (button) button.disabled = false;
+  }
+}
+
+async function runSkuBatch() {
+  if (!queue || batch.running || aiBatch.running || skuBatch.running) return;
+  skuBatch.running = true; skuBatch.completed = 0; skuBatch.failed = 0; render();
+  try {
+    const tasks = queue.tasks || [];
+    for (let index = 0; index < tasks.length; index += 1) {
+      const task = tasks[index];
+      if (!aiRecommendsSameProduct(task) || skuVerificationComplete(task)) continue;
+      setStatus(`批量规格核验与最终复价 ${index + 1}/${tasks.length}：SKU ${task?.ozon?.sku || "-"}`);
+      const result = await verifyRecommendedSku(task, null, { batchMode: true });
+      if (result?.ok) skuBatch.completed += 1;
+      else {
+        skuBatch.failed += 1;
+        if (result?.riskControl) break;
+      }
+    }
+  } finally {
+    skuBatch.running = false; persistQueue(); render();
+    setStatus(`批量规格核验与最终复价完成：成功${skuBatch.completed}件，需复核或失败${skuBatch.failed}件。只有规格实价通过历史上限的商品才执行Ozon实时复价。`, skuBatch.failed ? "bad" : "ok");
   }
 }
 
@@ -451,19 +662,19 @@ async function runBatch() {
   }
 }
 
-function savePrice(task, value, sourceUrl) {
+async function savePrice(task, value, sourceUrl) {
   const purchaseCost = Number(value);
-  const limit = Number(task?.enrichment?.maxPurchaseCostAt18Pct);
   if (!(purchaseCost > 0)) return setStatus("采购价必须大于0。", "bad");
-  if (!(limit >= 0)) return setStatus("该任务缺少18%最高采购成本。", "bad");
-  const candidate = { platform: "pinduoduo", purchaseCost: Number(purchaseCost.toFixed(2)), sourceUrl: String(sourceUrl || "").trim() || null, matchStatus: "pending_human_review", capturedAt: new Date().toISOString() };
-  task.sourcing = task.sourcing || {}; task.pricing = task.pricing || {}; task.audit = task.audit || {};
-  task.sourcing.platform = "pinduoduo"; task.sourcing.status = "pending_human_review"; task.sourcing.candidates = [...(task.sourcing.candidates || []), candidate]; task.sourcing.selectedCandidate = candidate;
-  task.pricing.purchaseCost = candidate.purchaseCost; task.pricing.sourceUrl = candidate.sourceUrl; task.pricing.eligibleAt18Pct = candidate.purchaseCost <= limit;
-  task.status = "pending_human_review"; task.audit.updatedAt = new Date().toISOString();
-  persistQueue();
-  setStatus(`SKU ${task.ozon.sku}采购价已写入：${candidate.purchaseCost.toFixed(2)}元，${task.pricing.eligibleAt18Pct ? "达到" : "未达到"}18%利润门槛。`, task.pricing.eligibleAt18Pct ? "ok" : "bad");
-  render();
+  if (!(Number(task?.enrichment?.maxPurchaseCostAt18Pct) >= 0)) return setStatus("该任务缺少历史18%最高采购成本。", "bad");
+  const verification = {
+    status: "manual_price_confirmed",
+    sourceUrl: String(sourceUrl || "").trim() || null,
+    purchaseCost: Number(purchaseCost.toFixed(2)),
+    reason: "由人工确认目标规格常规价",
+    verifiedAt: new Date().toISOString(),
+  };
+  try { await commitPurchaseCostWithFinalPricing(task, verification.purchaseCost, verification.sourceUrl, verification); }
+  catch { /* 规格价和复价失败状态已分别持久化并显示。 */ }
 }
 
 $("queueFile").addEventListener("change", async (event) => {
@@ -480,6 +691,7 @@ $("startDevice").addEventListener("click", async () => { try { setStatus("正在
 $("openPdd").addEventListener("click", async () => { try { const result = await api("/api/pinduoduo/launch", { method: "POST", body: "{}" }); setStatus(result.message, "ok"); } catch (error) { setStatus(error.message, "bad"); } });
 $("batchStart").addEventListener("click", () => { void runBatch(); });
 $("aiBatchStart").addEventListener("click", () => { void runAiBatch(); });
+$("skuBatchStart").addEventListener("click", () => { void runSkuBatch(); });
 $("batchPause").addEventListener("click", () => { if (!batch.running) return; batch.paused = true; batch.riskPaused = false; batch.pauseReason = "人工暂停"; persistQueue(); render(); setStatus("已请求暂停；当前商品核验完成后暂停。", ""); });
 $("batchResume").addEventListener("click", () => { if (!batch.running) return; batch.paused = false; batch.riskPaused = false; batch.pauseReason = ""; persistQueue(); render(); setStatus("批量任务已继续。", "ok"); });
 $("batchStop").addEventListener("click", () => { if (!batch.running) return; batch.stopRequested = true; batch.paused = false; persistQueue(); render(); setStatus("已请求停止；当前商品核验完成后停止并保存进度。", ""); });
