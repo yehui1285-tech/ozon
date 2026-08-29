@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { aiJudgementReadiness, applySelectedCandidate, candidateInspectionOrder, detectPinduoduoRiskPage, extractPinduoduoCandidates, extractPinduoduoDetail, findUiNode, isTrustedOzonImageUrl, normalizeAiJudgement, parseMumuInfo, parsePinduoduoRoute, parseUiNodes, queueStats, reconcilePinduoduoDisplayedPrice, safeTaskFileName, taskReadiness } from "../pinduoduo-agent/core.mjs";
+import { aiJudgementReadiness, applySelectedCandidate, candidateInspectionOrder, detectPinduoduoRiskPage, extractPinduoduoCandidates, extractPinduoduoDetail, findUiNode, isTrustedOzonImageUrl, normalizeAiJudgement, parseMumuInfo, parsePinduoduoRoute, parseUiNodes, pinduoduoFavoriteState, pinduoduoProductGoodsId, queueStats, reconcilePinduoduoDisplayedPrice, resolveAiRecommendedCandidate, safeTaskFileName, taskReadiness } from "../pinduoduo-agent/core.mjs";
 import { isTrustedPinduoduoImageUrl } from "../pinduoduo-agent/qwen-client.mjs";
 
 assert.equal(isTrustedOzonImageUrl("https://ir.ozone.ru/s3/multimedia-test/wc1000/1.jpg"), true);
@@ -23,6 +23,11 @@ assert.deepEqual(findUiNode(uiNodes, ["拍照搜索"])?.bounds, [831, 57, 900, 9
 assert.equal(detectPinduoduoRiskPage([{ text: "实名认证提示" }, { text: "检测到账户存在风险，为了账号安全，已限制部分操作" }]).type, "real_name_verification");
 assert.equal(detectPinduoduoRiskPage([{ text: "请将正脸置于框内" }]).type, "face_verification");
 assert.equal(detectPinduoduoRiskPage([{ text: "搜图片同款" }, { text: "全场包邮" }]).blocked, false);
+assert.equal(pinduoduoProductGoodsId("https://mobile.yangkeduo.com/goods.html?goods_id=904359973664"), "904359973664");
+assert.equal(pinduoduoProductGoodsId("http://mobile.yangkeduo.com/goods.html?goods_id=1"), "");
+assert.equal(pinduoduoProductGoodsId("https://evil.example/goods.html?goods_id=1"), "");
+assert.equal(pinduoduoFavoriteState([{ text: "收藏", clickable: false }, { description: "收藏", clickable: true, bounds: [128, 1519, 245, 1600] }]).status, "not_favorited");
+assert.equal(pinduoduoFavoriteState([{ text: "已收藏", clickable: false }]).status, "favorited");
 assert.deepEqual(extractPinduoduoCandidates([
   { text: "皇冠外压条", description: "皇冠外压条\n", resourceId: "com.xunmeng.pinduoduo:id/tv_title", bounds: [12, 759, 436, 783] },
   { text: "23.79", description: "", resourceId: "com.xunmeng.pinduoduo:id/pdd", bounds: [23, 823, 80, 853] },
@@ -82,6 +87,8 @@ assert.deepEqual(normalizeAiJudgement({ bestCandidateIndex: 1, verdict: "same_pr
   candidateAssessments: [{ candidateIndex: 1, verdict: "same_product", confidence: 91, differences: [] }],
 });
 assert.equal(normalizeAiJudgement({ bestCandidateIndex: 4, verdict: "same_product", confidence: 70, needsHumanReview: false }, 3).needsHumanReview, true);
+const mappedCandidate = { candidateId: "visible-2", sourceUrl: "https://mobile.yangkeduo.com/goods.html?goods_id=2", detail: { detailStatus: "detail_captured" } };
+assert.equal(resolveAiRecommendedCandidate({ sourcing: { searchCandidates: [{ candidateId: "visible-1", detail: { detailStatus: "detail_failed" } }, mappedCandidate] } }, { bestCandidateIndex: 1, bestCandidateId: "visible-2" }), mappedCandidate);
 assert.deepEqual(candidateInspectionOrder([{ displayedPrice: 160.36 }, { displayedPrice: 180 }, { displayedPrice: 139 }, { displayedPrice: 188 }]), [2, 0, 1, 3]);
 assert.deepEqual(candidateInspectionOrder([{ displayedPrice: 67.2 }, { displayedPrice: 139 }, { displayedPrice: 71 }, { displayedPrice: 48 }]), [3, 0, 1, 2]);
 
@@ -96,6 +103,7 @@ assert.match(serverSource, /x-ozon-agent/);
 assert.match(serverSource, /PINDUODUO_RISK_CONTROL/);
 assert.match(serverSource, /captureCandidateEvidence/);
 assert.match(serverSource, /\/api\/ai\/judge/);
+assert.match(serverSource, /\/api\/pinduoduo\/favorite/);
 assert.match(serverSource, /inspectCandidateDetail/);
 assert.match(serverSource, /maxAttempts = 2/);
 assert.match(serverSource, /completed >= successLimit/);
@@ -110,11 +118,13 @@ assert.match(appSource, /batch\.stopRequested/);
 assert.match(appSource, /search_failed_retryable/);
 assert.match(appSource, /AI判断失败/);
 assert.match(qwenSource, /evidenceWarnings/);
-assert.match(appSource, /const appVersion = "MVP 4\.2"/);
+assert.match(appSource, /const appVersion = "MVP 4\.3"/);
 assert.doesNotMatch(appSource, /MVP 4\.1/);
 assert.match(appSource, /batchDelayRangeMs/);
 assert.match(appSource, /paused_risk_control/);
 assert.match(appSource, /async function runAiBatch/);
+assert.match(appSource, /async function favoriteRecommendedCandidate/);
+assert.match(appSource, /已收藏/);
 assert.match(appSource, /aiJudgement/);
 assert.match(appSource, /detail_not_inspected/);
 assert.match(appSource, /详情读取失败/);
@@ -122,5 +132,6 @@ assert.doesNotMatch(appSource, /链接未取得/);
 assert.match(qwenSource, /qwen3\.7-flash/);
 assert.match(qwenSource, /enable_thinking: false/);
 assert.match(qwenSource, /response_format/);
+assert.match(qwenSource, /bestCandidateId/);
 assert.doesNotMatch(qwenSource, /sk-[A-Za-z0-9]{12,}/);
 console.log("Pinduoduo agent core tests passed.");

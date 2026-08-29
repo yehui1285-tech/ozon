@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { PINDUODUO_PACKAGE, candidateInspectionOrder, detectPinduoduoRiskPage, extractPinduoduoCandidates, extractPinduoduoDetail, findUiNode, isTrustedOzonImageUrl, parseMumuInfo, parsePinduoduoRoute, parseUiNodes, reconcilePinduoduoDisplayedPrice, safeTaskFileName } from "./core.mjs";
+import { PINDUODUO_PACKAGE, candidateInspectionOrder, detectPinduoduoRiskPage, extractPinduoduoCandidates, extractPinduoduoDetail, findUiNode, isTrustedOzonImageUrl, parseMumuInfo, parsePinduoduoRoute, parseUiNodes, pinduoduoFavoriteState, pinduoduoProductGoodsId, reconcilePinduoduoDisplayedPrice, safeTaskFileName } from "./core.mjs";
 import { judgeTaskWithQwen, qwenStatus } from "./qwen-client.mjs";
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
@@ -288,6 +288,41 @@ async function searchTask(body) {
   return { ok: true, taskId: prepared.taskId, remotePath: prepared.remotePath, ...search, candidates, detailCompleted, message: `${search.message} 已完成${detailCompleted}个候选详情核验。` };
 }
 
+async function waitForFavoriteControl(goodsId, { requireFavorited = false, timeoutMs = 15000 } = {}) {
+  const startedAt = Date.now();
+  let lastState = { status: "unknown", node: null };
+  while (Date.now() - startedAt < timeoutMs) {
+    const ui = await captureUi();
+    const route = await captureCurrentRoute();
+    if (route.goodsId === goodsId) {
+      lastState = pinduoduoFavoriteState(ui.nodes);
+      if (lastState.status === "favorited" || (!requireFavorited && lastState.status === "not_favorited")) return { ...lastState, route };
+    }
+    await delay(500);
+  }
+  return { ...lastState, route: null };
+}
+
+async function favoriteCandidate(body = {}) {
+  const sourceUrl = String(body.sourceUrl || "").trim();
+  const goodsId = pinduoduoProductGoodsId(sourceUrl);
+  if (!goodsId) throw new Error("候选商品链接不是受信任的拼多多商品地址。");
+  const status = await deviceStatus();
+  if (!status.bootCompleted) throw new Error("MuMu安卓设备尚未启动完成。");
+  if (!status.pinduoduoInstalled) throw new Error("MuMu中未检测到拼多多。");
+  const canonicalUrl = `https://mobile.yangkeduo.com/goods.html?goods_id=${goodsId}`;
+  await adb(["shell", "am", "start", "-a", "android.intent.action.VIEW", "-d", canonicalUrl, "-p", PINDUODUO_PACKAGE]);
+  const initial = await waitForFavoriteControl(goodsId, { timeoutMs: 15000 });
+  if (initial.status === "favorited") {
+    return { ok: true, status: "favorited", alreadyFavorited: true, goodsId, sourceUrl: canonicalUrl, message: "该候选商品已经收藏。" };
+  }
+  if (initial.status !== "not_favorited" || !initial.node?.bounds) throw new Error("商品详情页未加载出收藏按钮。");
+  await tapBounds(initial.node.bounds);
+  const verified = await waitForFavoriteControl(goodsId, { requireFavorited: true, timeoutMs: 8000 });
+  if (verified.status !== "favorited") throw new Error("已点击收藏，但未能确认页面变为“已收藏”；请人工复核后重试。");
+  return { ok: true, status: "favorited", alreadyFavorited: false, goodsId, sourceUrl: canonicalUrl, message: "推荐同款已加入拼多多收藏。" };
+}
+
 async function captureScreenshot() {
   await fs.mkdir(runtimeDir, { recursive: true });
   const screenshot = (await adb(["exec-out", "screencap", "-p"], { binary: true, timeoutMs: 10000 })).output;
@@ -367,6 +402,7 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "POST" && url.pathname === "/api/device/screenshot") return json(response, 200, await captureScreenshot());
     if (request.method === "POST" && url.pathname === "/api/task/prepare") return json(response, 200, await prepareTask(await readJsonBody(request)));
     if (request.method === "POST" && url.pathname === "/api/task/search") return json(response, 200, await searchTask(await readJsonBody(request)));
+    if (request.method === "POST" && url.pathname === "/api/pinduoduo/favorite") return json(response, 200, await favoriteCandidate(await readJsonBody(request)));
     if (request.method === "POST" && url.pathname === "/api/ai/judge") return json(response, 200, { ok: true, ...(await judgeTaskWithQwen(await readJsonBody(request))) });
     if (request.method === "GET" && await evidenceFile(url.pathname, response)) return;
     if (request.method === "GET" && await staticFile(url.pathname, response)) return;

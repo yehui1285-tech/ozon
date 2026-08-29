@@ -177,6 +177,38 @@ export function findUiNode(nodes, terms) {
   return candidates.sort((left, right) => Number(right.clickable) - Number(left.clickable) || area(left) - area(right))[0] || null;
 }
 
+export function pinduoduoProductGoodsId(rawUrl) {
+  try {
+    const url = new URL(clean(rawUrl));
+    if (url.protocol !== "https:" || url.hostname.toLowerCase() !== "mobile.yangkeduo.com" || url.pathname !== "/goods.html") return "";
+    const goodsId = clean(url.searchParams.get("goods_id"));
+    return /^\d+$/.test(goodsId) ? goodsId : "";
+  } catch {
+    return "";
+  }
+}
+
+export function pinduoduoFavoriteState(nodes) {
+  const favorited = findUiNode(nodes, ["已收藏", "取消收藏"]);
+  if (favorited) return { status: "favorited", node: favorited };
+  const available = findUiNode(nodes, ["收藏"]);
+  if (available) return { status: "not_favorited", node: available };
+  return { status: "unknown", node: null };
+}
+
+export function resolveAiRecommendedCandidate(task = {}, judgement = task?.sourcing?.aiJudgement || {}) {
+  const candidates = Array.isArray(task?.sourcing?.searchCandidates)
+    ? task.sourcing.searchCandidates.filter((candidate) => candidate?.detail?.detailStatus === "detail_captured").slice(0, 3)
+    : [];
+  const candidateId = clean(judgement?.bestCandidateId);
+  if (candidateId) {
+    const exact = candidates.find((candidate) => clean(candidate?.candidateId) === candidateId);
+    if (exact) return exact;
+  }
+  const index = Number(judgement?.bestCandidateIndex);
+  return Number.isInteger(index) && index >= 1 && index <= candidates.length ? candidates[index - 1] : null;
+}
+
 export function detectPinduoduoRiskPage(nodes) {
   const visibleText = (Array.isArray(nodes) ? nodes : [])
     .flatMap((node) => [clean(node?.text), clean(node?.description)])

@@ -1,9 +1,9 @@
 let queue = null;
 let sourceName = "ozon-sourcing.json";
 const storageKey = "ozon-pinduoduo-agent-mvp3";
-const appVersion = "MVP 4.2";
+const appVersion = "MVP 4.3";
 const batch = { running: false, paused: false, riskPaused: false, pauseReason: "", stopRequested: false, cursor: 0, completed: 0, failed: 0 };
-const aiBatch = { running: false, completed: 0, failed: 0 };
+const aiBatch = { running: false, completed: 0, failed: 0, riskPaused: false, pauseReason: "" };
 const batchDelayRangeMs = { min: 12000, max: 25000 };
 
 const $ = (id) => document.getElementById(id);
@@ -27,6 +27,27 @@ function aiReady(task) {
     ? task.sourcing.searchCandidates.filter((candidate) => candidate?.detail?.detailStatus === "detail_captured")
     : [];
   return { ready: Boolean(task?.enrichment?.mainImageUrl && candidates.length), candidates };
+}
+
+function aiRecommendsSameProduct(task) {
+  const judgement = task?.sourcing?.aiJudgement;
+  return judgement?.verdict === "same_product" && judgement?.needsHumanReview === false && Number(judgement?.confidence) >= 85;
+}
+
+function resolveRecommendedCandidate(task) {
+  const judgement = task?.sourcing?.aiJudgement;
+  const candidates = aiReady(task).candidates.slice(0, 3);
+  const candidateId = String(judgement?.bestCandidateId || "").trim();
+  if (candidateId) {
+    const exact = candidates.find((candidate) => String(candidate?.candidateId || "").trim() === candidateId);
+    if (exact) return exact;
+  }
+  const index = Number(judgement?.bestCandidateIndex);
+  return Number.isInteger(index) && index >= 1 && index <= candidates.length ? candidates[index - 1] : null;
+}
+
+function favoriteComplete(task) {
+  return task?.sourcing?.favorite?.status === "favorited";
 }
 
 function persistQueue() {
@@ -76,6 +97,7 @@ function stats() {
     eligible: tasks.filter((task) => task?.pricing?.eligibleAt18Pct === true).length,
     sourced: tasks.filter(candidateSearchComplete).length,
     judged: tasks.filter(aiJudgementComplete).length,
+    favorited: tasks.filter(favoriteComplete).length,
   };
 }
 
@@ -107,7 +129,7 @@ function render() {
     const row = document.createElement("tr");
     const purchaseCost = Number(task?.pricing?.purchaseCost);
     const judgement = task?.sourcing?.aiJudgement;
-    const judgedCandidate = judgement?.bestCandidateIndex ? task?.sourcing?.searchCandidates?.[judgement.bestCandidateIndex - 1] : null;
+    const judgedCandidate = resolveRecommendedCandidate(task);
     const suggestedCandidate = judgedCandidate || task?.sourcing?.suggestedCandidate;
     const suggestedCost = Number(suggestedCandidate?.detail?.displayedPrice ?? suggestedCandidate?.displayedPrice);
     const eligible = task?.pricing?.eligibleAt18Pct;
@@ -150,6 +172,17 @@ function render() {
       title.textContent = `${judgement.verdict === "same_product" ? "推荐同款" : judgement.verdict === "no_match" ? "未找到同款" : "需要复核"} · ${judgement.confidence}%`;
       const reason = document.createElement("small"); reason.textContent = judgement.reason || "无判断理由";
       resultCell.replaceChildren(title, reason);
+      if (aiRecommendsSameProduct(task)) {
+        const favorite = document.createElement("small");
+        const favoriteStatus = task?.sourcing?.favorite?.status;
+        favorite.className = favoriteStatus === "favorited" ? "ok" : favoriteStatus === "failed" || favoriteStatus === "paused_risk_control" ? "bad" : "muted";
+        favorite.textContent = favoriteStatus === "favorited" ? (task.sourcing.favorite.alreadyFavorited ? "已收藏（原已收藏）" : "已收藏")
+          : favoriteStatus === "favoriting" ? "收藏中……"
+            : favoriteStatus === "paused_risk_control" ? `收藏暂停：${task.sourcing.favorite.error || "触发风控"}`
+              : favoriteStatus === "failed" ? `收藏失败：${task.sourcing.favorite.error || "未知错误"}`
+                : "等待自动收藏";
+        resultCell.append(favorite);
+      }
     } else if (task?.sourcing?.aiLastError) {
       const title = document.createElement("strong"); title.className = "bad"; title.textContent = "AI判断失败";
       const reason = document.createElement("small"); reason.textContent = task.sourcing.aiLastError;
@@ -157,6 +190,9 @@ function render() {
     } else resultCell.textContent = eligible === true ? "达到18%" : eligible === false ? "低于18%" : "待AI判断";
     const actions = document.createElement("div"); actions.className = "row-actions";
     const judge = document.createElement("button"); judge.textContent = aiJudgementComplete(task) ? "重新AI判断" : "AI判断"; judge.disabled = !aiReady(task).ready || batch.running || aiBatch.running; judge.addEventListener("click", async () => { try { await judgeTask(task, judge); } catch {} }); actions.append(judge);
+    if (aiRecommendsSameProduct(task) && !favoriteComplete(task)) {
+      const favorite = document.createElement("button"); favorite.textContent = task?.sourcing?.favorite?.status === "favoriting" ? "收藏中" : "重试收藏"; favorite.disabled = batch.running || aiBatch.running || task?.sourcing?.favorite?.status === "favoriting"; favorite.addEventListener("click", async () => { await favoriteRecommendedCandidate(task, favorite); }); actions.append(favorite);
+    }
     const save = document.createElement("button"); save.textContent = "写入采购价"; save.disabled = !ready.ready; save.addEventListener("click", () => savePrice(task, price.value, link.value)); actions.append(save); row.children[9].append(actions);
     return row;
   }));
@@ -232,6 +268,45 @@ async function searchTask(task, button = null, { batchMode = false } = {}) {
   }
 }
 
+async function favoriteRecommendedCandidate(task, button = null, { batchMode = false } = {}) {
+  if (!aiRecommendsSameProduct(task)) return { skipped: true };
+  const candidate = resolveRecommendedCandidate(task);
+  const sourceUrl = candidate?.sourceUrl || candidate?.detail?.sourceUrl || "";
+  if (!sourceUrl) {
+    task.sourcing.favorite = { status: "failed", error: "AI推荐候选缺少商品链接。", attemptedAt: new Date().toISOString() };
+    persistQueue(); render();
+    if (!batchMode) setStatus(task.sourcing.favorite.error, "bad");
+    return { ok: false, error: task.sourcing.favorite.error };
+  }
+  const current = task?.sourcing?.favorite;
+  if (current?.status === "favorited" && current?.sourceUrl === sourceUrl) return { ok: true, alreadyFavorited: current.alreadyFavorited };
+  if (button) button.disabled = true;
+  task.sourcing.favorite = {
+    status: "favoriting",
+    candidateId: candidate?.candidateId || null,
+    candidateIndex: Number(task?.sourcing?.aiJudgement?.bestCandidateIndex) || null,
+    sourceUrl,
+    attemptedAt: new Date().toISOString(),
+  };
+  persistQueue(); render();
+  if (!batchMode) setStatus(`SKU ${task?.ozon?.sku || "-"}：AI已推荐同款，正在加入拼多多收藏……`);
+  try {
+    const result = await api("/api/pinduoduo/favorite", { method: "POST", body: JSON.stringify({ taskId: task.taskId, sourceUrl }) });
+    task.sourcing.favorite = { ...task.sourcing.favorite, status: "favorited", goodsId: result.goodsId, sourceUrl: result.sourceUrl || sourceUrl, alreadyFavorited: Boolean(result.alreadyFavorited), error: null, favoritedAt: new Date().toISOString() };
+    persistQueue(); render();
+    if (!batchMode) setStatus(`SKU ${task?.ozon?.sku || "-"}：${result.message || "推荐同款已收藏。"}`, "ok");
+    return { ok: true, ...result };
+  } catch (error) {
+    const riskControl = error.code === "PINDUODUO_RISK_CONTROL";
+    task.sourcing.favorite = { ...task.sourcing.favorite, status: riskControl ? "paused_risk_control" : "failed", error: error.message || String(error), failedAt: new Date().toISOString() };
+    persistQueue(); render();
+    if (!batchMode) setStatus(task.sourcing.favorite.error, "bad");
+    return { ok: false, riskControl, error: task.sourcing.favorite.error };
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
 async function judgeTask(task, button = null, { batchMode = false } = {}) {
   if (button) button.disabled = true;
   try {
@@ -248,7 +323,8 @@ async function judgeTask(task, button = null, { batchMode = false } = {}) {
     task.audit = task.audit || {};
     task.audit.updatedAt = new Date().toISOString();
     persistQueue(); render();
-    if (!batchMode) setStatus(`SKU ${task?.ozon?.sku || "-"}：AI判断完成，${result.judgement.confidence}%置信度；请确认后再写入采购价。`, result.judgement.verdict === "same_product" ? "ok" : "bad");
+    const favoriteResult = await favoriteRecommendedCandidate(task, null, { batchMode });
+    if (!batchMode && favoriteResult?.skipped) setStatus(`SKU ${task?.ozon?.sku || "-"}：AI判断完成，${result.judgement.confidence}%置信度；请确认后再写入采购价。`, result.judgement.verdict === "same_product" ? "ok" : "bad");
     return result;
   } catch (error) {
     task.sourcing = task.sourcing || {};
@@ -265,18 +341,27 @@ async function judgeTask(task, button = null, { batchMode = false } = {}) {
 async function runAiBatch() {
   if (!queue || aiBatch.running || batch.running) return;
   const tasks = queue.tasks || [];
-  aiBatch.running = true; aiBatch.completed = 0; aiBatch.failed = 0; render();
+  aiBatch.running = true; aiBatch.completed = 0; aiBatch.failed = 0; aiBatch.riskPaused = false; aiBatch.pauseReason = ""; render();
   try {
     for (let index = 0; index < tasks.length; index += 1) {
       const task = tasks[index];
-      if (!aiReady(task).ready || aiJudgementComplete(task)) continue;
-      setStatus(`批量AI判断 ${index + 1}/${tasks.length}：SKU ${task?.ozon?.sku || "-"}`);
-      try { await judgeTask(task, null, { batchMode: true }); aiBatch.completed += 1; }
-      catch { aiBatch.failed += 1; }
+      if (!aiReady(task).ready) continue;
+      const needsFavorite = aiRecommendsSameProduct(task) && !favoriteComplete(task);
+      if (aiJudgementComplete(task) && !needsFavorite) continue;
+      setStatus(`批量AI判断与收藏 ${index + 1}/${tasks.length}：SKU ${task?.ozon?.sku || "-"}`);
+      try {
+        if (!aiJudgementComplete(task)) await judgeTask(task, null, { batchMode: true });
+        else await favoriteRecommendedCandidate(task, null, { batchMode: true });
+        if (task?.sourcing?.favorite?.status === "paused_risk_control") {
+          aiBatch.riskPaused = true; aiBatch.pauseReason = task.sourcing.favorite.error || "拼多多风控"; break;
+        }
+        aiBatch.completed += 1;
+      } catch { aiBatch.failed += 1; }
     }
   } finally {
     aiBatch.running = false; persistQueue(); render();
-    setStatus(`批量AI判断完成：成功${aiBatch.completed}件，失败${aiBatch.failed}件；结果仅作推荐，仍需确认采购规格和实付价。`, aiBatch.failed ? "bad" : "ok");
+    if (aiBatch.riskPaused) setStatus(`批量AI判断与收藏已暂停：${aiBatch.pauseReason}。人工处理后再次点击批量按钮即可继续。`, "bad");
+    else setStatus(`批量AI判断与收藏完成：处理${aiBatch.completed}件，失败${aiBatch.failed}件；明确推荐同款已自动收藏，采购规格和实付价仍需确认。`, aiBatch.failed ? "bad" : "ok");
   }
 }
 

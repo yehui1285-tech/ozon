@@ -192,6 +192,8 @@ export async function judgeTaskWithQwen(task = {}) {
   if (!response.ok) throw new Error(`千问调用失败：HTTP ${response.status} ${clean(payload?.error?.message || payload?.message).slice(0, 300)}`);
   const raw = extractMessageJson(payload?.choices?.[0]?.message?.content);
   const judgement = normalizeAiJudgement(raw, candidates.length);
+  const bestCandidate = judgement.bestCandidateIndex ? candidates[judgement.bestCandidateIndex - 1] : null;
+  judgement.bestCandidateId = clean(bestCandidate?.candidateId) || null;
   const evidenceWarnings = imageEvidence
     .filter((entry) => !entry.available)
     .map((entry) => `候选${entry.candidateIndex}图片读取失败：${entry.error}`);
