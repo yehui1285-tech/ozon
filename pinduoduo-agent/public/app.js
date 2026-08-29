@@ -149,6 +149,10 @@ function render() {
       title.textContent = `${judgement.verdict === "same_product" ? "推荐同款" : judgement.verdict === "no_match" ? "未找到同款" : "需要复核"} · ${judgement.confidence}%`;
       const reason = document.createElement("small"); reason.textContent = judgement.reason || "无判断理由";
       resultCell.replaceChildren(title, reason);
+    } else if (task?.sourcing?.aiLastError) {
+      const title = document.createElement("strong"); title.className = "bad"; title.textContent = "AI判断失败";
+      const reason = document.createElement("small"); reason.textContent = task.sourcing.aiLastError;
+      resultCell.replaceChildren(title, reason);
     } else resultCell.textContent = eligible === true ? "达到18%" : eligible === false ? "低于18%" : "待AI判断";
     const actions = document.createElement("div"); actions.className = "row-actions";
     const judge = document.createElement("button"); judge.textContent = aiJudgementComplete(task) ? "重新AI判断" : "AI判断"; judge.disabled = !aiReady(task).ready || batch.running || aiBatch.running; judge.addEventListener("click", async () => { try { await judgeTask(task, judge); } catch {} }); actions.append(judge);
@@ -236,6 +240,8 @@ async function judgeTask(task, button = null, { batchMode = false } = {}) {
     task.sourcing.aiJudgement = { ...result.judgement, provider: result.provider, model: result.model, usage: result.usage, judgedAt: result.judgedAt };
     task.sourcing.judgeProvider = result.provider;
     task.sourcing.judgeResult = task.sourcing.aiJudgement;
+    delete task.sourcing.aiLastError;
+    delete task.sourcing.aiFailedAt;
     task.sourcing.status = result.judgement.needsHumanReview ? "pending_human_review" : "ai_match_recommended_pending_confirmation";
     task.status = "pending_human_review";
     task.audit = task.audit || {};

@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { aiJudgementReadiness, applySelectedCandidate, candidateInspectionOrder, detectPinduoduoRiskPage, extractPinduoduoCandidates, extractPinduoduoDetail, findUiNode, isTrustedOzonImageUrl, normalizeAiJudgement, parseMumuInfo, parsePinduoduoRoute, parseUiNodes, queueStats, reconcilePinduoduoDisplayedPrice, safeTaskFileName, taskReadiness } from "../pinduoduo-agent/core.mjs";
+import { isTrustedPinduoduoImageUrl } from "../pinduoduo-agent/qwen-client.mjs";
 
 assert.equal(isTrustedOzonImageUrl("https://ir.ozone.ru/s3/multimedia-test/wc1000/1.jpg"), true);
 assert.equal(isTrustedOzonImageUrl("http://ir.ozone.ru/s3/multimedia-test/1.jpg"), false);
 assert.equal(isTrustedOzonImageUrl("https://example.com/s3/multimedia-test/1.jpg"), false);
+assert.equal(isTrustedPinduoduoImageUrl("https://img.pddpic.com/a.jpeg"), true);
+assert.equal(isTrustedPinduoduoImageUrl("https://t00img.yangkeduo.com/goods/a.jpg"), true);
+assert.equal(isTrustedPinduoduoImageUrl("http://t00img.yangkeduo.com/goods/a.jpg"), false);
+assert.equal(isTrustedPinduoduoImageUrl("https://yangkeduo.com.evil.example/a.jpg"), false);
 
 assert.deepEqual(parseMumuInfo('{"index":"0","name":"工作室","android_version":"15.0","is_process_started":true,"is_android_started":true,"error_code":0}'), {
   index: "0", name: "工作室", androidVersion: "15.0", processStarted: true, androidStarted: true, errorCode: 0,
@@ -103,6 +108,8 @@ assert.match(appSource, /async function runBatch/);
 assert.match(appSource, /batch\.paused/);
 assert.match(appSource, /batch\.stopRequested/);
 assert.match(appSource, /search_failed_retryable/);
+assert.match(appSource, /AI判断失败/);
+assert.match(qwenSource, /evidenceWarnings/);
 assert.match(appSource, /batchDelayRangeMs/);
 assert.match(appSource, /paused_risk_control/);
 assert.match(appSource, /async function runAiBatch/);
