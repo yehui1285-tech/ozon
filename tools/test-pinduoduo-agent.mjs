@@ -139,6 +139,7 @@ assert.deepEqual(candidateInspectionOrder([{ displayedPrice: 67.2 }, { displayed
 
 const serverSource = fs.readFileSync(new URL("../pinduoduo-agent/server.mjs", import.meta.url), "utf8");
 const appSource = fs.readFileSync(new URL("../pinduoduo-agent/public/app.js", import.meta.url), "utf8");
+const indexSource = fs.readFileSync(new URL("../pinduoduo-agent/public/index.html", import.meta.url), "utf8");
 const qwenSource = fs.readFileSync(new URL("../pinduoduo-agent/qwen-client.mjs", import.meta.url), "utf8");
 const bridgeSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/pinduoduo-bridge.js", import.meta.url), "utf8");
 const extensionManifest = JSON.parse(fs.readFileSync(new URL("../ozon-erp-collector-extension/manifest.json", import.meta.url), "utf8"));
@@ -160,6 +161,9 @@ assert.match(serverSource, /inspectCandidateDetail/);
 assert.match(serverSource, /maxAttempts = 2/);
 assert.match(serverSource, /completed >= successLimit/);
 assert.match(serverSource, /detail_partial/);
+assert.match(serverSource, /createTimingTrace/);
+assert.match(serverSource, /timingSnapshot/);
+assert.match(serverSource, /候选\$\{index \+ 1\}详情读取/);
 assert.match(serverSource, /findUiNode\(ui\.nodes, \["搜图片同款"\]\)/);
 assert.match(serverSource, /1200 \+ Math\.floor\(Math\.random\(\) \* 1401\)/);
 assert.match(serverSource, /hasPurchaseOverlay/);
@@ -190,6 +194,10 @@ assert.match(appSource, /aiJudgement/);
 assert.match(appSource, /detail_not_inspected/);
 assert.match(appSource, /详情读取失败/);
 assert.match(appSource, /链接已取得/);
+assert.match(appSource, /searchTiming/);
+assert.match(appSource, /renderTimingPanel/);
+assert.match(indexSource, /id="timingSummary"/);
+assert.match(indexSource, /id="timingRows"/);
 assert.match(appSource, /详情缺/);
 assert.doesNotMatch(appSource, /链接未取得/);
 assert.match(qwenSource, /qwen3\.7-flash/);

@@ -19,6 +19,10 @@
       <p id="status">请先检查模拟器，或导入已完成Ozon核价的任务JSON。</p>
     </section>
     <section class="stats"><div><small>任务总数</small><strong id="total">0</strong></div><div><small>可进入拼多多</small><strong id="ready">0</strong></div><div><small>已完成找同款</small><strong id="sourced">0</strong></div><div><small>AI已判断</small><strong id="judged">0</strong></div><div><small>已收藏</small><strong id="favorited">0</strong></div><div><small>规格价已核验</small><strong id="skuVerified">0</strong></div><div><small>前置未完成</small><strong id="blocked">0</strong></div><div><small>已填采购价</small><strong id="priced">0</strong></div><div><small>最终达到18%</small><strong id="eligible">0</strong></div></section>
+    <section class="panel timing-panel">
+      <div class="timing-head"><div><h2>耗时埋点</h2><p>只记录本地找同款链路的实际阶段耗时，用于定位慢在 MuMu、拼多多页面还是候选详情。</p></div><strong id="timingSummary">尚无样本</strong></div>
+      <div id="timingRows" class="timing-rows"><p class="muted">完成或失败一件找同款后，这里会显示阶段耗时。</p></div>
+    </section>
     <section class="panel">
       <p class="notice">页面最低价不再预填为采购价。明确同款会读取购买弹窗的规格列表，AI只负责选择目标规格，程序以页面“已选”回执确认常规规格价；账号余额、券后提交订单价均忽略且不会下单。规格价高于历史上限直接淘汰，低于或等于历史上限才调用扩展做Ozon最终实时复价（30分钟缓存）。</p>
       <div class="table-wrap"><table><thead><tr><th>#</th><th>主图</th><th>SKU / 商品</th><th>18%最高采购成本</th><th>阶段</th><th>模拟器</th><th>候选采购价</th><th>候选链接</th><th>结果</th><th>操作</th></tr></thead><tbody id="rows"><tr><td colspan="10" class="empty">尚未导入任务。</td></tr></tbody></table></div>

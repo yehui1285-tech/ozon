@@ -17,6 +17,34 @@ const port = Number(process.env.OZON_PDD_AGENT_PORT) || 17628;
 const localUiHeader = "local-ui-v1";
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
+function createTimingTrace() {
+  return { startedAt: new Date().toISOString(), startedAtMs: Date.now(), stages: [] };
+}
+
+function timingSnapshot(trace, status = "completed") {
+  if (!trace) return null;
+  return {
+    status,
+    startedAt: trace.startedAt,
+    completedAt: new Date().toISOString(),
+    totalMs: Math.max(0, Date.now() - trace.startedAtMs),
+    stages: trace.stages.slice(0, 40),
+  };
+}
+
+async function timed(trace, label, action) {
+  if (!trace) return action();
+  const startedAt = Date.now();
+  try {
+    const value = await action();
+    trace.stages.push({ label, durationMs: Date.now() - startedAt, status: "ok" });
+    return value;
+  } catch (error) {
+    trace.stages.push({ label, durationMs: Date.now() - startedAt, status: "error", error: String(error?.message || error).slice(0, 160) });
+    throw error;
+  }
+}
+
 class PinduoduoRiskControlError extends Error {
   constructor(risk) {
     super(`检测到拼多多风控页面（${risk.type}），批量任务已暂停，请人工处理后再继续。`);
@@ -104,20 +132,20 @@ async function downloadTaskImage(taskId, imageUrl) {
   return { localPath, fileName, bytes: bytes.length };
 }
 
-async function prepareTask(body) {
+async function prepareTask(body, trace = null) {
   const taskId = String(body.taskId || "").trim();
   const imageUrl = String(body.mainImageUrl || "").trim();
   if (!taskId) throw new Error("缺少任务ID。");
-  const status = await deviceStatus();
+  const status = await timed(trace, "检查MuMu与拼多多", () => deviceStatus());
   if (!status.bootCompleted) throw new Error("MuMu安卓设备尚未启动完成。");
   if (!status.pinduoduoInstalled) throw new Error("MuMu中未检测到拼多多。");
-  const image = await downloadTaskImage(taskId, imageUrl);
+  const image = await timed(trace, "下载Ozon主图", () => downloadTaskImage(taskId, imageUrl));
   const remoteDir = "/sdcard/Pictures/OzonSourcing";
   const remotePath = `${remoteDir}/${image.fileName}`;
-  await adb(["shell", "mkdir", "-p", remoteDir]);
-  await adb(["push", image.localPath, remotePath], { timeoutMs: 30000 });
-  await adb(["shell", "am", "broadcast", "-a", "android.intent.action.MEDIA_SCANNER_SCAN_FILE", "-d", `file://${remotePath}`]);
-  await manager(["control", "-v", "0", "app", "launch", "-pkg", PINDUODUO_PACKAGE]);
+  await timed(trace, "创建模拟器相册目录", () => adb(["shell", "mkdir", "-p", remoteDir]));
+  await timed(trace, "下发主图到MuMu", () => adb(["push", image.localPath, remotePath], { timeoutMs: 30000 }));
+  await timed(trace, "刷新MuMu相册", () => adb(["shell", "am", "broadcast", "-a", "android.intent.action.MEDIA_SCANNER_SCAN_FILE", "-d", `file://${remotePath}`]));
+  await timed(trace, "启动拼多多", () => manager(["control", "-v", "0", "app", "launch", "-pkg", PINDUODUO_PACKAGE]));
   return { ok: true, taskId, remotePath, imageBytes: image.bytes, message: "主图已下发到模拟器并启动拼多多。" };
 }
 
@@ -259,19 +287,19 @@ async function selectSkuOption(body = {}) {
   };
 }
 
-async function startImageSearch() {
-  await adb(["shell", "am", "force-stop", PINDUODUO_PACKAGE]);
-  await adb(["shell", "monkey", "-p", PINDUODUO_PACKAGE, "-c", "android.intent.category.LAUNCHER", "1"]);
-  const camera = await waitForUiNode(["拍照搜索", "图片搜索"], 12000);
+async function startImageSearch(trace = null) {
+  await timed(trace, "重置拼多多页面", () => adb(["shell", "am", "force-stop", PINDUODUO_PACKAGE]));
+  await timed(trace, "启动拼多多首页", () => adb(["shell", "monkey", "-p", PINDUODUO_PACKAGE, "-c", "android.intent.category.LAUNCHER", "1"]));
+  const camera = await timed(trace, "等待拍照搜索入口", () => waitForUiNode(["拍照搜索", "图片搜索"], 12000));
   if (!camera.node?.bounds) throw new Error("拼多多首页未加载出拍照搜索按钮。");
-  await tapBounds(camera.node.bounds);
-  await delay(250);
-  const sizeOutput = (await adb(["shell", "wm", "size"])).output;
+  await timed(trace, "点击拍照搜索入口", () => tapBounds(camera.node.bounds));
+  await timed(trace, "打开相册缓冲", () => delay(250));
+  const sizeOutput = (await timed(trace, "读取MuMu屏幕尺寸", () => adb(["shell", "wm", "size"]))).output;
   const size = /(\d+)x(\d+)/.exec(sizeOutput);
   const width = Number(size?.[1]) || 900;
   const height = Number(size?.[2]) || 1600;
-  await adb(["shell", "input", "tap", String(Math.round(width / 8)), String(Math.round(height - height * 0.105))]);
-  const result = await waitForUiNode(["搜图片同款"], 15000);
+  await timed(trace, "选择最新主图", () => adb(["shell", "input", "tap", String(Math.round(width / 8)), String(Math.round(height - height * 0.105))]));
+  const result = await timed(trace, "等待以图搜索结果", () => waitForUiNode(["搜图片同款"], 15000));
   if (!result.node) throw new Error("已进入拍照搜索，但未能选中最新主图或结果页未加载。");
   const candidates = extractPinduoduoCandidates(result.ui.nodes);
   if (!candidates.length) throw new Error("拼多多以图搜结果已打开，但当前屏未读取到候选价格。");
@@ -352,24 +380,24 @@ async function captureCandidateEvidence(taskId, candidateId, goodsId) {
   };
 }
 
-async function inspectCandidateDetail(taskId, candidate, index, maxAttempts = 2) {
+async function inspectCandidateDetail(taskId, candidate, index, maxAttempts = 2, trace = null) {
   let lastError = "";
   let bestPartial = null;
   let bestObserved = null;
   let bestPartialEvidence = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      const resultUi = await returnToSearchResults();
+      const resultUi = await timed(trace, `候选${index + 1}返回搜索页（第${attempt}次）`, () => returnToSearchResults());
       const currentCandidates = extractPinduoduoCandidates(resultUi.nodes);
       const current = currentCandidates.find((entry) => entry.title === candidate.title && entry.displayedPrice === candidate.displayedPrice)
         || currentCandidates.find((entry) => entry.title === candidate.title)
         || candidate;
-      await tapBounds(current.bounds);
-      const detail = await waitForCandidateDetail(12000);
+      await timed(trace, `打开候选${index + 1}详情（第${attempt}次）`, () => tapBounds(current.bounds));
+      const detail = await timed(trace, `候选${index + 1}详情读取（第${attempt}次）`, () => waitForCandidateDetail(12000));
       if (detail && (!bestObserved || (detail.missingFields?.length || 3) < (bestObserved.missingFields?.length || 3))) bestObserved = detail;
       if (detail?.sourceUrl && (!bestPartial || (detail.missingFields?.length || 3) < (bestPartial.missingFields?.length || 3))) {
         bestPartial = detail;
-        bestPartialEvidence = await captureCandidateEvidence(taskId, candidate.candidateId || `candidate-${index + 1}`, detail.goodsId)
+        bestPartialEvidence = await timed(trace, `保存候选${index + 1}部分证据图`, () => captureCandidateEvidence(taskId, candidate.candidateId || `candidate-${index + 1}`, detail.goodsId))
           .catch((error) => ({ status: "capture_failed", error: error.message || String(error), capturedAt: new Date().toISOString() }));
       }
       if (!detail || detail.detailStatus !== "detail_captured") {
@@ -377,7 +405,7 @@ async function inspectCandidateDetail(taskId, candidate, index, maxAttempts = 2)
         throw new Error(`候选详情未完整加载，缺少字段：${missing}`);
       }
       const reconciledPrice = reconcilePinduoduoDisplayedPrice(current.displayedPrice, detail.displayedPrice, detail.rawPriceText);
-      const evidence = await captureCandidateEvidence(taskId, candidate.candidateId || `candidate-${index + 1}`, detail.goodsId)
+      const evidence = await timed(trace, `保存候选${index + 1}证据图`, () => captureCandidateEvidence(taskId, candidate.candidateId || `candidate-${index + 1}`, detail.goodsId))
         .catch((error) => ({ status: "capture_failed", error: error.message || String(error), capturedAt: new Date().toISOString() }));
       return { ...candidate, bounds: current.bounds, priceBounds: current.priceBounds, sourceUrl: detail.sourceUrl, detail: { ...detail, ...reconciledPrice, attemptCount: attempt }, evidence };
     } catch (error) {
@@ -385,13 +413,13 @@ async function inspectCandidateDetail(taskId, candidate, index, maxAttempts = 2)
       lastError = error.message || String(error);
     } finally {
       try {
-        await returnToSearchResults();
+        await timed(trace, `候选${index + 1}详情后返回搜索页（第${attempt}次）`, () => returnToSearchResults());
       } catch (error) {
         if (error?.code === "PINDUODUO_RISK_CONTROL") throw error;
         lastError = lastError || error.message || String(error);
       }
     }
-    if (attempt < maxAttempts) await delay(700 + Math.floor(Math.random() * 500));
+    if (attempt < maxAttempts) await timed(trace, `候选${index + 1}重试缓冲`, () => delay(700 + Math.floor(Math.random() * 500)));
   }
   if (bestPartial?.sourceUrl) {
     return {
@@ -404,16 +432,16 @@ async function inspectCandidateDetail(taskId, candidate, index, maxAttempts = 2)
   return { ...candidate, detail: { ...(bestObserved || {}), detailStatus: "detail_failed", missingFields: bestObserved?.missingFields || ["goods_id", "title", "price"], error: lastError || "候选详情读取失败。", attemptCount: maxAttempts, capturedAt: new Date().toISOString() } };
 }
 
-async function inspectVisibleCandidates(taskId, candidates, successLimit = 3) {
+async function inspectVisibleCandidates(taskId, candidates, successLimit = 3, trace = null) {
   const list = Array.isArray(candidates) ? candidates : [];
   const inspectedByIndex = new Map();
   let completed = 0;
   for (const index of candidateInspectionOrder(list)) {
     if (completed >= successLimit) break;
-    const result = await inspectCandidateDetail(taskId, list[index], index, 2);
+    const result = await inspectCandidateDetail(taskId, list[index], index, 2, trace);
     inspectedByIndex.set(index, result);
     if (result.detail?.detailStatus === "detail_captured") completed += 1;
-    if (completed < successLimit) await delay(1200 + Math.floor(Math.random() * 1401));
+    if (completed < successLimit) await timed(trace, "候选切换随机缓冲", () => delay(1200 + Math.floor(Math.random() * 1401)));
   }
   return list.map((candidate, index) => inspectedByIndex.get(index) || {
     ...candidate,
@@ -426,11 +454,17 @@ async function inspectVisibleCandidates(taskId, candidates, successLimit = 3) {
 }
 
 async function searchTask(body) {
-  const prepared = await prepareTask(body);
-  const search = await startImageSearch();
-  const candidates = await inspectVisibleCandidates(prepared.taskId, search.candidates, 3);
-  const detailCompleted = candidates.filter((candidate) => candidate.detail?.detailStatus === "detail_captured").length;
-  return { ok: true, taskId: prepared.taskId, remotePath: prepared.remotePath, ...search, candidates, detailCompleted, message: `${search.message} 已完成${detailCompleted}个候选详情核验。` };
+  const trace = createTimingTrace();
+  try {
+    const prepared = await prepareTask(body, trace);
+    const search = await startImageSearch(trace);
+    const candidates = await inspectVisibleCandidates(prepared.taskId, search.candidates, 3, trace);
+    const detailCompleted = candidates.filter((candidate) => candidate.detail?.detailStatus === "detail_captured").length;
+    return { ok: true, taskId: prepared.taskId, remotePath: prepared.remotePath, ...search, candidates, detailCompleted, timing: timingSnapshot(trace), message: `${search.message} 已完成${detailCompleted}个候选详情核验。` };
+  } catch (error) {
+    error.timing = timingSnapshot(trace, "failed");
+    throw error;
+  }
 }
 
 async function waitForFavoriteControl(goodsId, { requireFavorited = false, timeoutMs = 15000 } = {}) {
@@ -574,7 +608,7 @@ const server = http.createServer(async (request, response) => {
     json(response, 404, { ok: false, error: "未找到接口或页面。" });
   } catch (error) {
     const riskControl = error?.code === "PINDUODUO_RISK_CONTROL";
-    json(response, riskControl ? 423 : 500, { ok: false, error: error.message || String(error), code: error?.code || "", risk: error?.risk || null });
+    json(response, riskControl ? 423 : 500, { ok: false, error: error.message || String(error), code: error?.code || "", risk: error?.risk || null, timing: error?.timing || null });
   }
 });
 

@@ -120,6 +120,47 @@ function updateStats() {
   Object.entries(value).forEach(([key, count]) => $(key).textContent = count);
 }
 
+function durationLabel(milliseconds) {
+  const value = Number(milliseconds) || 0;
+  return value >= 60000 ? `${(value / 60000).toFixed(1)}分` : `${(value / 1000).toFixed(1)}秒`;
+}
+
+function timingEntries() {
+  return (queue?.tasks || [])
+    .map((task) => ({ task, timing: task?.sourcing?.searchTiming }))
+    .filter((entry) => entry.timing && Number(entry.timing.totalMs) >= 0)
+    .sort((left, right) => String(right.timing.completedAt || "").localeCompare(String(left.timing.completedAt || "")));
+}
+
+function renderTimingPanel() {
+  const summary = $("timingSummary");
+  const container = $("timingRows");
+  const entries = timingEntries();
+  if (!entries.length) {
+    summary.textContent = "尚无样本";
+    container.replaceChildren(Object.assign(document.createElement("p"), { className: "muted", textContent: "完成或失败一件找同款后，这里会显示阶段耗时。" }));
+    return;
+  }
+  const totals = entries.map((entry) => Number(entry.timing.totalMs) || 0);
+  const average = totals.reduce((sum, value) => sum + value, 0) / totals.length;
+  summary.textContent = `${entries.length}件 · 平均${durationLabel(average)} · 最慢${durationLabel(Math.max(...totals))}`;
+  container.replaceChildren(...entries.slice(0, 6).map(({ task, timing }) => {
+    const card = document.createElement("article"); card.className = `timing-card ${timing.status === "failed" ? "failed" : ""}`;
+    const stages = Array.isArray(timing.stages) ? timing.stages : [];
+    const slowest = stages.reduce((current, stage) => !current || Number(stage.durationMs) > Number(current.durationMs) ? stage : current, null);
+    const heading = document.createElement("div"); heading.className = "timing-card-head";
+    const title = document.createElement("strong"); title.textContent = `SKU ${task?.ozon?.sku || "-"} · ${durationLabel(timing.totalMs)}`;
+    const meta = document.createElement("small"); meta.textContent = `${timing.status === "failed" ? "失败记录" : "完成"}${slowest ? ` · 最慢：${slowest.label} ${durationLabel(slowest.durationMs)}` : ""}`;
+    heading.replaceChildren(title, meta);
+    const details = document.createElement("div"); details.className = "timing-stages";
+    stages.forEach((stage) => {
+      const chip = document.createElement("span"); chip.className = stage.status === "error" ? "bad" : ""; chip.textContent = `${stage.label} ${durationLabel(stage.durationMs)}`; details.append(chip);
+    });
+    card.replaceChildren(heading, details);
+    return card;
+  }));
+}
+
 function money(value) {
   const amount = Number(value);
   return Number.isFinite(amount) ? amount.toFixed(2) : "-";
@@ -127,6 +168,7 @@ function money(value) {
 
 function render() {
   updateStats();
+  renderTimingPanel();
   $("download").disabled = !queue;
   $("batchStart").disabled = !queue || batch.running || aiBatch.running || skuBatch.running;
   $("aiBatchStart").disabled = !queue || batch.running || aiBatch.running || skuBatch.running;
@@ -239,7 +281,7 @@ async function api(path, options = {}) {
   if (!response.ok || !payload.ok) {
     const error = new Error(payload.error || "操作失败");
     error.code = payload.code || "";
-    error.details = payload.risk || null;
+    error.details = payload;
     throw error;
   }
   return payload;
@@ -435,6 +477,7 @@ async function searchTask(task, button = null, { batchMode = false } = {}) {
     task.sourcing = task.sourcing || {};
     task.sourcing.devicePreparation = { status: "completed", remoteImagePath: result.remotePath, completedAt: new Date().toISOString() };
     task.sourcing.searchCandidates = result.candidates;
+    task.sourcing.searchTiming = result.timing || null;
     task.sourcing.aiJudgement = null;
     task.sourcing.judgeProvider = null;
     task.sourcing.judgeResult = null;
@@ -457,7 +500,8 @@ async function searchTask(task, button = null, { batchMode = false } = {}) {
     task.sourcing.status = riskControl ? "paused_risk_control" : "search_failed_retryable";
     task.sourcing.searchLastError = error.message || String(error);
     task.sourcing.searchFailedAt = new Date().toISOString();
-    task.sourcing.riskControl = riskControl ? { ...(error.details || {}), detectedAt: new Date().toISOString() } : null;
+    if (error?.details?.timing) task.sourcing.searchTiming = error.details.timing;
+    task.sourcing.riskControl = riskControl ? { ...(error.details?.risk || {}), detectedAt: new Date().toISOString() } : null;
     persistQueue();
     if (!batchMode) setStatus(error.message, "bad");
     if (button) button.disabled = false;
