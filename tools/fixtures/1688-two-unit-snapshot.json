@@ -1,7 +1,40 @@
 {
   "pageType": "two-unit-detail",
-  "pageUrl": "https://detail.1688.com/offer/0000000000.html",
-  "title": "未采集：登录会话不可用",
-  "nodes": [],
+  "pageUrl": "https://s.1688.com/selloffer/offer_search.htm",
+  "title": "未进入双件详情页：详情链接数量为0",
+  "nodes": [
+    {
+      "text": "双件详情页未采集",
+      "href": "",
+      "imageUrl": "",
+      "ariaLabel": "",
+      "data": {
+        "reason": "detail-offer-link-count-zero"
+      },
+      "visible": true
+    },
+    {
+      "text": "文件输入数量：1；未验证上传",
+      "href": "",
+      "imageUrl": "",
+      "ariaLabel": "",
+      "data": {
+        "selector": "input[type=file]",
+        "count": 1,
+        "uploadVerified": false
+      },
+      "visible": true
+    },
+    {
+      "text": "官方图片主机：cbu01.alicdn.com",
+      "href": "",
+      "imageUrl": "",
+      "ariaLabel": "",
+      "data": {
+        "host": "cbu01.alicdn.com"
+      },
+      "visible": true
+    }
+  ],
   "capturedAt": "2026-08-31T08:03:58.000Z"
 }

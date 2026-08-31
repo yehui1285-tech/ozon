@@ -1,7 +1,50 @@
 {
   "pageType": "search",
   "pageUrl": "https://s.1688.com/selloffer/offer_search.htm",
-  "title": "未采集：登录会话不可用",
-  "nodes": [],
+  "title": "1688图片搜索兼容性探针：FAIL",
+  "nodes": [
+    {
+      "text": "详情链接数量：0",
+      "href": "",
+      "imageUrl": "",
+      "ariaLabel": "",
+      "data": {
+        "selector": "a[href*=offer/]",
+        "count": 0
+      },
+      "visible": true
+    },
+    {
+      "text": "文件输入数量：1",
+      "href": "",
+      "imageUrl": "",
+      "ariaLabel": "",
+      "data": {
+        "selector": "input[type=file]",
+        "count": 1
+      },
+      "visible": true
+    },
+    {
+      "text": "官方图片主机：cbu01.alicdn.com",
+      "href": "",
+      "imageUrl": "",
+      "ariaLabel": "",
+      "data": {
+        "host": "cbu01.alicdn.com"
+      },
+      "visible": true
+    },
+    {
+      "text": "以图搜款",
+      "href": "",
+      "imageUrl": "",
+      "ariaLabel": "",
+      "data": {
+        "anchor": "image-search"
+      },
+      "visible": true
+    }
+  ],
   "capturedAt": "2026-08-31T08:03:58.000Z"
 }

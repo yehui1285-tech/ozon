@@ -5,6 +5,14 @@
 - `当前文件怎么用.md`
 - `OZON项目复现交接文档.md`
 
+## 2026-08-31 - 1688浏览器兼容性闸门（FAIL）
+
+- 可见 Chrome 的 1688 图片搜索页可读：登录阻断为否、可见 `input[type=file]` 数量为 1，且观察到官方图片主机`cbu01.alicdn.com`；精确详情链接选择器结果为 0，未进入商品详情页。
+- 未取得允许上传的一张非敏感 Ozon 主图：公开 Ozon 页面出现验证且未处理，扩展任务页的可见主图读取受浏览器 URL 安全策略阻断。因此未验证标准`File`/`DataTransfer`上传反应，价格、MOQ、SKU 与运费亦未验证。
+- 结论为硬闸门`FAIL`，不得启动 Task 2–7、不得增加登录/验证或浏览器安全策略绕过方案；Task 8 必须将该阻断项作为明确交接条件。
+- 回滚备份：`_备份_20260831_1688_automatic_sourcing_before`，仅复制计划指定的扩展目录、拼多多Agent根目录文件及public根目录文件、`PROJECT_STATUS.md`与`CHANGELOG.md`；删除最旧常规备份`_备份_20260831_pinduoduo_ai_sku_safety_before`后，常规备份为 5 个。
+- 本次仅更新兼容性探针、脱敏样本及状态记录；未修改运行代码、扩展版本或发布ZIP；不需要上传`feishu.html`、重装扩展或部署 Cloudflare Worker。
+
 ## 2026-08-31 - 1688全自动采购找品实施计划
 
 - 用户已确认修订设计；新增`docs/superpowers/plans/2026-08-31-1688-automatic-sourcing.md`，把实施拆为8个可测试任务，并为每项写明文件、接口、失败测试、最小实现、验证命令和独立提交边界。
