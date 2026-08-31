@@ -109,9 +109,11 @@ async function deviceStatus() {
   let pinduoduoInstalled = false;
   let bootCompleted = false;
   if (info.processStarted || info.androidStarted) {
-    const boot = await manager(["sh", "-v", "0", "-c", "getprop sys.boot_completed"]).catch(() => ({ output: "" }));
+    let boot = await adb(["shell", "getprop", "sys.boot_completed"], { timeoutMs: 10000 }).catch(() => ({ output: "" }));
+    if (boot.output.trim() !== "1") boot = await manager(["sh", "-v", "0", "-c", "getprop sys.boot_completed"]).catch(() => ({ output: "" }));
     bootCompleted = boot.output.trim() === "1";
-    const app = await manager(["sh", "-v", "0", "-c", `pm path ${PINDUODUO_PACKAGE}`]).catch(() => ({ output: "" }));
+    let app = await adb(["shell", "pm", "path", PINDUODUO_PACKAGE], { timeoutMs: 10000 }).catch(() => ({ output: "" }));
+    if (!/package:/i.test(app.output)) app = await manager(["sh", "-v", "0", "-c", `pm path ${PINDUODUO_PACKAGE}`]).catch(() => ({ output: "" }));
     pinduoduoInstalled = /package:/i.test(app.output);
   }
   return { managerFound: true, ...info, bootCompleted, pinduoduoInstalled, packageName: PINDUODUO_PACKAGE };
@@ -257,59 +259,129 @@ async function openSkuSheet(sourceUrl) {
   return { ...opened, ...captured };
 }
 
+function matchingSkuOption(sheet, expected) {
+  return (sheet?.options || []).find((option) => option.label === expected.label && option.group === expected.group)
+    || (sheet?.options || []).find((option) => option.label === expected.label)
+    || null;
+}
+
+function skuSelectionConfirmed(sheet, option) {
+  const current = matchingSkuOption(sheet, option);
+  if (current?.selected) return true;
+  const selectedText = String(sheet?.selectedText || "").trim();
+  return Boolean(selectedText && (selectedText.includes(option.label) || option.label.includes(selectedText)));
+}
+
+async function waitForSelectedSkuOption(option, timeoutMs = 6000) {
+  const startedAt = Date.now();
+  let lastUi = null;
+  let lastSheet = null;
+  while (Date.now() - startedAt < timeoutMs) {
+    lastUi = await captureUi();
+    lastSheet = extractPinduoduoSkuSheet(lastUi.nodes);
+    if (skuSelectionConfirmed(lastSheet, option)) {
+      const current = matchingSkuOption(lastSheet, option);
+      const price = Number(current?.price) > 0 ? Number(current.price) : Number(lastSheet.headerPrice);
+      if (price > 0) return { ui: lastUi, sheet: lastSheet, option: current, price: Number(price.toFixed(2)) };
+    }
+    await delay(350);
+  }
+  return { ui: lastUi, sheet: lastSheet, option: matchingSkuOption(lastSheet, option), price: null };
+}
+
+async function hydrateSeparatedSkuPrices(opened) {
+  if (opened.sheet.multiDimension || opened.sheet.options.every((option) => Number(option.price) > 0)) return opened;
+  const resolvedOptions = [];
+  let currentSheet = opened.sheet;
+  let currentUi = opened.ui;
+  for (const original of opened.sheet.options) {
+    if (Number(original.price) > 0) {
+      resolvedOptions.push(original);
+      continue;
+    }
+    const current = matchingSkuOption(currentSheet, original);
+    if (!current?.bounds) throw new Error(`规格“${original.label}”的按钮已变化，无法安全读取价格。`);
+    let captured = null;
+    if (skuSelectionConfirmed(currentSheet, current) && Number(currentSheet.headerPrice) > 0) {
+      captured = { ui: currentUi, sheet: currentSheet, option: current, price: Number(currentSheet.headerPrice) };
+    } else {
+      await tapBounds(current.bounds);
+      captured = await waitForSelectedSkuOption(current, 6000);
+    }
+    if (!(captured.price > 0)) {
+      await saveSkuDiagnostic(captured.ui, captured.sheet, `sku_option_price_missing:${original.label}`).catch(() => null);
+      throw new Error(`已点击规格“${original.label}”，但未能同时确认选中状态和顶部常规价；未写入采购价。`);
+    }
+    resolvedOptions.push({ ...original, price: captured.price, priceSource: "selected_header", selectionVerified: true });
+    currentSheet = captured.sheet;
+    currentUi = captured.ui;
+  }
+  return {
+    ...opened,
+    ui: currentUi,
+    sheet: {
+      ...opened.sheet,
+      selectedText: currentSheet.selectedText,
+      selectedOptionId: currentSheet.selectedOptionId,
+      headerPrice: currentSheet.headerPrice,
+      options: resolvedOptions,
+      priceCollection: "selected_header_per_option",
+    },
+  };
+}
+
 async function captureSkuOptions(body = {}) {
   const opened = await openSkuSheet(String(body.sourceUrl || "").trim());
-  const evidence = await captureScreenshot().catch(() => null);
-  await closeSkuSheet();
-  return {
-    ok: true,
-    status: "sku_options_captured",
-    goodsId: opened.goodsId,
-    sourceUrl: opened.sourceUrl,
-    skuSheet: opened.sheet,
-    evidencePath: evidence?.localPath || null,
-    message: `已读取${opened.sheet.options.length}个可选规格；尚未触发下单。`,
-  };
+  try {
+    const priced = await hydrateSeparatedSkuPrices(opened);
+    const evidence = await captureScreenshot().catch(() => null);
+    return {
+      ok: true,
+      status: "sku_options_captured",
+      goodsId: priced.goodsId,
+      sourceUrl: priced.sourceUrl,
+      skuSheet: priced.sheet,
+      evidencePath: evidence?.localPath || null,
+      message: `已读取${priced.sheet.options.length}个可选规格及对应常规价；尚未触发下单。`,
+    };
+  } finally {
+    await closeSkuSheet().catch(() => false);
+  }
 }
 
 async function selectSkuOption(body = {}) {
   const optionId = String(body.optionId || "").trim();
   const expectedLabel = String(body.optionLabel || "").trim();
+  const expectedPrice = Number(body.optionPrice);
   if (!optionId) throw new Error("缺少要核验的规格编号。");
   const opened = await openSkuSheet(String(body.sourceUrl || "").trim());
-  const option = opened.sheet.options.find((entry) => entry.optionId === optionId);
-  if (!option?.bounds || (expectedLabel && option.label !== expectedLabel)) {
-    await closeSkuSheet();
-    throw new Error("规格弹窗已变化，未找到AI选择的规格；请重新读取规格。");
-  }
-  await tapBounds(option.bounds);
-  let verified = null;
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < 6000) {
-    const ui = await captureUi();
-    const sheet = extractPinduoduoSkuSheet(ui.nodes);
-    if (sheet.selectedText && (sheet.selectedText.includes(option.label) || option.label.includes(sheet.selectedText))) {
-      verified = sheet;
-      break;
+  try {
+    const option = opened.sheet.options.find((entry) => entry.optionId === optionId);
+    if (!option?.bounds || (expectedLabel && option.label !== expectedLabel)) {
+      throw new Error("规格弹窗已变化，未找到AI选择的规格；请重新读取规格。");
     }
-    await delay(350);
+    await tapBounds(option.bounds);
+    const captured = await waitForSelectedSkuOption(option, 6000);
+    const verified = captured.price > 0 ? captured.sheet : null;
+    const evidence = await captureScreenshot().catch(() => null);
+    if (!verified) throw new Error("已点击规格，但未能从页面确认“已选”规格一致；未写入采购价。");
+    if (expectedPrice > 0 && Math.abs(captured.price - expectedPrice) > 0.01) throw new Error(`规格价格已变化：读取时${expectedPrice.toFixed(2)}元，确认时${captured.price.toFixed(2)}元；请重新核验。`);
+    return {
+      ok: true,
+      status: "sku_price_verified",
+      goodsId: opened.goodsId,
+      sourceUrl: opened.sourceUrl,
+      selectedOption: { optionId: option.optionId, label: option.label, price: captured.price, rawText: option.rawText },
+      stableUnitPrice: captured.price,
+      accountSpecificDiscountIgnored: Boolean(verified.accountSpecificDiscountVisible),
+      submitPriceIgnored: verified.submitPrice,
+      evidencePath: evidence?.localPath || null,
+      verifiedAt: new Date().toISOString(),
+      message: `已确认规格“${option.label}”常规标价${captured.price.toFixed(2)}元；未使用账号余额优惠，未提交订单。`,
+    };
+  } finally {
+    await closeSkuSheet().catch(() => false);
   }
-  const evidence = await captureScreenshot().catch(() => null);
-  await closeSkuSheet();
-  if (!verified) throw new Error("已点击规格，但未能从页面确认“已选”规格一致；未写入采购价。");
-  return {
-    ok: true,
-    status: "sku_price_verified",
-    goodsId: opened.goodsId,
-    sourceUrl: opened.sourceUrl,
-    selectedOption: { optionId: option.optionId, label: option.label, price: option.price, rawText: option.rawText },
-    stableUnitPrice: option.price,
-    accountSpecificDiscountIgnored: Boolean(verified.accountSpecificDiscountVisible),
-    submitPriceIgnored: verified.submitPrice,
-    evidencePath: evidence?.localPath || null,
-    verifiedAt: new Date().toISOString(),
-    message: `已确认规格“${option.label}”常规标价${option.price.toFixed(2)}元；未使用账号余额优惠，未提交订单。`,
-  };
 }
 
 async function startImageSearch(trace = null) {

@@ -3,7 +3,7 @@ import { applyFinalOzonPricing, preliminaryPricingDecision } from "./pricing-flo
 let queue = null;
 let sourceName = "ozon-sourcing.json";
 const storageKey = "ozon-pinduoduo-agent-mvp3";
-const appVersion = "MVP 5.2";
+const appVersion = "MVP 5.3";
 const batch = { running: false, paused: false, riskPaused: false, pauseReason: "", stopRequested: false, cursor: 0, completed: 0, failed: 0 };
 const aiBatch = { running: false, completed: 0, failed: 0, riskPaused: false, pauseReason: "" };
 const skuBatch = { running: false, completed: 0, failed: 0 };
@@ -437,7 +437,7 @@ async function verifyRecommendedSku(task, button = null, { batchMode = false } =
       if (!batchMode) setStatus(`SKU ${task.ozon.sku}：规格无法自动确认，已保留${captured.skuSheet.options.length}个规格供人工复核。`, "bad");
       return { ok: false, needsHumanReview: true };
     }
-    const confirmed = await api("/api/pinduoduo/select-sku", { method: "POST", body: JSON.stringify({ taskId: task.taskId, sourceUrl, optionId: selected.optionId, optionLabel: selected.label }) });
+    const confirmed = await api("/api/pinduoduo/select-sku", { method: "POST", body: JSON.stringify({ taskId: task.taskId, sourceUrl, optionId: selected.optionId, optionLabel: selected.label, optionPrice: selected.price }) });
     if (candidate?.detail?.shippingFee !== 0) throw new Error("目标规格已确认，但商品运费不是明确包邮，暂不写入采购成本。");
     const purchaseCost = Number(confirmed.stableUnitPrice);
     const verification = {

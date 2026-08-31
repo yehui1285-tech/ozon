@@ -18,9 +18,10 @@ assert.deepEqual(parseMumuInfo('{"index":"0","name":"工作室","android_version
 assert.equal(parseMumuInfo("not-json").errorCode, -1);
 assert.equal(safeTaskFileName("ozon:123 / test"), "ozon_123_test");
 
-const uiNodes = parseUiNodes('<?xml version="1.0"?><hierarchy><node text="" resource-id="" class="android.view.View" content-desc="拍照搜索" clickable="false" bounds="[0,0][900,1600]" /><node text="" resource-id="pdd" class="android.view.View" content-desc="拍照搜索" clickable="true" bounds="[831,57][900,90]" /></hierarchy>');
+const uiNodes = parseUiNodes('<?xml version="1.0"?><hierarchy><node text="" resource-id="" class="android.view.View" content-desc="拍照搜索" clickable="false" bounds="[0,0][900,1600]" /><node text="" resource-id="pdd" class="android.view.View" content-desc="拍照搜索" clickable="true" selected="true" enabled="true" bounds="[831,57][900,90]" /></hierarchy>');
 assert.equal(uiNodes.length, 2);
 assert.deepEqual(findUiNode(uiNodes, ["拍照搜索"])?.bounds, [831, 57, 900, 90]);
+assert.equal(findUiNode(uiNodes, ["拍照搜索"])?.selected, true);
 assert.equal(detectPinduoduoRiskPage([{ text: "实名认证提示" }, { text: "检测到账户存在风险，为了账号安全，已限制部分操作" }]).type, "real_name_verification");
 assert.equal(detectPinduoduoRiskPage([{ text: "请将正脸置于框内" }]).type, "face_verification");
 assert.equal(detectPinduoduoRiskPage([{ text: "搜图片同款" }, { text: "全场包邮" }]).blocked, false);
@@ -54,6 +55,20 @@ assert.equal(skuSheet.accountSpecificDiscountVisible, true);
 assert.equal(skuSheet.submitVisible, true);
 assert.equal(skuSheet.submitPrice, 45.95);
 assert.equal(skuSheet.multiDimension, false);
+const separatedPriceSheet = extractPinduoduoSkuSheet([
+  { text: "仅2件 ¥56 限1件", clickable: false, bounds: [20, 180, 400, 230] },
+  { text: "颜色", clickable: false, bounds: [20, 300, 100, 340] },
+  { text: "紫色", clickable: true, enabled: true, selected: true, bounds: [20, 350, 120, 400] },
+  { text: "深灰色", clickable: true, enabled: true, selected: false, bounds: [140, 350, 260, 400] },
+  { text: "已折叠2个售罄款式", clickable: false, bounds: [20, 430, 300, 470] },
+  { text: "0元下单，确认收货后付款¥56", clickable: true, bounds: [0, 1500, 900, 1600] },
+]);
+assert.equal(separatedPriceSheet.options.length, 2);
+assert.deepEqual(separatedPriceSheet.options.map((option) => option.label), ["紫色", "深灰色"]);
+assert.deepEqual(separatedPriceSheet.options.map((option) => option.price), [null, null]);
+assert.equal(separatedPriceSheet.headerPrice, 56);
+assert.equal(separatedPriceSheet.selectedOptionId, "sku-option-1");
+assert.equal(separatedPriceSheet.multiDimension, false);
 assert.equal(extractPinduoduoSkuSheet([
   { text: "颜色", clickable: false },
   { text: "黑色  ¥20", clickable: true, bounds: [1, 1, 20, 20] },
@@ -161,6 +176,8 @@ const bridgeSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/pi
 const extensionManifest = JSON.parse(fs.readFileSync(new URL("../ozon-erp-collector-extension/manifest.json", import.meta.url), "utf8"));
 assert.match(serverSource, /127\.0\.0\.1/);
 assert.match(serverSource, /MuMuManager\.exe/);
+assert.match(serverSource, /adb\(\["shell", "getprop", "sys\.boot_completed"\]/);
+assert.match(serverSource, /adb\(\["shell", "pm", "path", PINDUODUO_PACKAGE\]/);
 assert.match(serverSource, /PINDUODUO_PACKAGE/);
 assert.match(serverSource, /MEDIA_SCANNER_SCAN_FILE/);
 assert.match(serverSource, /x-ozon-agent/);
@@ -186,6 +203,9 @@ assert.match(serverSource, /hasPurchaseOverlay/);
 assert.match(serverSource, /isTransientUiCaptureError/);
 assert.match(serverSource, /attempt <= 3/);
 assert.match(serverSource, /saveSkuDiagnostic/);
+assert.match(serverSource, /hydrateSeparatedSkuPrices/);
+assert.match(serverSource, /selected_header_per_option/);
+assert.match(serverSource, /optionPrice/);
 assert.match(appSource, /pending_pinduoduo_search/);
 assert.match(appSource, /x-ozon-agent/);
 assert.match(appSource, /eligibleAt18Pct/);
@@ -197,8 +217,8 @@ assert.match(appSource, /batch\.stopRequested/);
 assert.match(appSource, /search_failed_retryable/);
 assert.match(appSource, /AI判断失败/);
 assert.match(qwenSource, /evidenceWarnings/);
-assert.match(appSource, /const appVersion = "MVP 5\.2"/);
-assert.doesNotMatch(appSource, /MVP 5\.1/);
+assert.match(appSource, /const appVersion = "MVP 5\.3"/);
+assert.doesNotMatch(appSource, /MVP 5\.2/);
 assert.match(appSource, /batchDelayRangeMs/);
 assert.match(appSource, /paused_risk_control/);
 assert.match(appSource, /async function runAiBatch/);

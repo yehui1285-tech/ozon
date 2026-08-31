@@ -196,6 +196,8 @@ export function parseUiNodes(xml) {
       resourceId: attributes["resource-id"] || "",
       className: attributes.class || "",
       clickable: attributes.clickable === "true",
+      enabled: attributes.enabled !== "false",
+      selected: attributes.selected === "true" || attributes.checked === "true",
       bounds: bounds ? bounds.slice(1).map(Number) : null,
     };
   }).filter((node) => node.text || node.description || node.resourceId || node.clickable);
@@ -239,6 +241,7 @@ export function extractPinduoduoSkuSheet(nodes) {
   const selectedText = clean(selectedNode?.text || selectedNode?.description).replace(/^已选\s*[:：]\s*/, "");
   const options = [];
   const seen = new Set();
+  const optionNodes = new Set();
   let currentGroup = "";
   for (const node of list) {
     const label = clean(node?.text || node?.description).replace(/\s+/g, " ");
@@ -246,20 +249,43 @@ export function extractPinduoduoSkuSheet(nodes) {
       currentGroup = label;
       continue;
     }
-    if (!node?.clickable || !node?.bounds || !/[¥￥]\s*\d/.test(label)) continue;
-    if (/提交订单|单独购买|免拼购买|仅\d+件|快要抢光|到手价|券后/.test(label)) continue;
-    const price = parseYuanAmount(label);
-    const optionLabel = label.replace(/\s*[¥￥]\s*\d+(?:\.\d{1,2})?\s*$/, "").trim();
-    if (!optionLabel || !(price > 0)) continue;
-    const key = `${optionLabel}\u0000${price}`;
+    if (currentGroup && /^(?:优惠|数量|已折叠|一次选多款|使用|提交订单|单独购买|免拼购买|直接拼成)/.test(label)) {
+      currentGroup = "";
+      continue;
+    }
+    if (!node?.clickable || node?.enabled === false || !node?.bounds) continue;
+    const hasInlinePrice = /[¥￥]\s*\d/.test(label);
+    if (!hasInlinePrice && !currentGroup) continue;
+    if (/提交订单|单独购买|免拼购买|直接拼成|仅\d+件|快要抢光|到手价|券后|店铺优惠|多多支付|0元下单|确认收货/.test(label)) continue;
+    const price = hasInlinePrice ? parseYuanAmount(label) : null;
+    const optionLabel = hasInlinePrice ? label.replace(/\s*[¥￥]\s*\d+(?:\.\d{1,2})?\s*$/, "").trim() : label;
+    if (!optionLabel || optionLabel.length > 60 || (hasInlinePrice && !(price > 0))) continue;
+    const key = `${currentGroup || "规格"}\u0000${optionLabel}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    options.push({ optionId: `sku-option-${options.length + 1}`, group: currentGroup || "规格", label: optionLabel, price, rawText: label, bounds: node.bounds });
+    optionNodes.add(node);
+    options.push({
+      optionId: `sku-option-${options.length + 1}`,
+      group: currentGroup || "规格",
+      label: optionLabel,
+      price,
+      priceSource: price > 0 ? "inline_option" : "selection_required",
+      selected: Boolean(node.selected),
+      rawText: label,
+      bounds: node.bounds,
+    });
   }
   const groups = [...new Set(options.map((option) => option.group))];
   const paymentBalanceNode = list.find((node) => /多多支付余额/.test(clean(node?.text || node?.description)));
   const submitNode = list.find((node) => /提交订单/.test(clean(node?.text || node?.description)));
-  const selectedOption = options.find((option) => selectedText && (selectedText === option.label || selectedText.includes(option.label) || option.label.includes(selectedText))) || null;
+  const selectedOption = options.find((option) => option.selected || (selectedText && (selectedText === option.label || selectedText.includes(option.label) || option.label.includes(selectedText)))) || null;
+  const headerPriceNode = list
+    .filter((node) => !optionNodes.has(node) && node?.bounds && node.bounds[1] < 900)
+    .map((node) => ({ node, label: clean(node?.text || node?.description).replace(/\s+/g, " ") }))
+    .filter(({ label }) => /[¥￥]\s*\d/.test(label) && !/提交订单|0元下单|确认收货|店铺优惠|多多支付|到手价|券后|付款/.test(label))
+    .map(({ node, label }) => ({ node, price: parseYuanAmount(label) }))
+    .filter((entry) => entry.price > 0)
+    .sort((left, right) => left.node.bounds[1] - right.node.bounds[1])[0] || null;
   return {
     status: options.length ? "sku_options_captured" : "sku_options_missing",
     selectedText,
@@ -267,6 +293,7 @@ export function extractPinduoduoSkuSheet(nodes) {
     options,
     groups,
     multiDimension: groups.length > 1,
+    headerPrice: headerPriceNode?.price || null,
     accountSpecificDiscountVisible: Boolean(paymentBalanceNode),
     submitVisible: Boolean(submitNode),
     submitPrice: parseYuanAmount(submitNode?.text || submitNode?.description),
