@@ -2,6 +2,7 @@ _备份_*/
 _旧文件备份_*/
 .agents/
 .codex/
+.worktrees/
 .libtv/
 .libtv-cli/
 *.log
