@@ -3,7 +3,7 @@ import { applyFinalOzonPricing, preliminaryPricingDecision } from "./pricing-flo
 let queue = null;
 let sourceName = "ozon-sourcing.json";
 const storageKey = "ozon-pinduoduo-agent-mvp3";
-const appVersion = "MVP 5.1";
+const appVersion = "MVP 5.2";
 const batch = { running: false, paused: false, riskPaused: false, pauseReason: "", stopRequested: false, cursor: 0, completed: 0, failed: 0 };
 const aiBatch = { running: false, completed: 0, failed: 0, riskPaused: false, pauseReason: "" };
 const skuBatch = { running: false, completed: 0, failed: 0 };
@@ -25,6 +25,26 @@ function aiJudgementComplete(task) {
   return Boolean(task?.sourcing?.aiJudgement?.judgedAt && task?.sourcing?.aiJudgement?.verdict);
 }
 
+function hasCriticalSpecConflictText(value) {
+  const text = String(value || "").trim().toLowerCase()
+    .replace(/(?:均|皆)?无(?:任何|明显|关键)?[^，。；]{0,12}(?:冲突|不匹配|不一致)/g, "")
+    .replace(/(?:没有|未发现|不存在|未见)(?:任何|明显|关键)?[^，。；]{0,12}(?:冲突|不匹配|不一致)/g, "");
+  return /不匹配|不一致|(?:规格|型号|尺寸|数量|方向|左右|套装|配件|制式|类型|颜色|适配|车型)[^，。；]{0,10}冲突|(?:torx|星型|梅花)[^，。；]{0,16}(?:hex|内六角)|(?:hex|内六角)[^，。；]{0,16}(?:torx|星型|梅花)/i.test(text);
+}
+
+function aiJudgementHasSafetyConflict(judgement) {
+  if (!judgement || judgement.verdict !== "same_product") return false;
+  if (Array.isArray(judgement.specConflicts) && judgement.specConflicts.length) return true;
+  if (hasCriticalSpecConflictText(judgement.reason)) return true;
+  const bestCandidateIndex = Number(judgement.bestCandidateIndex);
+  const assessment = Array.isArray(judgement.candidateAssessments)
+    ? judgement.candidateAssessments.find((entry) => Number(entry?.candidateIndex) === bestCandidateIndex)
+    : null;
+  if (!Number.isInteger(bestCandidateIndex) || bestCandidateIndex < 1 || !assessment) return true;
+  if (assessment.verdict !== "same_product" || Number(assessment.confidence) < 85) return true;
+  return Array.isArray(assessment.differences) && assessment.differences.some((difference) => /型号|规格|尺寸|数量|方向|左右|套装|配件|制式|类型|颜色|适配|车型|torx|hex|星型|梅花|六角/i.test(String(difference || "")));
+}
+
 function aiReady(task) {
   const candidates = Array.isArray(task?.sourcing?.searchCandidates)
     ? task.sourcing.searchCandidates.filter((candidate) => candidate?.detail?.detailStatus === "detail_captured")
@@ -34,7 +54,7 @@ function aiReady(task) {
 
 function aiRecommendsSameProduct(task) {
   const judgement = task?.sourcing?.aiJudgement;
-  return judgement?.verdict === "same_product" && judgement?.needsHumanReview === false && Number(judgement?.confidence) >= 85;
+  return judgement?.verdict === "same_product" && judgement?.needsHumanReview === false && Number(judgement?.confidence) >= 85 && !aiJudgementHasSafetyConflict(judgement);
 }
 
 function resolveRecommendedCandidate(task) {
@@ -231,11 +251,15 @@ function render() {
     const link = document.createElement("input"); link.className = "link"; link.type = "url"; link.placeholder = "候选商品链接（可暂空）"; link.value = task?.pricing?.sourceUrl || suggestedCandidate?.sourceUrl || suggestedCandidate?.detail?.sourceUrl || ""; row.children[7].append(link);
     const resultCell = row.children[8]; resultCell.className = "ai-result";
     if (judgement) {
+      const safelyRecommended = aiRecommendsSameProduct(task);
       const title = document.createElement("strong");
-      title.className = judgement.verdict === "same_product" && !judgement.needsHumanReview ? "ok" : judgement.verdict === "no_match" ? "bad" : "muted";
-      title.textContent = `${judgement.verdict === "same_product" ? "推荐同款" : judgement.verdict === "no_match" ? "未找到同款" : "需要复核"} · ${judgement.confidence}%`;
+      title.className = safelyRecommended ? "ok" : judgement.verdict === "no_match" ? "bad" : "muted";
+      title.textContent = `${safelyRecommended ? "推荐同款" : judgement.verdict === "no_match" ? "未找到同款" : "需要复核"} · ${judgement.confidence}%`;
       const reason = document.createElement("small"); reason.textContent = judgement.reason || "无判断理由";
       resultCell.replaceChildren(title, reason);
+      if (judgement.verdict === "same_product" && aiJudgementHasSafetyConflict(judgement)) {
+        const warning = document.createElement("small"); warning.className = "bad"; warning.textContent = "安全闸门：检测到关键规格冲突，已禁止自动收藏、规格核验和采购价写入。"; resultCell.append(warning);
+      }
       if (aiRecommendsSameProduct(task)) {
         const favorite = document.createElement("small");
         const favoriteStatus = task?.sourcing?.favorite?.status;

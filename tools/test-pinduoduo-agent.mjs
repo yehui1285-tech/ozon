@@ -51,6 +51,7 @@ assert.equal(skuSheet.options.length, 2);
 assert.equal(skuSheet.options[0].price, 51);
 assert.equal(skuSheet.selectedOptionId, "sku-option-1");
 assert.equal(skuSheet.accountSpecificDiscountVisible, true);
+assert.equal(skuSheet.submitVisible, true);
 assert.equal(skuSheet.submitPrice, 45.95);
 assert.equal(skuSheet.multiDimension, false);
 assert.equal(extractPinduoduoSkuSheet([
@@ -132,6 +133,21 @@ assert.deepEqual(normalizeAiJudgement({ bestCandidateIndex: 1, verdict: "same_pr
   candidateAssessments: [{ candidateIndex: 1, verdict: "same_product", confidence: 91, differences: [] }],
 });
 assert.equal(normalizeAiJudgement({ bestCandidateIndex: 4, verdict: "same_product", confidence: 70, needsHumanReview: false }, 3).needsHumanReview, true);
+const contradictoryJudgement = normalizeAiJudgement({
+  bestCandidateIndex: 1,
+  verdict: "same_product",
+  confidence: 95,
+  specConflicts: [],
+  reason: "候选为公制内六角，与目标商品的TORX规格冲突，因此是最佳匹配品",
+  needsHumanReview: false,
+  candidateAssessments: [{ candidateIndex: 1, verdict: "same_product", confidence: 95, differences: ["规格类型为梅花与内六角，不匹配"] }],
+}, 1);
+assert.equal(contradictoryJudgement.verdict, "possible_match");
+assert.equal(contradictoryJudgement.confidence, 84);
+assert.equal(contradictoryJudgement.needsHumanReview, true);
+assert.ok(contradictoryJudgement.specConflicts.some((entry) => entry.includes("关键差异")));
+assert.ok(contradictoryJudgement.reason.includes("已降级为人工复核"));
+assert.equal(normalizeAiJudgement({ bestCandidateIndex: 1, verdict: "same_product", confidence: 95, specConflicts: [], reason: "型号、数量和套装内容均无冲突", needsHumanReview: false, candidateAssessments: [{ candidateIndex: 1, verdict: "same_product", confidence: 95, differences: [] }] }, 1).needsHumanReview, false);
 const mappedCandidate = { candidateId: "visible-2", sourceUrl: "https://mobile.yangkeduo.com/goods.html?goods_id=2", detail: { detailStatus: "detail_captured" } };
 assert.equal(resolveAiRecommendedCandidate({ sourcing: { searchCandidates: [{ candidateId: "visible-1", detail: { detailStatus: "detail_failed" } }, mappedCandidate] } }, { bestCandidateIndex: 1, bestCandidateId: "visible-2" }), mappedCandidate);
 assert.deepEqual(candidateInspectionOrder([{ displayedPrice: 160.36 }, { displayedPrice: 180 }, { displayedPrice: 139 }, { displayedPrice: 188 }]), [2, 0, 1, 3]);
@@ -167,6 +183,9 @@ assert.match(serverSource, /候选\$\{index \+ 1\}详情读取/);
 assert.match(serverSource, /findUiNode\(ui\.nodes, \["搜图片同款"\]\)/);
 assert.match(serverSource, /1200 \+ Math\.floor\(Math\.random\(\) \* 1401\)/);
 assert.match(serverSource, /hasPurchaseOverlay/);
+assert.match(serverSource, /isTransientUiCaptureError/);
+assert.match(serverSource, /attempt <= 3/);
+assert.match(serverSource, /saveSkuDiagnostic/);
 assert.match(appSource, /pending_pinduoduo_search/);
 assert.match(appSource, /x-ozon-agent/);
 assert.match(appSource, /eligibleAt18Pct/);
@@ -178,8 +197,8 @@ assert.match(appSource, /batch\.stopRequested/);
 assert.match(appSource, /search_failed_retryable/);
 assert.match(appSource, /AI判断失败/);
 assert.match(qwenSource, /evidenceWarnings/);
-assert.match(appSource, /const appVersion = "MVP 5\.1"/);
-assert.doesNotMatch(appSource, /MVP 4\.1/);
+assert.match(appSource, /const appVersion = "MVP 5\.2"/);
+assert.doesNotMatch(appSource, /MVP 5\.1/);
 assert.match(appSource, /batchDelayRangeMs/);
 assert.match(appSource, /paused_risk_control/);
 assert.match(appSource, /async function runAiBatch/);
@@ -196,6 +215,8 @@ assert.match(appSource, /详情读取失败/);
 assert.match(appSource, /链接已取得/);
 assert.match(appSource, /searchTiming/);
 assert.match(appSource, /renderTimingPanel/);
+assert.match(appSource, /aiJudgementHasSafetyConflict/);
+assert.match(appSource, /安全闸门/);
 assert.match(indexSource, /id="timingSummary"/);
 assert.match(indexSource, /id="timingRows"/);
 assert.match(appSource, /详情缺/);

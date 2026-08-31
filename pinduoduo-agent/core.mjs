@@ -62,13 +62,24 @@ export function aiJudgementReadiness(task = {}) {
   return { ready: reasons.length === 0, reasons, candidates };
 }
 
+function hasCriticalSpecConflictText(value) {
+  const text = clean(value).toLowerCase()
+    .replace(/(?:均|皆)?无(?:任何|明显|关键)?[^，。；]{0,12}(?:冲突|不匹配|不一致)/g, "")
+    .replace(/(?:没有|未发现|不存在|未见)(?:任何|明显|关键)?[^，。；]{0,12}(?:冲突|不匹配|不一致)/g, "");
+  return /不匹配|不一致|(?:规格|型号|尺寸|数量|方向|左右|套装|配件|制式|类型|颜色|适配|车型)[^，。；]{0,10}冲突|(?:torx|星型|梅花)[^，。；]{0,16}(?:hex|内六角)|(?:hex|内六角)[^，。；]{0,16}(?:torx|星型|梅花)/i.test(text);
+}
+
+function isCriticalCandidateDifference(value) {
+  return /型号|规格|尺寸|数量|方向|左右|套装|配件|制式|类型|颜色|适配|车型|torx|hex|星型|梅花|六角/i.test(clean(value));
+}
+
 export function normalizeAiJudgement(raw = {}, candidateCount = 0) {
   const allowedVerdicts = new Set(["same_product", "possible_match", "no_match", "insufficient_evidence"]);
   const verdict = allowedVerdicts.has(clean(raw.verdict)) ? clean(raw.verdict) : "insufficient_evidence";
   const candidateIndex = Number(raw.bestCandidateIndex);
   const bestCandidateIndex = Number.isInteger(candidateIndex) && candidateIndex >= 1 && candidateIndex <= candidateCount ? candidateIndex : null;
   const confidence = Math.max(0, Math.min(100, Math.round(Number(raw.confidence) || 0)));
-  const specConflicts = Array.isArray(raw.specConflicts) ? raw.specConflicts.map(clean).filter(Boolean).slice(0, 12) : [];
+  const rawSpecConflicts = Array.isArray(raw.specConflicts) ? raw.specConflicts.map(clean).filter(Boolean).slice(0, 12) : [];
   const assessments = Array.isArray(raw.candidateAssessments) ? raw.candidateAssessments.map((entry) => {
     const index = Number(entry?.candidateIndex);
     const itemVerdict = ["same_product", "possible_match", "different_product", "insufficient_evidence"].includes(clean(entry?.verdict))
@@ -81,13 +92,33 @@ export function normalizeAiJudgement(raw = {}, candidateCount = 0) {
       differences: Array.isArray(entry?.differences) ? entry.differences.map(clean).filter(Boolean).slice(0, 8) : [],
     };
   }).filter((entry) => entry.candidateIndex !== null).slice(0, candidateCount) : [];
-  const needsHumanReview = raw.needsHumanReview !== false || verdict !== "same_product" || confidence < 85 || specConflicts.length > 0;
+  const selectedAssessment = assessments.find((entry) => entry.candidateIndex === bestCandidateIndex) || null;
+  const consistencyConflicts = [];
+  if (verdict === "same_product") {
+    if (!bestCandidateIndex) consistencyConflicts.push("模型推荐同款但未提供有效的最佳候选序号");
+    if (!selectedAssessment) consistencyConflicts.push("最佳候选缺少逐候选判断明细");
+    else {
+      if (selectedAssessment.verdict !== "same_product") consistencyConflicts.push(`最佳候选明细结论为${selectedAssessment.verdict}`);
+      if (selectedAssessment.confidence < 85) consistencyConflicts.push(`最佳候选明细置信度仅${selectedAssessment.confidence}%`);
+      for (const difference of selectedAssessment.differences.filter(isCriticalCandidateDifference)) {
+        consistencyConflicts.push(`最佳候选关键差异：${difference}`);
+      }
+    }
+    if (hasCriticalSpecConflictText(raw.reason)) consistencyConflicts.push("模型判断理由包含关键规格冲突");
+  }
+  const specConflicts = [...new Set([...rawSpecConflicts, ...consistencyConflicts])].slice(0, 12);
+  const inconsistentRecommendation = verdict === "same_product" && specConflicts.length > 0;
+  const safeVerdict = inconsistentRecommendation ? "possible_match" : verdict;
+  const safeConfidence = inconsistentRecommendation ? Math.min(confidence, 84) : confidence;
+  const rawReason = clean(raw.reason);
+  const reason = `${rawReason}${inconsistentRecommendation ? `${rawReason ? "；" : ""}安全校验检测到关键规格冲突，已降级为人工复核。` : ""}`.slice(0, 800);
+  const needsHumanReview = raw.needsHumanReview !== false || safeVerdict !== "same_product" || safeConfidence < 85 || specConflicts.length > 0;
   return {
     bestCandidateIndex,
-    verdict,
-    confidence,
+    verdict: safeVerdict,
+    confidence: safeConfidence,
     specConflicts,
-    reason: clean(raw.reason).slice(0, 800),
+    reason,
     needsHumanReview,
     candidateAssessments: assessments,
   };
@@ -237,6 +268,7 @@ export function extractPinduoduoSkuSheet(nodes) {
     groups,
     multiDimension: groups.length > 1,
     accountSpecificDiscountVisible: Boolean(paymentBalanceNode),
+    submitVisible: Boolean(submitNode),
     submitPrice: parseYuanAmount(submitNode?.text || submitNode?.description),
   };
 }

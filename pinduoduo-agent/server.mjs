@@ -149,7 +149,11 @@ async function prepareTask(body, trace = null) {
   return { ok: true, taskId, remotePath, imageBytes: image.bytes, message: "主图已下发到模拟器并启动拼多多。" };
 }
 
-async function captureUi() {
+function isTransientUiCaptureError(error) {
+  return /(?:退出码|exit code)\s*137\b/i.test(String(error?.message || error));
+}
+
+async function captureUiOnce() {
   await adb(["shell", "uiautomator", "dump", "/sdcard/ozon-agent-window.xml"]).catch((error) => {
     if (!/dumped to:/i.test(error.message || "")) throw error;
   });
@@ -157,6 +161,20 @@ async function captureUi() {
   const nodes = parseUiNodes(xml);
   assertNoPinduoduoRisk(nodes);
   return { nodes, cameraSearch: findUiNode(nodes, ["拍照搜索", "图片搜索"]), capturedAt: new Date().toISOString() };
+}
+
+async function captureUi() {
+  let lastError = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await captureUiOnce();
+    } catch (error) {
+      lastError = error;
+      if (!isTransientUiCaptureError(error) || attempt === 3) throw error;
+      await delay(attempt * 600);
+    }
+  }
+  throw lastError;
 }
 
 async function clickNamedUi(body) {
@@ -208,14 +226,16 @@ async function closeSkuSheet() {
 async function waitForSkuSheet(timeoutMs = 10000) {
   const startedAt = Date.now();
   let lastSheet = { status: "sku_options_missing", options: [] };
+  let lastUi = null;
   while (Date.now() - startedAt < timeoutMs) {
     const ui = await captureUi();
+    lastUi = ui;
     lastSheet = extractPinduoduoSkuSheet(ui.nodes);
     if (lastSheet.options.length) return { ui, sheet: lastSheet };
     if (findUiNodeContaining(ui.nodes, ["提交订单"])) return { ui, sheet: lastSheet };
     await delay(400);
   }
-  return { ui: null, sheet: lastSheet };
+  return { ui: lastUi, sheet: lastSheet };
 }
 
 async function openSkuSheet(sourceUrl) {
@@ -226,8 +246,13 @@ async function openSkuSheet(sourceUrl) {
   await tapBounds(purchase.bounds);
   const captured = await waitForSkuSheet(10000);
   if (!captured.sheet.options.length) {
+    const diagnostic = await saveSkuDiagnostic(captured.ui, captured.sheet, "sku_options_missing").catch(() => null);
     await closeSkuSheet();
-    throw new Error("已打开购买页，但未读取到可选规格；程序未点击提交订单，请人工确认该商品是否只有单一规格。");
+    const pageHint = captured.sheet.selectedText || captured.sheet.submitVisible
+      ? "购买页存在“已选/提交订单”信号，可能是单一规格，也可能是规格控件未向系统暴露"
+      : "购买页没有暴露可识别的规格控件";
+    const diagnosticHint = diagnostic ? `；诊断已保存到${diagnostic.jsonPath}和${diagnostic.screenshotPath}` : "";
+    throw new Error(`已打开购买页，但未读取到可选规格；${pageHint}。程序未点击提交订单，请人工确认该商品是否为单一规格${diagnosticHint}。`);
   }
   return { ...opened, ...captured };
 }
@@ -521,6 +546,18 @@ async function captureScreenshot() {
   const localPath = path.join(runtimeDir, "current-screen.png");
   await fs.writeFile(localPath, screenshot);
   return { ok: true, localPath, bytes: screenshot.length, capturedAt: new Date().toISOString() };
+}
+
+async function saveSkuDiagnostic(ui, sheet, reason) {
+  const diagnosticDir = path.join(runtimeDir, "diagnostics");
+  await fs.mkdir(diagnosticDir, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const jsonPath = path.join(diagnosticDir, `sku-${stamp}.json`);
+  const screenshotPath = path.join(diagnosticDir, `sku-${stamp}.png`);
+  await fs.writeFile(jsonPath, JSON.stringify({ capturedAt: new Date().toISOString(), reason, sheet, nodes: ui?.nodes || [] }, null, 2), "utf8");
+  const screenshot = await captureScreenshot();
+  await fs.copyFile(screenshot.localPath, screenshotPath);
+  return { jsonPath, screenshotPath };
 }
 
 async function readJsonBody(request) {
