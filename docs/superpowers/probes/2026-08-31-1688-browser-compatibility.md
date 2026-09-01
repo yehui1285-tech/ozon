@@ -1,4 +1,4 @@
-# 1688 浏览器兼容性探针（2026-09-01 Round 4）
+# 1688 浏览器兼容性探针（2026-09-01 Round 4 + MOQ2 补查）
 
 ## 探针范围
 
@@ -33,7 +33,14 @@
   10. `https://detail.1688.com/offer/1071328975800.html`
   11. `https://detail.1688.com/offer/993975064131.html`
   12. `https://detail.1688.com/offer/1058846452687.html`
-- 前 12 个候选可见起订量为 1 件或 5 件；未发现真实“2件起批/2件起订”候选，因此没有伪造 MOQ2 样本。
+- 前 12 个图片搜索候选可见起订量为 1 件或 5 件；未发现真实“2件起批/2件起订”候选。
+
+## MOQ2 单次聚焦补查
+
+- 仅执行一次 1688 站内关键词查询：`汽车挡泥板 2件起批`。
+- 检查前 12 个可见结果，没有一个明确显示“2件起批/2件起订”；页面同时提示“没有相关商品，推荐试试搜这些”。
+- 未执行第二次查询，也未打开第二个详情。MOQ2 fixture 如实记录“检查 12 个、命中 0、未采集真实详情”，不伪造价格、规格或运费。
+- 该缺口属于计划产物完整性问题，不能推翻已经由图片搜索与真实详情证明的浏览器兼容性；是否因此阻断 Task 2 交由复核决定。
 
 ## 真实详情证据
 
@@ -47,8 +54,8 @@
 
 ## 脱敏样本说明
 
-搜索 fixture 保留前 12 个规范详情地址、价格/MOQ/运费的数字结构和一个官方图片地址，并把商品名称替换为稳定代表文本。详情 fixture 保留真实数字结构并泛化车型名称。MOQ2 fixture 明确记录前 12 个候选中匹配数为 0，不生成虚假详情。
+搜索 fixture 保留前 12 个规范详情地址、价格/MOQ/运费的数字结构和一个官方图片地址，并把商品名称替换为稳定代表文本。详情 fixture 保留真实数字结构并泛化车型名称。MOQ2 fixture 明确记录单次聚焦查询前 12 个结果中匹配数为 0，不生成虚假详情。
 
 ## Gate decision
 
-FAIL — visible image upload, image-search results, normalized offer links, and one detail's title, price, MOQ, single SKU, and shipping evidence are script-readable, but no genuine MOQ2 candidate was present in the first 12 results, so the required MOQ2 fixture cannot be truthfully produced and Task 2 remains blocked.
+PASS — visible image search, result links, detail price, MOQ, SKU, and shipping evidence are script-readable.

@@ -1,10 +1,11 @@
 {
   "pageType": "two-unit-detail",
-  "pageUrl": "https://air.1688.com/kapp/1688-search/pc-image-search/",
-  "title": "前12个图片搜索候选未发现2件起批",
+  "pageUrl": "https://s.1688.com/selloffer/offer_search.htm?keywords=%E6%B1%BD%E8%BD%A6%E6%8C%A1%E6%B3%A5%E6%9D%BF%202%E4%BB%B6%E8%B5%B7%E6%89%B9&charset=utf8",
+  "title": "单次聚焦查询未发现明确2件起批",
   "nodes": [
-    {"text":"前12个候选已检查；2件起批或2件起订匹配数为0","href":"","imageUrl":"","ariaLabel":"","data":{"checkedCandidateCount":12,"twoUnitMatchCount":0,"fixtureCaptured":false,"reason":"no-genuine-two-unit-candidate"},"visible":true},
-    {"text":"已观察起订量仅为1件或5件","href":"","imageUrl":"","ariaLabel":"","data":{"observedMoqValues":[1,5]},"visible":true}
+    {"text":"站内查询：汽车挡泥板 2件起批","href":"","imageUrl":"","ariaLabel":"","data":{"query":"汽车挡泥板 2件起批","queryAttemptCount":1},"visible":true},
+    {"text":"前12个可见结果已检查；明确2件起批或2件起订匹配数为0","href":"","imageUrl":"","ariaLabel":"","data":{"checkedCandidateCount":12,"twoUnitMatchCount":0,"fixtureCaptured":false,"reason":"no-explicit-two-unit-result"},"visible":true},
+    {"text":"没有相关商品，推荐试试搜这些","href":"","imageUrl":"","ariaLabel":"","data":{"pageRecommendationFallback":true,"secondQueryAttempted":false},"visible":true}
   ],
   "capturedAt": "2026-09-01T02:20:19.927Z"
 }
