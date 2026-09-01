@@ -13,6 +13,14 @@
 - 回滚备份：`_备份_20260831_1688_automatic_sourcing_before`，仅复制计划指定的扩展目录、拼多多Agent根目录文件及public根目录文件、`PROJECT_STATUS.md`与`CHANGELOG.md`；删除最旧常规备份`_备份_20260831_pinduoduo_ai_sku_safety_before`后，常规备份为 5 个。
 - 本次仅更新兼容性探针、脱敏样本及状态记录；未修改运行代码、扩展版本或发布ZIP；不需要上传`feishu.html`、重装扩展或部署 Cloudflare Worker。
 
+### 2026-09-01 Retry 2/3 文档修复与只读诊断（FAIL 保持）
+
+- 旧 Ozon 用户标签被 stale browser session 占用，接管超时；改用新建受控标签后，Ozon 商品页和 1688 图片搜索页均可读，已从可见 Ozon 主图生成非敏感临时测试文件`C:\Users\Microsoft\AppData\Local\Temp\ozon-main-image-gate.png`。
+- 1688 探针仅显示`loginBlocked=false`，本轮未独立验证登录；页面有 1 个可见、`multiple=true`、未限制`accept`的`input[type=file]`，DOM 可见“Choose File”“以图搜款”“点击从本地上传图片”。
+- 标准`waitForEvent("filechooser")` → 文件输入点击 → `chooser.setFiles(...)`流程未返回完成回执；因此不宣称上传成功，搜索结果链接和详情标题、价格、MOQ、SKU、运费也均未验证。Gate 仍为`FAIL`，Task 2–7 继续禁止。
+- Chrome 官方上传故障排查列出的下一步用户操作为：在`chrome://extensions` → ChatGPT 浏览器扩展 → “详情”开启“允许访问文件网址”。未将它确认为根因，也未执行或验证该设置。
+- 本轮仅修复状态/交接记录和取消跟踪被误纳入的 SDD 报告；未修改运行代码、扩展版本或发布ZIP；不需要上传`feishu.html`、重装扩展或部署 Cloudflare Worker。
+
 ## 2026-08-31 - 1688全自动采购找品实施计划
 
 - 用户已确认修订设计；新增`docs/superpowers/plans/2026-08-31-1688-automatic-sourcing.md`，把实施拆为8个可测试任务，并为每项写明文件、接口、失败测试、最小实现、验证命令和独立提交边界。
