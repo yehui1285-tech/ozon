@@ -46,10 +46,22 @@ assert.deepEqual(JSON.parse(JSON.stringify(core.singleUnitQuote({
 }))), { confirmable: true, productPrice: 12.5, domesticShipping: 3, purchaseCost: 15.5, priceSource: "sample", blockers: [] });
 
 const twoUnitCandidate = { productId: "4", sourceUrl: "https://detail.1688.com/offer/4.html", title: "测试商品", minimumOrderQuantity: 2, pricing: { selectedSkuPrice: 10, priceSource: "tier" }, shipping: { status: "free", fee: 0 } };
-assert.equal(core.singleUnitQuote(twoUnitCandidate, { productId: "4", sourceUrl: twoUnitCandidate.sourceUrl, onePiecePrice: 11 }).purchaseCost, 11);
+assert.equal(core.singleUnitQuote(twoUnitCandidate, { productId: "4", sourceUrl: twoUnitCandidate.sourceUrl, onePiecePrice: 11, confirmedAt: "2026-08-31T00:00:00.000Z" }).purchaseCost, 11);
 assert.equal(core.singleUnitQuote(twoUnitCandidate, { productId: "different", sourceUrl: "https://detail.1688.com/offer/5.html", onePiecePrice: 9 }).confirmable, false);
 assert.equal(core.candidateBlockers({ sourceUrl: "https://detail.1688.com/offer/6.html", title: "x", minimumOrderQuantity: 2 }).length, 0);
 assert.equal(core.canonicalOfferUrl("http://detail.1688.com/offer/1.html"), "");
 assert.equal(core.canonicalOfferUrl("https://detail.1688.com/offer/1.html?x=1"), "https://detail.1688.com/offer/1.html");
+assert.equal(core.normalizeCandidate({ minimumOrderQuantity: null }).minimumOrderQuantity, null);
+assert.ok(core.candidateBlockers({ sourceUrl: "https://detail.1688.com/offer/7.html", title: "x", minimumOrderQuantity: null }).includes("minimum_order_quantity_unknown"));
+assert.ok(core.candidateBlockers({ sourceUrl: "https://detail.1688.com/offer/7.html", title: "x", minimumOrderQuantity: "" }).includes("minimum_order_quantity_unknown"));
+assert.ok(core.singleUnitQuote({ sourceUrl: "https://detail.1688.com/offer/7.html", title: "x", minimumOrderQuantity: 1, pricing: { onePiecePrice: 1 }, shipping: { status: "known", fee: null } }).blockers.includes("shipping_unknown"));
+assert.equal(core.singleUnitQuote({ sourceUrl: "https://detail.1688.com/offer/8.html", title: "x", minimumOrderQuantity: 1, pricing: { selectedSkuPrice: 1 }, shipping: { status: "free", fee: null } }).confirmable, true);
+assert.ok(core.singleUnitQuote({ sourceUrl: "https://detail.1688.com/offer/9.html", title: "x", minimumOrderQuantity: 1, pricing: { onePiecePrice: 1 }, shipping: { status: "known", fee: Infinity } }).blockers.includes("shipping_unknown"));
+assert.ok(core.singleUnitQuote({ sourceUrl: "https://detail.1688.com/offer/10.html", title: "x", minimumOrderQuantity: 1, pricing: { onePiecePrice: 1 }, shipping: { status: "free", fee: 0 }, sku: { options: [{ id: "a" }], selectionVerified: false } }).blockers.includes("sku_selection_unverified"));
+const hidden = { ...fixture, nodes: [{ text: "hidden", href: "https://detail.1688.com/offer/999.html", visible: false, data: { moq: 1 } }, ...fixture.nodes] };
+assert.equal(core.parseSearchSnapshot(hidden).some(c => c.productId === "999"), false);
+const malformed = { ...detailFixture, title: "", nodes: [{ data: { field: "shipping" }, text: "预计3天送达", visible: true }, { data: { field: "moq" }, text: "", visible: true }] };
+assert.notEqual(core.parseDetailSnapshot(malformed).detailStatus, "complete");
+assert.equal(core.parseDetailSnapshot({ ...detailFixture, nodes: detailFixture.nodes.map(n => n.data.field === "shipping" ? { ...n, visible: false } : n) }).shipping.status, "unknown");
 
 console.log("1688 core tests passed");
