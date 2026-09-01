@@ -15,7 +15,7 @@
 - 结果链接：精确表达式 `a[href*="offer/"]` 返回的详情链接为 0；仅有两个搜索页链接，均不匹配 `detail.1688.com/offer/`。
 - 商品详情 URL 模式：未观察到。
 - 官方商品图片主机：`cbu01.alicdn.com`；同时可见页面资源主机为 `img.alicdn.com` 与 `gw.alicdn.com`。
-- 文件输入控件：可见 `input[type="file"]` 1 个。公开 Ozon 商品页显示验证；尝试读取已打开扩展任务页中的可见主图地址又被浏览器 URL 安全策略阻断。因此没有取得允许上传的一张非敏感 Ozon 主图，未进行标准 `DataTransfer`/`change` 兼容性测试。
+- 文件输入控件：可见 `input[type="file"]` 1 个。后续复测已用新建受控 Ozon 标签读取可见商品页，并复用其非敏感临时主图文件；1688 页面探针仍为 `loginBlocked=false`（不是独立登录核验）。用户确认 Chrome 扩展已开启“允许访问文件网址”后，标准 `waitForEvent("filechooser", {timeoutMs:10000})` 的监听创建调用仍在 15 秒内没有返回，浏览器控制内核随即重置；未发生可确认上传，故不进行 `DataTransfer`/`change` 兼容性测试。
 - 商品标题、价格、MOQ、SKU 与运费：均未进入商品页，无法读取。
 
 ## 脱敏样本说明
@@ -24,4 +24,4 @@
 
 ## Gate decision
 
-FAIL — the visible Chrome 1688 search page was script-readable, but it exposed no detail offer link and no permitted Ozon main image was available for the required standard file-input test; detail price, MOQ, SKU, shipping evidence, and the upload path therefore could not be verified.
+FAIL — the visible Chrome 1688 search page was script-readable, but the standard filechooser listener did not return even after the user confirmed file-URL access was enabled; no upload, result link, detail price, MOQ, SKU, or shipping evidence could therefore be verified.

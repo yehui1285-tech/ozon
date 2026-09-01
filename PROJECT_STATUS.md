@@ -28,6 +28,7 @@ Ozon扩展维持0.6.29；拼多多找品维持MVP 5.3。1688主渠道修订设�
 - 2026-08-31：Task 1 兼容性闸门已在可见 Chrome 会话执行并判定 `FAIL`：搜索页可读、登录阻断为否且存在 1 个文件输入，但精确详情链接数为 0；由于没有可在允许范围内取得的非敏感 Ozon 主图，未验证 `DataTransfer` 上传路径，也未进入详情页读取价格、MOQ、SKU 或运费。不得启动 Task 2–7 或增加绕过方案。
 - 2026-09-01：Task 1 Retry 2/3 继续为 `FAIL`。旧 Ozon 用户标签因 stale browser session 占用而不能接管；改用新建受控标签后，Ozon 商品页和 1688 图片搜索页均可读，并从可见 Ozon 主图生成仅用于测试的临时文件 `C:\Users\Microsoft\AppData\Local\Temp\ozon-main-image-gate.png`。1688 页面探针为 `loginBlocked=false`（本轮未独立核验登录），可见 1 个 `input[type=file]`；标准 `filechooser` 流程没有返回，故上传、结果链接及详情标题/价格/MOQ/SKU/运费均未完成验证。Task 2–7 继续禁用。
 - 下一步仅供用户操作：Chrome 官方上传故障排查建议在 `chrome://extensions` → ChatGPT 浏览器扩展 → “详情”开启“允许访问文件网址”。该设置尚未确认是根因，也未执行或验证；不得据此绕过平台验证。
+- 2026-09-01 最终复测：用户已确认上述“允许访问文件网址”处于开启状态。新建受控 Ozon/1688 标签均在 45 秒内可读并复用临时主图；但单独建立`waitForEvent("filechooser", {timeoutMs:10000})`监听在 15 秒内没有返回且控制内核重置，未点击输入控件、未确认上传，也无结果/详情证据。该设置不能据此确认根因已解决；Gate 继续`FAIL`，Task 2–7 继续禁用。
 - Task 8 集成/发布验收必须把本次 Gate `FAIL` 作为明确阻断项；只有以已登录可见会话重新完成全部 Task 1 证据后，才可重新评估后续任务。
 
 ## 当前主要能力
