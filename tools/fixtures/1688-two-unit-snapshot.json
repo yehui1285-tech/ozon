@@ -1,40 +1,10 @@
 {
   "pageType": "two-unit-detail",
-  "pageUrl": "https://s.1688.com/selloffer/offer_search.htm",
-  "title": "未进入双件详情页：详情链接数量为0",
+  "pageUrl": "https://air.1688.com/kapp/1688-search/pc-image-search/",
+  "title": "前12个图片搜索候选未发现2件起批",
   "nodes": [
-    {
-      "text": "双件详情页未采集",
-      "href": "",
-      "imageUrl": "",
-      "ariaLabel": "",
-      "data": {
-        "reason": "detail-offer-link-count-zero"
-      },
-      "visible": true
-    },
-    {
-      "text": "文件输入数量：1；未验证上传",
-      "href": "",
-      "imageUrl": "",
-      "ariaLabel": "",
-      "data": {
-        "selector": "input[type=file]",
-        "count": 1,
-        "uploadVerified": false
-      },
-      "visible": true
-    },
-    {
-      "text": "官方图片主机：cbu01.alicdn.com",
-      "href": "",
-      "imageUrl": "",
-      "ariaLabel": "",
-      "data": {
-        "host": "cbu01.alicdn.com"
-      },
-      "visible": true
-    }
+    {"text":"前12个候选已检查；2件起批或2件起订匹配数为0","href":"","imageUrl":"","ariaLabel":"","data":{"checkedCandidateCount":12,"twoUnitMatchCount":0,"fixtureCaptured":false,"reason":"no-genuine-two-unit-candidate"},"visible":true},
+    {"text":"已观察起订量仅为1件或5件","href":"","imageUrl":"","ariaLabel":"","data":{"observedMoqValues":[1,5]},"visible":true}
   ],
-  "capturedAt": "2026-08-31T08:03:58.000Z"
+  "capturedAt": "2026-09-01T02:20:19.927Z"
 }

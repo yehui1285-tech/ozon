@@ -17,15 +17,23 @@
 
 - 旧 Ozon 用户标签被 stale browser session 占用，接管超时；改用新建受控标签后，Ozon 商品页和 1688 图片搜索页均可读，已从可见 Ozon 主图生成非敏感临时测试文件`C:\Users\Microsoft\AppData\Local\Temp\ozon-main-image-gate.png`。
 - 1688 探针仅显示`loginBlocked=false`，本轮未独立验证登录；页面有 1 个可见、`multiple=true`、未限制`accept`的`input[type=file]`，DOM 可见“Choose File”“以图搜款”“点击从本地上传图片”。
-- 标准`waitForEvent("filechooser")` → 文件输入点击 → `chooser.setFiles(...)`流程未返回完成回执；因此不宣称上传成功，搜索结果链接和详情标题、价格、MOQ、SKU、运费也均未验证。Gate 仍为`FAIL`，Task 2–7 继续禁止。
+- 当时把`waitForEvent("filechooser")`等待与文件输入点击拆成不同浏览器请求，测试序列未完整，不能据此判定监听器、chooser 或页面上传失败。Gate 当时仍为`FAIL`，Task 2–7 继续禁止。
 - Chrome 官方上传故障排查列出的下一步用户操作为：在`chrome://extensions` → ChatGPT 浏览器扩展 → “详情”开启“允许访问文件网址”。未将它确认为根因，也未执行或验证该设置。
 - 本轮仅修复状态/交接记录和取消跟踪被误纳入的 SDD 报告；未修改运行代码、扩展版本或发布ZIP；不需要上传`feishu.html`、重装扩展或部署 Cloudflare Worker。
 
 ### 2026-09-01 最终复测（FAIL 保持）
 
 - 用户确认 Chrome 扩展“允许访问文件网址”已开启后，以新建受控 Ozon/1688 标签重测；两个页面均在 45 秒内可读，且非敏感临时 Ozon 主图仍存在。
-- 为避免统一长等待，仅单独调用`waitForEvent("filechooser", {timeoutMs:10000})`。该调用 15 秒内没有返回并导致控制内核重置；未点击 file input，未取得 chooser，未调用或确认`setFiles`，没有上传、搜索结果或详情字段证据。
+- 该轮仅单独调用`waitForEvent("filechooser", {timeoutMs:10000})`，没有在同一浏览器请求中继续点击 file input，因此当时没有执行完整上传序列；原“监听器失败”因果表述不成立。
 - `loginBlocked=false`仍只是页面探针，非独立登录验证。Gate 仍为`FAIL`，Task 2–7 继续禁止；未修改运行代码、扩展版本或发布ZIP。
+
+### 2026-09-01 Round 4 真实图片上传与详情 Gate（FAIL 保持）
+
+- 复用已核验的非敏感 Ozon 商品主图临时文件，在同一次浏览器请求中连续完成`waitForEvent`、文件输入点击、chooser 取得和`setFiles`，返回`uploaded=true, multiple=true`；页面显示“已上传1张图片”，随后进入`air.1688.com/kapp/1688-search/pc-image-search/`真实图片搜索结果页。
+- 上传执行声明外层时限为 60 秒，但浏览器工具没有在该边界截停，约 300 秒后返回成功；如实记录为工具超出声明时限，不再称监听器失败。
+- 结果页前 12 个规范详情地址、`cbu01.alicdn.com`官方图片及价格/MOQ/运费可见。打开`https://detail.1688.com/offer/1030432861479.html`只读核验：标题、`¥8.50`起、`1件起批`、单一规格、库存与`运费 ¥6.5 起`均可读。
+- 前 12 个候选仅观察到 1 件或 5 件起批，没有真实“2件起批/2件起订”候选；MOQ2 fixture 只记录未命中，不伪造详情。因此完整 Gate 仍为`FAIL`，Task 2–7 继续禁止。
+- 本轮仅更新兼容性探针、三个脱敏 fixture、项目状态和变更记录；未修改运行代码、扩展版本或发布 ZIP，不需要上传`feishu.html`、重装扩展或部署 Cloudflare Worker。
 
 ## 2026-08-31 - 1688全自动采购找品实施计划
 

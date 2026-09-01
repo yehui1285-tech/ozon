@@ -1,50 +1,21 @@
 {
   "pageType": "search",
-  "pageUrl": "https://s.1688.com/selloffer/offer_search.htm",
-  "title": "1688图片搜索兼容性探针：FAIL",
+  "pageUrl": "https://air.1688.com/kapp/1688-search/pc-image-search/",
+  "title": "1688图片搜索结果",
   "nodes": [
-    {
-      "text": "详情链接数量：0",
-      "href": "",
-      "imageUrl": "",
-      "ariaLabel": "",
-      "data": {
-        "selector": "a[href*=offer/]",
-        "count": 0
-      },
-      "visible": true
-    },
-    {
-      "text": "文件输入数量：1",
-      "href": "",
-      "imageUrl": "",
-      "ariaLabel": "",
-      "data": {
-        "selector": "input[type=file]",
-        "count": 1
-      },
-      "visible": true
-    },
-    {
-      "text": "官方图片主机：cbu01.alicdn.com",
-      "href": "",
-      "imageUrl": "",
-      "ariaLabel": "",
-      "data": {
-        "host": "cbu01.alicdn.com"
-      },
-      "visible": true
-    },
-    {
-      "text": "以图搜款",
-      "href": "",
-      "imageUrl": "",
-      "ariaLabel": "",
-      "data": {
-        "anchor": "image-search"
-      },
-      "visible": true
-    }
+    {"text":"挡泥板候选01 ¥16.00 运费10元 1件起批","href":"https://detail.1688.com/offer/911647924026.html","imageUrl":"","ariaLabel":"","data":{"rank":1,"price":16,"moq":1,"shipping":10},"visible":true},
+    {"text":"挡泥板候选02 ¥8.50 运费6.5元 1件起批","href":"https://detail.1688.com/offer/1030432861479.html","imageUrl":"","ariaLabel":"","data":{"rank":2,"price":8.5,"moq":1,"shipping":6.5},"visible":true},
+    {"text":"挡泥板候选03 ¥9.00 运费5元 1件起批","href":"https://detail.1688.com/offer/1048636663514.html","imageUrl":"","ariaLabel":"","data":{"rank":3,"price":9,"moq":1,"shipping":5},"visible":true},
+    {"text":"挡泥板候选04 ¥44.50 包邮 1件起批","href":"https://detail.1688.com/offer/1050850376919.html","imageUrl":"","ariaLabel":"","data":{"rank":4,"price":44.5,"moq":1,"shipping":"free"},"visible":true},
+    {"text":"汽车配件候选05 ¥175.00 运费2元 1件起批","href":"https://detail.1688.com/offer/1067452509627.html","imageUrl":"","ariaLabel":"","data":{"rank":5,"price":175,"moq":1,"shipping":2},"visible":true},
+    {"text":"挡泥板候选06 ¥50.00 运费30元 5件起批","href":"https://detail.1688.com/offer/1034330608087.html","imageUrl":"","ariaLabel":"","data":{"rank":6,"price":50,"moq":5,"shipping":30},"visible":true},
+    {"text":"挡泥板候选07 ¥55.00 运费30元 5件起批","href":"https://detail.1688.com/offer/1034230045704.html","imageUrl":"","ariaLabel":"","data":{"rank":7,"price":55,"moq":5,"shipping":30},"visible":true},
+    {"text":"挡泥板候选08 ¥64.00 包邮 5件起批","href":"https://detail.1688.com/offer/1040051685808.html","imageUrl":"","ariaLabel":"","data":{"rank":8,"price":64,"moq":5,"shipping":"free"},"visible":true},
+    {"text":"挡泥板候选09 ¥15.00 运费5元 1件起批","href":"https://detail.1688.com/offer/1050480982639.html","imageUrl":"","ariaLabel":"","data":{"rank":9,"price":15,"moq":1,"shipping":5},"visible":true},
+    {"text":"挡泥板候选10 ¥17.00 运费3元 1件起批","href":"https://detail.1688.com/offer/1071328975800.html","imageUrl":"","ariaLabel":"","data":{"rank":10,"price":17,"moq":1,"shipping":3},"visible":true},
+    {"text":"挡泥板候选11 ¥10.00 运费5元 1件起批","href":"https://detail.1688.com/offer/993975064131.html","imageUrl":"","ariaLabel":"","data":{"rank":11,"price":10,"moq":1,"shipping":5},"visible":true},
+    {"text":"挡泥板候选12 ¥8.00 运费6.5元 1件起批","href":"https://detail.1688.com/offer/1058846452687.html","imageUrl":"","ariaLabel":"","data":{"rank":12,"price":8,"moq":1,"shipping":6.5},"visible":true},
+    {"text":"官方结果图片可读","href":"","imageUrl":"https://cbu01.alicdn.com/img/ibank/O1CN01TBlDbl1JsWQbl5QUs_!!3016931084-0-cib.jpg_460x460q100.jpg_.webp","ariaLabel":"","data":{"host":"cbu01.alicdn.com","candidateMappingVerified":false},"visible":true}
   ],
-  "capturedAt": "2026-08-31T08:03:58.000Z"
+  "capturedAt": "2026-09-01T02:20:19.927Z"
 }

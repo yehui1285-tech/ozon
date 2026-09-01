@@ -1,29 +1,14 @@
 {
   "pageType": "detail",
-  "pageUrl": "https://s.1688.com/selloffer/offer_search.htm",
-  "title": "未进入详情页：详情链接数量为0",
+  "pageUrl": "https://detail.1688.com/offer/1030432861479.html",
+  "title": "测试商品：车型专用后门内衬挡泥板",
   "nodes": [
-    {
-      "text": "详情页未采集",
-      "href": "",
-      "imageUrl": "",
-      "ariaLabel": "",
-      "data": {
-        "reason": "detail-offer-link-count-zero"
-      },
-      "visible": true
-    },
-    {
-      "text": "详情链接数量：0",
-      "href": "",
-      "imageUrl": "",
-      "ariaLabel": "",
-      "data": {
-        "selector": "a[href*=offer/]",
-        "count": 0
-      },
-      "visible": true
-    }
+    {"text":"测试商品：车型专用后门内衬挡泥板","href":"https://detail.1688.com/offer/1030432861479.html","imageUrl":"","ariaLabel":"","data":{"field":"title"},"visible":true},
+    {"text":"¥8.50 1件起批；¥8.00 30-99件；¥7.00 ≥100件","href":"","imageUrl":"","ariaLabel":"","data":{"field":"priceTiers","tiers":[{"min":1,"price":8.5},{"min":30,"max":99,"price":8},{"min":100,"price":7}]},"visible":true},
+    {"text":"1件起批","href":"","imageUrl":"","ariaLabel":"","data":{"field":"moq","value":1},"visible":true},
+    {"text":"车型专用（后门内衬） ¥8.5 库存88602件","href":"","imageUrl":"","ariaLabel":"","data":{"field":"sku","optionCount":1,"singleSpec":true,"stock":88602},"visible":true},
+    {"text":"运费 ¥6.5 起；预计3天送达","href":"","imageUrl":"","ariaLabel":"","data":{"field":"shipping","amount":6.5,"destination":"示例国内目的地","etaDays":3},"visible":true},
+    {"text":"一件价格 ￥8.5","href":"","imageUrl":"","ariaLabel":"","data":{"field":"dropshippingPrice","quantity":1,"price":8.5},"visible":true}
   ],
-  "capturedAt": "2026-08-31T08:03:58.000Z"
+  "capturedAt": "2026-09-01T02:20:19.927Z"
 }
