@@ -63,5 +63,17 @@ assert.equal(core.parseSearchSnapshot(hidden).some(c => c.productId === "999"), 
 const malformed = { ...detailFixture, title: "", nodes: [{ data: { field: "shipping" }, text: "预计3天送达", visible: true }, { data: { field: "moq" }, text: "", visible: true }] };
 assert.notEqual(core.parseDetailSnapshot(malformed).detailStatus, "complete");
 assert.equal(core.parseDetailSnapshot({ ...detailFixture, nodes: detailFixture.nodes.map(n => n.data.field === "shipping" ? { ...n, visible: false } : n) }).shipping.status, "unknown");
+const multiDetail = { ...detailFixture, nodes: detailFixture.nodes.map(n => n.data?.field === "sku" ? { ...n, data: { ...n.data, optionCount: 2, options: [{ id: "red", label: "红" }] }, text: "颜色/型号" } : n) };
+const multiCandidate = core.parseDetailSnapshot(multiDetail);
+assert.equal(multiCandidate.sku.requiresSelection, true);
+assert.ok(core.candidateBlockers(multiCandidate).includes("sku_selection_unverified"));
+const singleCandidate = core.parseDetailSnapshot(detailFixture);
+assert.equal(singleCandidate.sku.requiresSelection, false);
+assert.equal(core.candidateBlockers(singleCandidate).includes("sku_selection_unverified"), false);
+const safe = core.normalizeCandidate({ href: "https://detail.1688.com/offer/1.html", offerId: "1", rawPayload: "secret", title: "x", minimumOrderQuantity: 1 });
+assert.deepEqual(Object.keys(safe).sort(), ["candidateId", "detailStatus", "evidence", "imageUrl", "minimumOrderQuantity", "pricing", "productId", "provider", "shipping", "sku", "sourceUrl", "supplierName", "supportsOnePiece", "supportsSample", "title"].sort());
+assert.equal(core.parseSearchSnapshot({ nodes: [null, {}, { text: null, href: "bad" }, ...fixture.nodes] }).length, candidates.length);
+assert.notEqual(core.parseDetailSnapshot({ ...detailFixture, nodes: detailFixture.nodes.filter(n => !["priceTiers", "shipping"].includes(n.data?.field)) }).detailStatus, "complete");
+assert.equal(core.singleUnitQuote(twoUnitCandidate, { productId: "4", sourceUrl: twoUnitCandidate.sourceUrl, onePiecePrice: 11 }).confirmable, false);
 
 console.log("1688 core tests passed");

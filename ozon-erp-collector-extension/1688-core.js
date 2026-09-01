@@ -24,16 +24,17 @@
   }
   function normalizeCandidate(raw = {}) {
     const out = emptyCandidate();
-    Object.assign(out, raw);
     out.sourceUrl = canonicalOfferUrl(raw.sourceUrl || raw.href);
     const id = clean(raw.productId || raw.offerId || (out.sourceUrl.match(/offer\/(\d+)/) || [])[1]);
     out.productId = id; out.candidateId = id ? `1688-${id}` : clean(raw.candidateId);
     out.provider = "1688"; out.title = clean(raw.title); out.imageUrl = clean(raw.imageUrl); out.supplierName = clean(raw.supplierName);
+    out.supportsOnePiece = raw.supportsOnePiece === true; out.supportsSample = raw.supportsSample === true;
+    out.detailStatus = clean(raw.detailStatus) || "search_only"; out.evidence = raw.evidence ?? null;
     const moq = number(raw.minimumOrderQuantity);
     out.minimumOrderQuantity = Number.isInteger(moq) && moq > 0 ? moq : null;
-    out.pricing = Object.assign(emptyCandidate().pricing, raw.pricing || {});
-    out.shipping = Object.assign(emptyCandidate().shipping, raw.shipping || {});
-    out.sku = Object.assign(emptyCandidate().sku, raw.sku || {});
+    out.pricing = Object.assign(emptyCandidate().pricing, { ...raw.pricing });
+    out.shipping = Object.assign(emptyCandidate().shipping, { ...raw.shipping });
+    out.sku = Object.assign(emptyCandidate().sku, { ...raw.sku });
     return out;
   }
   function parseSearchSnapshot(snapshot = {}) {
@@ -41,7 +42,7 @@
     return (Array.isArray(snapshot.nodes) ? snapshot.nodes : []).filter(n => n && n.visible !== false && canonicalOfferUrl(n.href))
       .map(node => { const url = canonicalOfferUrl(node.href); if (seen.has(url)) return null; seen.add(url); const text = clean(node.text); const title = clean(node.data?.title || (text.split(/[¥￥]/)[0] || text));
         return normalizeCandidate({ href: url, title, imageUrl: node.imageUrl,
-        minimumOrderQuantity: node.data?.moq ?? number((node.text.match(/(\d+)\s*件起批/) || [])[1]),
+        minimumOrderQuantity: node.data?.moq ?? number((text.match(/(\d+)\s*件起批/) || [])[1]),
         pricing: { displayedPrice: node.data?.price ?? number((text.match(/[¥￥]\s*([\d.]+)/) || [])[1]), priceSource: "displayed" },
         shipping: node.data?.shipping === "free" ? { status: "free", fee: 0 } : node.data?.shipping != null || /运费\s*[¥￥]?\s*[\d.]+/.test(text) ? { status: "known", fee: node.data?.shipping ?? number((text.match(/运费\s*[¥￥]?\s*([\d.]+)/) || [])[1]) } : { status: "unknown", fee: null },
         detailStatus: "search_only", evidence: { rank: node.data?.rank ?? null, text } }); }).filter(Boolean);
@@ -56,8 +57,10 @@
       pricing: { displayedPrice: tierNode?.data?.tiers?.[0]?.price ?? number((tierNode?.text?.match(/[¥￥]\s*([\d.]+)/) || [])[1]), onePiecePrice: dropNode?.data?.quantity === 1 ? dropNode.data.price : null,
         samplePrice: null, tiers: tierNode?.data?.tiers || [], selectedSkuPrice: skuNode?.data?.price ?? number((skuNode?.text?.match(/[¥￥]\s*([\d.]+)/) || [])[1]), priceSource: dropNode ? "one_piece" : "tier" },
       shipping: shipNode && (shipNode.data?.amount != null || /运费|包邮/.test(shipNode.text || "")) ? (shipNode.data?.amount != null ? { status: "known", fee: number(shipNode.data.amount) } : /包邮/.test(shipNode.text || "") ? { status: "free", fee: 0 } : { status: "known", fee: number((shipNode.text.match(/运费\s*[¥￥]?\s*([\d.]+)/) || [])[1]) }) : undefined,
-      sku: { dimensions: skuNode ? [clean(skuNode.text)] : [], options: [], selectedOptionId: null, selectionVerified: false }, detailStatus: "complete", evidence: { capturedAt: snapshot.capturedAt || null } });
-    if (!candidate.sourceUrl || !candidate.title || !Number.isInteger(candidate.minimumOrderQuantity)) candidate.detailStatus = "partial";
+      sku: { dimensions: skuNode ? [clean(skuNode.text)] : [], options: Array.isArray(skuNode?.data?.options) ? skuNode.data.options.map(o => ({ id: clean(o?.id), label: clean(o?.label) })).filter(o => o.id || o.label) : [], selectedOptionId: skuNode?.data?.selectedOptionId ?? null, selectionVerified: skuNode?.data?.selectionVerified === true, requiresSelection: Number(skuNode?.data?.optionCount) > 1 }, detailStatus: "complete", evidence: { capturedAt: snapshot.capturedAt || null } });
+    const hasPrice = Number.isFinite(Number(candidate.pricing.displayedPrice)) && Number(candidate.pricing.displayedPrice) > 0;
+    const hasShipping = candidate.shipping.status === "free" || (candidate.shipping.status === "known" && Number.isFinite(Number(candidate.shipping.fee)) && Number(candidate.shipping.fee) >= 0);
+    if (!candidate.sourceUrl || !candidate.title || !Number.isInteger(candidate.minimumOrderQuantity) || !hasPrice || !hasShipping) candidate.detailStatus = candidate.sourceUrl ? "partial" : "failed";
     return candidate;
   }
   function candidateBlockers(candidate) {
@@ -66,6 +69,7 @@
     if (!Number.isInteger(Number(candidate?.minimumOrderQuantity)) || Number(candidate.minimumOrderQuantity) < 1) blockers.push("minimum_order_quantity_unknown");
     if (!candidate?.sourceUrl) blockers.push("missing_source_url");
     if (!candidate?.title) blockers.push("missing_title");
+    if (candidate?.sku?.requiresSelection === true && candidate?.sku?.selectionVerified !== true) blockers.push("sku_selection_unverified");
     return blockers;
   }
   function singleUnitQuote(candidate, exception = null) {
