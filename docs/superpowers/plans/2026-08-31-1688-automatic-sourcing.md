@@ -37,7 +37,7 @@
 - `docs/superpowers/probes/2026-08-31-1688-browser-compatibility.md` — recorded result of the signed-in read-only compatibility gate.
 - `tools/fixtures/1688-search-snapshot.json` — sanitized visible-node search fixture captured during the gate.
 - `tools/fixtures/1688-detail-snapshot.json` — sanitized product/SKU fixture captured during the gate.
-- `tools/fixtures/1688-two-unit-snapshot.json` — sanitized MOQ 2 fixture.
+- `tools/fixtures/1688-two-unit-snapshot.json` — real targeted-query evidence for an MOQ 2 detail; if no real match is found, record the miss truthfully and never fabricate a two-unit product.
 - `ozon-erp-collector-extension/1688-core.js` — pure 1688 parsing, normalization, filtering, and quote rules.
 - `ozon-erp-collector-extension/1688-content.js` — visible-page commands and DOM-to-snapshot conversion.
 - `ozon-erp-collector-extension/1688-background.js` — durable 1688 tab/job controller.
@@ -75,7 +75,7 @@
 - Create: `docs/superpowers/probes/2026-08-31-1688-browser-compatibility.md`
 - Create: `tools/fixtures/1688-search-snapshot.json`
 - Create: `tools/fixtures/1688-detail-snapshot.json`
-- Create: `tools/fixtures/1688-two-unit-snapshot.json`
+- Create: `tools/fixtures/1688-two-unit-snapshot.json` — real MOQ 2 targeted-query evidence; a truthful no-match record is valid gate evidence and must not be rewritten as a synthetic two-unit product.
 
 **Interfaces:**
 - Consumes: A user-signed-in Chrome/Edge 1688 session and one non-sensitive Ozon product image URL.
@@ -121,6 +121,8 @@ Expected: product URL plus visible evidence for title, price, MOQ, at least one 
 - [ ] **Step 3: Capture sanitized fixtures**
 
 Store only the minimum node fields needed by parsers. Remove account names, phone numbers, chat text, cookies, tokens, tracking query strings, and unrelated recommendations. Normalize offer URLs to `https://detail.1688.com/offer/<digits>.html` and replace product-specific text with stable representative Chinese fixture text while retaining numeric structure.
+
+`1688-two-unit-snapshot.json` is a real targeted-query evidence artifact. When the bounded query does not expose a genuine MOQ 2 candidate, retain the no-match observation exactly; do not alter MOQ, price, SKU, or shipping to make the fixture look complete. A genuine MOQ 2 detail is a later real-acceptance coverage item for Task 8 / the 20-item acceptance, not a required field for the Task 1 browser-compatibility PASS decision.
 
 Example fixture root:
 
@@ -226,7 +228,7 @@ const fixture = JSON.parse(fs.readFileSync(new URL("./fixtures/1688-search-snaps
 const candidates = JSON.parse(JSON.stringify(core.parseSearchSnapshot(fixture)));
 assert.equal(candidates[0].provider, "1688");
 assert.match(candidates[0].sourceUrl, /^https:\/\/detail\.1688\.com\/offer\/\d+\.html$/);
-assert.equal(candidates[0].minimumOrderQuantity, 2);
+assert.equal(candidates[0].minimumOrderQuantity, 1);
 assert.equal(core.nextSearchStrategy([]), "image");
 assert.equal(core.nextSearchStrategy(["image"]), "keyword");
 assert.equal(core.nextSearchStrategy(["image", "keyword"]), "similar_supplier");
@@ -302,7 +304,7 @@ Use this normalized candidate contract:
 
 - [ ] **Step 4: Write failing MOQ and quote tests**
 
-Add:
+Add the following clearly synthetic unit cases. In particular, keep `twoUnitCandidate` synthetic for deterministic MOQ 2 quote-rule coverage; never change the real Task 1 search or targeted-query fixtures to MOQ 2 merely to satisfy this test:
 
 ```js
 assert.deepEqual(JSON.parse(JSON.stringify(core.singleUnitQuote({
