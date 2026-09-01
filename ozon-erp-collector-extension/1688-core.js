@@ -20,7 +20,7 @@
       minimumOrderQuantity: null, supportsOnePiece: false, supportsSample: false,
       pricing: { displayedPrice: null, onePiecePrice: null, samplePrice: null, tiers: [], selectedSkuPrice: null, priceSource: "unknown" },
       shipping: { status: "unknown", fee: null },
-      sku: { dimensions: [], options: [], selectedOptionId: null, selectionVerified: false }, detailStatus: "search_only", evidence: null };
+      sku: { dimensions: [], options: [], optionsComplete: false, requiresSelection: false, selectedOptionId: null, selectionVerified: false }, detailStatus: "search_only", evidence: null };
   }
   function normalizeCandidate(raw = {}) {
     const out = emptyCandidate();
@@ -32,9 +32,9 @@
     out.detailStatus = clean(raw.detailStatus) || "search_only"; out.evidence = raw.evidence ?? null;
     const moq = number(raw.minimumOrderQuantity);
     out.minimumOrderQuantity = Number.isInteger(moq) && moq > 0 ? moq : null;
-    out.pricing = Object.assign(emptyCandidate().pricing, { ...raw.pricing });
-    out.shipping = Object.assign(emptyCandidate().shipping, { ...raw.shipping });
-    out.sku = Object.assign(emptyCandidate().sku, { ...raw.sku });
+    const p = raw.pricing || {}; out.pricing = { displayedPrice: number(p.displayedPrice), onePiecePrice: number(p.onePiecePrice), samplePrice: number(p.samplePrice), tiers: Array.isArray(p.tiers) ? p.tiers.map(t => ({ min: number(t?.min), max: number(t?.max), price: number(t?.price) })).filter(t => t.min !== null && t.price !== null) : [], selectedSkuPrice: number(p.selectedSkuPrice), priceSource: ["one_piece", "sample", "tier", "displayed"].includes(p.priceSource) ? p.priceSource : "unknown" };
+    const s = raw.shipping || {}; out.shipping = { status: ["free", "known"].includes(s.status) ? s.status : "unknown", fee: number(s.fee) };
+    const sku = raw.sku || {}; out.sku = { dimensions: Array.isArray(sku.dimensions) ? sku.dimensions.map(clean).filter(Boolean) : [], options: Array.isArray(sku.options) ? sku.options.map(o => ({ id: clean(o?.id), label: clean(o?.label) })).filter(o => o.id || o.label) : [], optionsComplete: sku.optionsComplete === true, requiresSelection: sku.requiresSelection === true, selectedOptionId: clean(sku.selectedOptionId) || null, selectionVerified: sku.selectionVerified === true };
     return out;
   }
   function parseSearchSnapshot(snapshot = {}) {
@@ -57,11 +57,16 @@
       pricing: { displayedPrice: tierNode?.data?.tiers?.[0]?.price ?? number((tierNode?.text?.match(/[¥￥]\s*([\d.]+)/) || [])[1]), onePiecePrice: dropNode?.data?.quantity === 1 ? dropNode.data.price : null,
         samplePrice: null, tiers: tierNode?.data?.tiers || [], selectedSkuPrice: skuNode?.data?.price ?? number((skuNode?.text?.match(/[¥￥]\s*([\d.]+)/) || [])[1]), priceSource: dropNode ? "one_piece" : "tier" },
       shipping: shipNode && (shipNode.data?.amount != null || /运费|包邮/.test(shipNode.text || "")) ? (shipNode.data?.amount != null ? { status: "known", fee: number(shipNode.data.amount) } : /包邮/.test(shipNode.text || "") ? { status: "free", fee: 0 } : { status: "known", fee: number((shipNode.text.match(/运费\s*[¥￥]?\s*([\d.]+)/) || [])[1]) }) : undefined,
-      sku: { dimensions: skuNode ? [clean(skuNode.text)] : [], options: Array.isArray(skuNode?.data?.options) ? skuNode.data.options.map(o => ({ id: clean(o?.id), label: clean(o?.label) })).filter(o => o.id || o.label) : [], selectedOptionId: skuNode?.data?.selectedOptionId ?? null, selectionVerified: skuNode?.data?.selectionVerified === true, requiresSelection: Number(skuNode?.data?.optionCount) > 1 }, detailStatus: "complete", evidence: { capturedAt: snapshot.capturedAt || null } });
+      sku: { dimensions: skuNode ? [clean(skuNode.text)] : [], options: Array.isArray(skuNode?.data?.options) ? skuNode.data.options.map(o => ({ id: clean(o?.id), label: clean(o?.label) })).filter(o => o.id || o.label) : [], optionsComplete: skuNode?.data?.optionsComplete === true || Array.isArray(skuNode?.data?.options), selectedOptionId: skuNode?.data?.selectedOptionId ?? null, selectionVerified: skuNode?.data?.selectionVerified === true, requiresSelection: Number(skuNode?.data?.optionCount) > 1 }, detailStatus: "complete", evidence: { capturedAt: snapshot.capturedAt || null } });
     const hasPrice = Number.isFinite(Number(candidate.pricing.displayedPrice)) && Number(candidate.pricing.displayedPrice) > 0;
     const hasShipping = candidate.shipping.status === "free" || (candidate.shipping.status === "known" && Number.isFinite(Number(candidate.shipping.fee)) && Number(candidate.shipping.fee) >= 0);
-    if (!candidate.sourceUrl || !candidate.title || !Number.isInteger(candidate.minimumOrderQuantity) || !hasPrice || !hasShipping) candidate.detailStatus = candidate.sourceUrl ? "partial" : "failed";
+    if (!candidate.sourceUrl || !candidate.title || !Number.isInteger(candidate.minimumOrderQuantity) || !hasPrice || !hasShipping || skuSelectionBlocker(candidate)) candidate.detailStatus = candidate.sourceUrl ? "partial" : "failed";
     return candidate;
+  }
+  function skuSelectionBlocker(candidate) {
+    const sku = candidate?.sku || {};
+    if (sku.requiresSelection === true) return !(sku.optionsComplete === true && sku.options?.length > 0 && Boolean(sku.selectedOptionId) && sku.selectionVerified === true);
+    return false;
   }
   function candidateBlockers(candidate) {
     const blockers = [];
@@ -69,7 +74,7 @@
     if (!Number.isInteger(Number(candidate?.minimumOrderQuantity)) || Number(candidate.minimumOrderQuantity) < 1) blockers.push("minimum_order_quantity_unknown");
     if (!candidate?.sourceUrl) blockers.push("missing_source_url");
     if (!candidate?.title) blockers.push("missing_title");
-    if (candidate?.sku?.requiresSelection === true && candidate?.sku?.selectionVerified !== true) blockers.push("sku_selection_unverified");
+    if (skuSelectionBlocker(candidate)) blockers.push("sku_selection_unverified");
     return blockers;
   }
   function singleUnitQuote(candidate, exception = null) {
@@ -77,14 +82,15 @@
     if (moq > 2) return { confirmable: false, productPrice: null, domesticShipping: null, purchaseCost: null, priceSource: String(pricing.priceSource || "unknown"), blockers: [...new Set(blockers)] };
     const exceptionUrl = canonicalOfferUrl(exception?.sourceUrl);
     const exceptionId = (exceptionUrl.match(/offer\/(\d+)/) || [])[1];
-    const exact = exception?.productId === candidate?.productId && exceptionId === candidate?.productId && exceptionUrl === candidate?.sourceUrl && Number.isFinite(Number(exception?.onePiecePrice)) && Number(exception.onePiecePrice) > 0 && Boolean(exception?.confirmedAt) ? Number(exception.onePiecePrice) : null;
+    const confirmed = typeof exception?.confirmedAt === "string" && /T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})$/.test(exception.confirmedAt) && Number.isFinite(Date.parse(exception.confirmedAt));
+    const exact = exception?.productId === candidate?.productId && exceptionId === candidate?.productId && exceptionUrl === candidate?.sourceUrl && Number.isFinite(Number(exception?.onePiecePrice)) && Number(exception.onePiecePrice) > 0 && confirmed ? Number(exception.onePiecePrice) : null;
     const onePiece = candidate?.supportsOnePiece && Number.isFinite(Number(pricing.onePiecePrice)) && Number(pricing.onePiecePrice) > 0 ? Number(pricing.onePiecePrice) : null;
     const sample = candidate?.supportsSample && Number.isFinite(Number(pricing.samplePrice)) && Number(pricing.samplePrice) > 0 ? Number(pricing.samplePrice) : null;
     const tier = moq <= 1 && Number.isFinite(Number(pricing.selectedSkuPrice)) && Number(pricing.selectedSkuPrice) > 0 ? Number(pricing.selectedSkuPrice) : null;
     const price = exact || onePiece || sample || tier;
     if (!(price > 0)) blockers.push(moq === 2 ? "single_unit_price_unverified" : "missing_single_unit_price");
-    if (Array.isArray(candidate?.sku?.options) && candidate.sku.options.length && candidate.sku.selectionVerified !== true) blockers.push("sku_selection_unverified");
-    if (!candidate?.shipping || candidate.shipping.status === "unknown") blockers.push("shipping_unknown");
+    if (skuSelectionBlocker(candidate)) blockers.push("sku_selection_unverified");
+    if (!candidate?.shipping || !["free", "known"].includes(candidate.shipping.status)) blockers.push("shipping_unknown");
     const shipping = candidate?.shipping?.status === "free" ? 0 : (candidate?.shipping?.fee === null || candidate?.shipping?.fee === undefined || String(candidate?.shipping?.fee).trim() === "" ? NaN : Number(candidate.shipping.fee));
     if (!Number.isFinite(shipping) || shipping < 0) blockers.push("shipping_unknown");
     const unique = [...new Set(blockers)];

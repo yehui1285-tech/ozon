@@ -57,7 +57,7 @@ assert.ok(core.candidateBlockers({ sourceUrl: "https://detail.1688.com/offer/7.h
 assert.ok(core.singleUnitQuote({ sourceUrl: "https://detail.1688.com/offer/7.html", title: "x", minimumOrderQuantity: 1, pricing: { onePiecePrice: 1 }, shipping: { status: "known", fee: null } }).blockers.includes("shipping_unknown"));
 assert.equal(core.singleUnitQuote({ sourceUrl: "https://detail.1688.com/offer/8.html", title: "x", minimumOrderQuantity: 1, pricing: { selectedSkuPrice: 1 }, shipping: { status: "free", fee: null } }).confirmable, true);
 assert.ok(core.singleUnitQuote({ sourceUrl: "https://detail.1688.com/offer/9.html", title: "x", minimumOrderQuantity: 1, pricing: { onePiecePrice: 1 }, shipping: { status: "known", fee: Infinity } }).blockers.includes("shipping_unknown"));
-assert.ok(core.singleUnitQuote({ sourceUrl: "https://detail.1688.com/offer/10.html", title: "x", minimumOrderQuantity: 1, pricing: { onePiecePrice: 1 }, shipping: { status: "free", fee: 0 }, sku: { options: [{ id: "a" }], selectionVerified: false } }).blockers.includes("sku_selection_unverified"));
+assert.ok(core.singleUnitQuote({ sourceUrl: "https://detail.1688.com/offer/10.html", title: "x", minimumOrderQuantity: 1, pricing: { onePiecePrice: 1 }, shipping: { status: "free", fee: 0 }, sku: { options: [{ id: "a" }], requiresSelection: true, selectionVerified: false } }).blockers.includes("sku_selection_unverified"));
 const hidden = { ...fixture, nodes: [{ text: "hidden", href: "https://detail.1688.com/offer/999.html", visible: false, data: { moq: 1 } }, ...fixture.nodes] };
 assert.equal(core.parseSearchSnapshot(hidden).some(c => c.productId === "999"), false);
 const malformed = { ...detailFixture, title: "", nodes: [{ data: { field: "shipping" }, text: "预计3天送达", visible: true }, { data: { field: "moq" }, text: "", visible: true }] };
@@ -75,5 +75,17 @@ assert.deepEqual(Object.keys(safe).sort(), ["candidateId", "detailStatus", "evid
 assert.equal(core.parseSearchSnapshot({ nodes: [null, {}, { text: null, href: "bad" }, ...fixture.nodes] }).length, candidates.length);
 assert.notEqual(core.parseDetailSnapshot({ ...detailFixture, nodes: detailFixture.nodes.filter(n => !["priceTiers", "shipping"].includes(n.data?.field)) }).detailStatus, "complete");
 assert.equal(core.singleUnitQuote(twoUnitCandidate, { productId: "4", sourceUrl: twoUnitCandidate.sourceUrl, onePiecePrice: 11 }).confirmable, false);
+const fakeVerified = { ...multiDetail, nodes: multiDetail.nodes.map(n => n.data?.field === "sku" ? { ...n, data: { ...n.data, options: undefined, selectedOptionId: "red", selectionVerified: true } } : n) };
+assert.ok(core.candidateBlockers(core.parseDetailSnapshot(fakeVerified)).includes("sku_selection_unverified"));
+const noSelected = { ...multiDetail, nodes: multiDetail.nodes.map(n => n.data?.field === "sku" ? { ...n, data: { ...n.data, selectedOptionId: "", selectionVerified: true } } : n) };
+assert.ok(core.candidateBlockers(core.parseDetailSnapshot(noSelected)).includes("sku_selection_unverified"));
+assert.equal(core.singleUnitQuote({ ...twoUnitCandidate, minimumOrderQuantity: 1, supportsOnePiece: true, pricing: { onePiecePrice: 11 }, sku: { options: [{ id: "a" }], requiresSelection: false } }, null).confirmable, true);
+assert.ok(core.singleUnitQuote({ ...twoUnitCandidate, minimumOrderQuantity: 1, supportsOnePiece: true, pricing: { onePiecePrice: 11 }, shipping: { status: "estimated", fee: 0 } }).blockers.includes("shipping_unknown"));
+assert.equal(core.singleUnitQuote(twoUnitCandidate, { productId: "4", sourceUrl: twoUnitCandidate.sourceUrl, onePiecePrice: 11, confirmedAt: true }).confirmable, false);
+assert.equal(core.singleUnitQuote(twoUnitCandidate, { productId: "4", sourceUrl: twoUnitCandidate.sourceUrl, onePiecePrice: 11, confirmedAt: "not-a-date" }).confirmable, false);
+const nested = core.normalizeCandidate({ pricing: { tiers: [{ min: 1, price: 2, rawPayload: "x" }], rawPayload: "x" }, shipping: { status: "free", rawPayload: "x" }, sku: { options: [{ id: "a", label: "A", rawPayload: "x" }], rawPayload: "x" }, evidence: { text: "x", rawPayload: "x" } });
+assert.deepEqual(Object.keys(nested.pricing).sort(), ["displayedPrice", "onePiecePrice", "priceSource", "samplePrice", "selectedSkuPrice", "tiers"].sort());
+assert.deepEqual(Object.keys(nested.shipping).sort(), ["fee", "status"].sort());
+assert.deepEqual(Object.keys(nested.sku).sort(), ["dimensions", "options", "optionsComplete", "requiresSelection", "selectedOptionId", "selectionVerified"].sort());
 
 console.log("1688 core tests passed");
