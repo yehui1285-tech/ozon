@@ -18,6 +18,77 @@ assert.match(background, /start1688SourcingJob/);
 assert.match(background, /get1688SourcingJob/);
 assert.match(background, /cancel1688SourcingJob/);
 
+const bridgeSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/pinduoduo-bridge.js", import.meta.url), "utf8");
+assert.match(bridgeSource, /OZON_SOURCING_EXTENSION_REQUEST_V1/);
+assert.match(bridgeSource, /start_1688_job/);
+assert.match(bridgeSource, /get_1688_job/);
+assert.match(bridgeSource, /cancel_1688_job/);
+
+function createBridge({ runtimeResult = { ok: true, status: "queued" }, runtimeError = null, deferRuntime = false } = {}) {
+  const listeners = [];
+  const posts = [];
+  const runtimeMessages = [];
+  let timeoutCallback = null;
+  let runtimeCallback = null;
+  const fakeWindow = {
+    addEventListener(type, listener) { if (type === "message") listeners.push(listener); },
+    postMessage(data, targetOrigin) { posts.push({ data, targetOrigin }); },
+  };
+  const chrome = {
+    runtime: {
+      getManifest: () => ({ version: "test" }),
+      lastError: null,
+      sendMessage(message, callback) {
+        runtimeMessages.push(message);
+        if (!deferRuntime) {
+          chrome.runtime.lastError = runtimeError;
+          callback(runtimeError ? undefined : runtimeResult);
+          chrome.runtime.lastError = null;
+        } else {
+          runtimeCallback = callback;
+        }
+      },
+    },
+  };
+  const context = vm.createContext({ window: fakeWindow, chrome, console, URL, setTimeout: (callback) => { timeoutCallback = callback; return 1; }, clearTimeout: () => {} });
+  context.globalThis = context;
+  vm.runInContext(bridgeSource, context, { filename: "pinduoduo-bridge.js" });
+  const windowMessageListener = listeners[0];
+  const postBridgeMessage = (data, { source = fakeWindow, origin = "http://127.0.0.1:17628" } = {}) => windowMessageListener({ source, origin, data });
+  return { fakeWindow, runtimeMessages, posts, postBridgeMessage, fireTimeout: () => timeoutCallback?.(), finishRuntime: (result = runtimeResult) => runtimeCallback?.(result) };
+}
+
+const validBridge = createBridge();
+validBridge.postBridgeMessage({ type: "OZON_SOURCING_EXTENSION_REQUEST_V1", action: "start_1688_job", requestId: "request-123", taskId: "ozon-1", mainImageUrl: "https://ir.ozone.ru/s3/multimedia-x/a.jpg", strategy: { type: "image" } });
+assert.equal(validBridge.runtimeMessages.at(-1).type, "start1688SourcingJob");
+assert.equal(validBridge.runtimeMessages.at(-1).request.requestId, "request-123");
+assert.equal(validBridge.posts.at(-1).data.requestId, "request-123");
+const countAfterValid = validBridge.runtimeMessages.length;
+validBridge.postBridgeMessage({ type: "OZON_SOURCING_EXTENSION_REQUEST_V1", action: "start_1688_job", requestId: "request-124", taskId: "ozon-1", mainImageUrl: "https://evil.example/a.jpg", strategy: { type: "image" } });
+validBridge.postBridgeMessage({ type: "OZON_SOURCING_EXTENSION_REQUEST_V1", action: "launch_pinduoduo", requestId: "request-125" });
+assert.equal(validBridge.runtimeMessages.length, countAfterValid);
+assert.equal(validBridge.posts.at(-1).data.ok, false);
+assert.equal(validBridge.posts.at(-1).data.requestId, "request-125");
+
+const rejectedBridge = createBridge();
+rejectedBridge.postBridgeMessage({ type: "OZON_SOURCING_EXTENSION_REQUEST_V1", action: "get_1688_job", requestId: "request-126" });
+rejectedBridge.postBridgeMessage({ type: "OZON_SOURCING_EXTENSION_REQUEST_V1", action: "cancel_1688_job", requestId: "request-127", jobId: "bad id" });
+rejectedBridge.postBridgeMessage({ type: "OZON_SOURCING_EXTENSION_REQUEST_V1", action: "get_1688_job", requestId: "request-128", jobId: "1688-job" }, { origin: "http://localhost:17628" });
+rejectedBridge.postBridgeMessage({ type: "OZON_SOURCING_EXTENSION_REQUEST_V1", action: "get_1688_job", requestId: "request-129", jobId: "1688-job" }, { source: {} });
+assert.equal(rejectedBridge.runtimeMessages.length, 0);
+
+const runtimeFailure = createBridge({ runtimeError: { message: "后台不可用" } });
+runtimeFailure.postBridgeMessage({ type: "OZON_SOURCING_EXTENSION_REQUEST_V1", action: "get_1688_job", requestId: "request-130", jobId: "1688-job" });
+assert.deepEqual(JSON.parse(JSON.stringify(runtimeFailure.posts.at(-1).data)), { type: "OZON_SOURCING_EXTENSION_RESPONSE_V1", requestId: "request-130", ok: false, error: "后台不可用" });
+
+const timeoutBridge = createBridge({ deferRuntime: true });
+timeoutBridge.postBridgeMessage({ type: "OZON_SOURCING_EXTENSION_REQUEST_V1", action: "cancel_1688_job", requestId: "request-131", jobId: "1688-job" });
+assert.equal(timeoutBridge.runtimeMessages.at(-1).type, "cancel1688SourcingJob");
+timeoutBridge.fireTimeout();
+assert.deepEqual(JSON.parse(JSON.stringify(timeoutBridge.posts.at(-1).data)), { type: "OZON_SOURCING_EXTENSION_RESPONSE_V1", requestId: "request-131", ok: false, error: "扩展后台响应超时" });
+timeoutBridge.finishRuntime({ ok: true, requestId: "spoofed" });
+assert.equal(timeoutBridge.posts.length, 1);
+
 const coreSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/1688-core.js", import.meta.url), "utf8");
 const driverSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/1688-background.js", import.meta.url), "utf8");
 const contentSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/1688-content.js", import.meta.url), "utf8");
