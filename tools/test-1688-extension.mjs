@@ -24,7 +24,7 @@ assert.match(bridgeSource, /start_1688_job/);
 assert.match(bridgeSource, /get_1688_job/);
 assert.match(bridgeSource, /cancel_1688_job/);
 
-function createBridge({ runtimeResult = { ok: true, status: "queued" }, runtimeError = null, deferRuntime = false } = {}) {
+function createBridge({ runtimeResult = { ok: true, status: "queued" }, runtimeError = null, deferRuntime = false, runtimeMode = "callback", runtimeThrow = null, runtimeImpl = null } = {}) {
   const listeners = [];
   const posts = [];
   const runtimeMessages = [];
@@ -40,6 +40,9 @@ function createBridge({ runtimeResult = { ok: true, status: "queued" }, runtimeE
       lastError: null,
       sendMessage(message, callback) {
         runtimeMessages.push(message);
+        if (runtimeThrow) throw new Error(runtimeThrow);
+        if (runtimeImpl) return runtimeImpl(message, callback);
+        if (runtimeMode === "promise") return runtimeError ? Promise.reject(runtimeError) : Promise.resolve(runtimeResult);
         if (!deferRuntime) {
           chrome.runtime.lastError = runtimeError;
           callback(runtimeError ? undefined : runtimeResult);
@@ -59,9 +62,10 @@ function createBridge({ runtimeResult = { ok: true, status: "queued" }, runtimeE
 }
 
 const validBridge = createBridge();
-validBridge.postBridgeMessage({ type: "OZON_SOURCING_EXTENSION_REQUEST_V1", action: "start_1688_job", requestId: "request-123", taskId: "ozon-1", mainImageUrl: "https://ir.ozone.ru/s3/multimedia-x/a.jpg", strategy: { type: "image" } });
+validBridge.postBridgeMessage({ type: "OZON_SOURCING_EXTENSION_REQUEST_V1", action: "start_1688_job", requestId: "request-123", taskId: "ozon-1", mainImageUrl: "https://ir.ozone.ru/s3/multimedia-x/a.jpg" });
 assert.equal(validBridge.runtimeMessages.at(-1).type, "start1688SourcingJob");
 assert.equal(validBridge.runtimeMessages.at(-1).request.requestId, "request-123");
+assert.deepEqual(JSON.parse(JSON.stringify(validBridge.runtimeMessages.at(-1).request.strategy)), { type: "image", sourceUrl: "https://ir.ozone.ru/s3/multimedia-x/a.jpg" });
 assert.equal(validBridge.posts.at(-1).data.requestId, "request-123");
 const countAfterValid = validBridge.runtimeMessages.length;
 validBridge.postBridgeMessage({ type: "OZON_SOURCING_EXTENSION_REQUEST_V1", action: "start_1688_job", requestId: "request-124", taskId: "ozon-1", mainImageUrl: "https://evil.example/a.jpg", strategy: { type: "image" } });
@@ -69,6 +73,30 @@ validBridge.postBridgeMessage({ type: "OZON_SOURCING_EXTENSION_REQUEST_V1", acti
 assert.equal(validBridge.runtimeMessages.length, countAfterValid);
 assert.equal(validBridge.posts.at(-1).data.ok, false);
 assert.equal(validBridge.posts.at(-1).data.requestId, "request-125");
+
+for (const [strategy, expected] of [
+  [{ type: "image", sourceUrl: "https://evil.example/a.jpg" }, { type: "image", sourceUrl: "https://ir.ozone.ru/s3/multimedia-x/a.jpg" }],
+  [{ type: "keyword", query: "蓝色女装" }, { type: "keyword", query: "蓝色女装", sourceUrl: "" }],
+  [{ type: "similar_supplier", query: "同款", sourceUrl: "https://img.alicdn.com/a.jpg" }, { type: "similar_supplier", query: "同款", sourceUrl: "https://img.alicdn.com/a.jpg" }],
+  [{ type: "verify_sku", sourceUrl: "https://detail.1688.com/offer/123456.html", optionId: "red", expectedPrice: 10 }, { type: "verify_sku", query: "", sourceUrl: "https://detail.1688.com/offer/123456.html", optionId: "red", optionLabel: "", expectedPrice: 10 }],
+]) {
+  const bridge = createBridge();
+  bridge.postBridgeMessage({ type: "OZON_SOURCING_EXTENSION_REQUEST_V1", action: "start_1688_job", requestId: "strategy-" + strategy.type.replaceAll("_", "-"), taskId: "ozon-2", mainImageUrl: "https://ir.ozone.ru/s3/multimedia-x/a.jpg", strategy });
+  assert.ok(bridge.runtimeMessages.at(-1), strategy.type);
+  assert.deepEqual(JSON.parse(JSON.stringify(bridge.runtimeMessages.at(-1).request.strategy)), expected);
+}
+for (const strategy of [
+  {}, { type: "image", sourceUrl: "https://ir.ozone.ru/a.jpg", extra: 1 }, { type: "keyword", query: "" }, { type: "keyword", query: "x\u0000" }, { type: "similar_supplier", sourceUrl: "https://user:pass@img.alicdn.com/a.jpg" }, { type: "verify_sku", sourceUrl: "https://detail.1688.com/offer/abc.html", optionId: "red" }, { type: "verify_sku", sourceUrl: "https://detail.1688.com/offer/123.html", optionId: "" }, { type: "verify_sku", sourceUrl: "https://detail.1688.com/offer/123.html", optionId: "red", expectedPrice: -1 },
+]) {
+  const bridge = createBridge();
+  bridge.postBridgeMessage({ type: "OZON_SOURCING_EXTENSION_REQUEST_V1", action: "start_1688_job", requestId: "bad-strategy", taskId: "ozon-2", mainImageUrl: "https://ir.ozone.ru/s3/multimedia-x/a.jpg", strategy });
+  assert.equal(bridge.runtimeMessages.length, 0, JSON.stringify(strategy));
+}
+for (const mainImageUrl of ["https://ozone.ru:443/a.jpg", "https://user:pass@ir.ozone.ru/a.jpg", "https://ir.ozone.ru:443/a.jpg", "https://ir.ozone.ru/" + "a".repeat(2050)]) {
+  const bridge = createBridge();
+  bridge.postBridgeMessage({ type: "OZON_SOURCING_EXTENSION_REQUEST_V1", action: "start_1688_job", requestId: "bad-image", taskId: "ozon-2", mainImageUrl, strategy: { type: "image" } });
+  assert.equal(bridge.runtimeMessages.length, 0);
+}
 
 const rejectedBridge = createBridge();
 rejectedBridge.postBridgeMessage({ type: "OZON_SOURCING_EXTENSION_REQUEST_V1", action: "get_1688_job", requestId: "request-126" });
@@ -80,6 +108,19 @@ assert.equal(rejectedBridge.runtimeMessages.length, 0);
 const runtimeFailure = createBridge({ runtimeError: { message: "后台不可用" } });
 runtimeFailure.postBridgeMessage({ type: "OZON_SOURCING_EXTENSION_REQUEST_V1", action: "get_1688_job", requestId: "request-130", jobId: "1688-job" });
 assert.deepEqual(JSON.parse(JSON.stringify(runtimeFailure.posts.at(-1).data)), { type: "OZON_SOURCING_EXTENSION_RESPONSE_V1", requestId: "request-130", ok: false, error: "后台不可用" });
+
+const promiseSuccess = createBridge({ runtimeMode: "promise", runtimeResult: { ok: true, jobId: "1688-job", type: "evil", requestId: "evil" } });
+promiseSuccess.postBridgeMessage({ type: "OZON_SOURCING_EXTENSION_REQUEST_V1", action: "get_1688_job", requestId: "request-132", jobId: "1688-job" });
+await new Promise((resolve) => setTimeout(resolve, 0));
+assert.equal(promiseSuccess.posts.at(-1).data.type, "OZON_SOURCING_EXTENSION_RESPONSE_V1");
+assert.equal(promiseSuccess.posts.at(-1).data.requestId, "request-132");
+const promiseFailure = createBridge({ runtimeMode: "promise", runtimeError: { message: "promise failed" } });
+promiseFailure.postBridgeMessage({ type: "OZON_SOURCING_EXTENSION_REQUEST_V1", action: "get_1688_job", requestId: "request-133", jobId: "1688-job" });
+await new Promise((resolve) => setTimeout(resolve, 0));
+assert.deepEqual(JSON.parse(JSON.stringify(promiseFailure.posts.at(-1).data)), { type: "OZON_SOURCING_EXTENSION_RESPONSE_V1", requestId: "request-133", ok: false, error: "promise failed" });
+const syncThrowBridge = createBridge({ runtimeThrow: "sync failed" });
+syncThrowBridge.postBridgeMessage({ type: "OZON_SOURCING_EXTENSION_REQUEST_V1", action: "get_1688_job", requestId: "request-134", jobId: "1688-job" });
+assert.equal(syncThrowBridge.posts.at(-1).data.error, "sync failed");
 
 const timeoutBridge = createBridge({ deferRuntime: true });
 timeoutBridge.postBridgeMessage({ type: "OZON_SOURCING_EXTENSION_REQUEST_V1", action: "cancel_1688_job", requestId: "request-131", jobId: "1688-job" });
@@ -220,6 +261,20 @@ function persistedJob({ requestId, status = "paused_platform_verification", owne
   if (ownerToken !== undefined) job.ownerToken = ownerToken;
   return job;
 }
+
+const handoffDriver = createDriver();
+const handoffBridge = createBridge({ runtimeImpl: (message) => {
+  if (message.type === "start1688SourcingJob") return handoffDriver.api.startJob(message.request);
+  if (message.type === "get1688SourcingJob") return handoffDriver.api.getJob(message.jobId);
+  return handoffDriver.api.cancelJob(message.jobId);
+} });
+handoffBridge.postBridgeMessage({ type: "OZON_SOURCING_EXTENSION_REQUEST_V1", action: "start_1688_job", requestId: "handoff-123", taskId: "ozon-1001", mainImageUrl: "https://ir.ozone.ru/s3/multimedia-x/a.jpg" });
+await new Promise((resolve) => setTimeout(resolve, 0));
+const handoffJob = await handoffDriver.api.getJob("1688-handoff-123");
+assert.equal(handoffJob.strategy.type, "image");
+assert.equal(handoffJob.strategy.sourceUrl, "https://ir.ozone.ru/s3/multimedia-x/a.jpg");
+assert.equal(handoffBridge.posts.at(-1).data.type, "OZON_SOURCING_EXTENSION_RESPONSE_V1");
+assert.equal(handoffBridge.posts.at(-1).data.requestId, "handoff-123");
 
 const successful = createDriver();
 const queued = await successful.api.startJob(validImageRequest);
