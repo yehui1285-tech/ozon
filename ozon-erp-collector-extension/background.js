@@ -1,4 +1,5 @@
 importScripts("black-price-core.js", "main-image-core.js", "task-pricing-core.js", "store-scanner-core.js");
+importScripts("1688-core.js", "1688-background.js");
 
 const blackPriceCore = globalThis.OzonBlackPriceCore;
 const mainImageCore = globalThis.OzonMainImageCore;
@@ -1255,6 +1256,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   else if (message?.type === "readBlackPriceFromProductUrl") operation = readBlackPriceFromProductUrl(message.url);
   else if (message?.type === "readMainImageFromProductUrl") operation = readMainImageFromProductUrl(message.url);
   else if (message?.type === "readOzonTaskPricing") operation = readOzonTaskPricing(message.task);
+  else if (message?.type === "start1688SourcingJob") operation = Ozon1688Background.startJob(message.request);
+  else if (message?.type === "get1688SourcingJob") operation = Ozon1688Background.getJob(message.jobId);
+  else if (message?.type === "cancel1688SourcingJob") operation = Ozon1688Background.cancelJob(message.jobId);
   else if (message?.type === "getStoreScanState") operation = getStoreScanState(message);
   else if (message?.type === "saveStoreScanState") operation = saveStoreScanState(message);
   else if (message?.type === "enrichStoreProductBySku") operation = enrichStoreProductBySku(message);
