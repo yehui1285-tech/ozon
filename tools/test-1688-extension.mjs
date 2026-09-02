@@ -272,5 +272,8 @@ assert.match(driverSource, /waitForTabComplete/);
 assert.match(driverSource, /chrome\.runtime\.onStartup/);
 assert.match(packageJson.scripts.test, /test-1688-extension/);
 assert.match(driverSource, /resumeJob/);
+assert.match(driverSource, /active!==id/);
+assert.match(driverSource, /ownerToken/);
+assert.match(driverSource, /jobId\.localeCompare/);
 
 console.log("1688 extension tests passed");
