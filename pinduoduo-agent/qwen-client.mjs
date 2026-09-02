@@ -1,16 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { aiJudgementReadiness, clean, isTrustedOzonImageUrl, normalizeAiJudgement, normalizeSkuSelection } from "./core.mjs";
+import { configuredQwenModel, loadQwenCredential, requestQwenJson } from "./qwen-transport.mjs";
 
-const execFileAsync = promisify(execFile);
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const runtimeDir = path.join(moduleDir, "runtime");
-const encryptedKeyPath = path.join(runtimeDir, "qwen-api-key.dpapi");
-const readKeyScript = path.join(moduleDir, "read-qwen-key.ps1");
-const endpoint = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
 const defaultModel = "qwen3.7-flash";
 
 export function isTrustedPinduoduoImageUrl(rawUrl) {
@@ -27,28 +22,11 @@ export function isTrustedPinduoduoImageUrl(rawUrl) {
   }
 }
 
-async function loadApiKey() {
-  const environmentKey = clean(process.env.DASHSCOPE_API_KEY);
-  if (environmentKey) return { key: environmentKey, source: "environment" };
-  try {
-    await fs.access(encryptedKeyPath);
-    const { stdout } = await execFileAsync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", readKeyScript, encryptedKeyPath], {
-      windowsHide: true,
-      timeout: 10000,
-      maxBuffer: 1024 * 1024,
-    });
-    const key = clean(stdout);
-    return key ? { key, source: "windows_dpapi" } : { key: "", source: "" };
-  } catch {
-    return { key: "", source: "" };
-  }
-}
-
 export async function qwenStatus() {
-  const credential = await loadApiKey();
+  const credential = await loadQwenCredential();
   return {
     provider: "aliyun_bailian",
-    model: clean(process.env.QWEN_MODEL) || defaultModel,
+    model: configuredQwenModel() || defaultModel,
     configured: Boolean(credential.key),
     credentialSource: credential.source || null,
   };
@@ -104,16 +82,29 @@ function candidateSummary(candidate, index) {
   };
 }
 
-function extractMessageJson(content) {
-  const source = clean(content).replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
-  try {
-    return JSON.parse(source);
-  } catch {
-    const first = source.indexOf("{");
-    const last = source.lastIndexOf("}");
-    if (first >= 0 && last > first) return JSON.parse(source.slice(first, last + 1));
-    throw new Error("模型没有返回有效JSON。");
+function requireExactModelObject(raw, keys, label) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)
+    || Object.keys(raw).length !== keys.length || !keys.every((key) => Object.hasOwn(raw, key))) {
+    throw new Error(`模型${label}返回不符合安全Schema。`);
   }
+  return raw;
+}
+
+function validatePinduoduoJudgement(raw) {
+  const judgement = requireExactModelObject(raw,
+    ["bestCandidateIndex", "verdict", "confidence", "specConflicts", "reason", "needsHumanReview", "candidateAssessments"], "同款判断");
+  if (!Array.isArray(judgement.specConflicts) || !Array.isArray(judgement.candidateAssessments)) {
+    throw new Error("模型同款判断返回不符合安全Schema。");
+  }
+  for (const assessment of judgement.candidateAssessments) {
+    requireExactModelObject(assessment, ["candidateIndex", "verdict", "confidence", "differences"], "候选明细");
+    if (!Array.isArray(assessment.differences)) throw new Error("模型候选明细返回不符合安全Schema。");
+  }
+  return judgement;
+}
+
+function validatePinduoduoSkuSelection(raw) {
+  return requireExactModelObject(raw, ["verdict", "selectedOptionId", "confidence", "reason", "needsHumanReview"], "规格选择");
 }
 
 function buildPrompt(task, candidates, imageEvidence = []) {
@@ -143,9 +134,6 @@ function buildPrompt(task, candidates, imageEvidence = []) {
 export async function judgeTaskWithQwen(task = {}) {
   const ready = aiJudgementReadiness(task);
   if (!ready.ready) throw new Error(`暂不能AI判断：${ready.reasons.join("、")}`);
-  const credential = await loadApiKey();
-  if (!credential.key) throw new Error("尚未配置阿里云百炼API Key，请先双击“配置千问API密钥.cmd”。");
-  const model = clean(process.env.QWEN_MODEL) || defaultModel;
   const candidates = ready.candidates;
   const ozonImage = await remoteImageAsDataUrl(task?.enrichment?.mainImageUrl, isTrustedOzonImageUrl);
   const imageEvidence = [];
@@ -175,22 +163,9 @@ export async function judgeTaskWithQwen(task = {}) {
     { type: "image_url", image_url: { url: ozonImage } },
     ...candidateContent,
   ];
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: { authorization: `Bearer ${credential.key}`, "content-type": "application/json" },
-    body: JSON.stringify({
-      model,
-      messages: [{ role: "user", content }],
-      response_format: { type: "json_object" },
-      enable_thinking: false,
-      temperature: 0.1,
-      max_tokens: 1800,
-    }),
-    signal: AbortSignal.timeout(90000),
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(`千问调用失败：HTTP ${response.status} ${clean(payload?.error?.message || payload?.message).slice(0, 300)}`);
-  const raw = extractMessageJson(payload?.choices?.[0]?.message?.content);
+  // The shared compatible-mode request retains response_format JSON and enable_thinking: false.
+  const qwenResponse = await requestQwenJson({ content, temperature: 0.1, maxTokens: 1800 });
+  const raw = validatePinduoduoJudgement(qwenResponse.json);
   const judgement = normalizeAiJudgement(raw, candidates.length);
   const bestCandidate = judgement.bestCandidateIndex ? candidates[judgement.bestCandidateIndex - 1] : null;
   judgement.bestCandidateId = clean(bestCandidate?.candidateId) || null;
@@ -204,10 +179,10 @@ export async function judgeTaskWithQwen(task = {}) {
   if (!judgement.reason) throw new Error("模型结果缺少判断理由。");
   return {
     provider: "aliyun_bailian",
-    model,
+    model: qwenResponse.model,
     judgement,
     evidenceWarnings,
-    usage: payload?.usage || null,
+    usage: qwenResponse.usage,
     judgedAt: new Date().toISOString(),
   };
 }
@@ -215,9 +190,6 @@ export async function judgeTaskWithQwen(task = {}) {
 export async function selectSkuOptionWithQwen(task = {}, candidate = {}, skuSheet = {}) {
   const options = Array.isArray(skuSheet?.options) ? skuSheet.options : [];
   if (!options.length) throw new Error("拼多多规格弹窗没有读取到可选规格。");
-  const credential = await loadApiKey();
-  if (!credential.key) throw new Error("尚未配置阿里云百炼API Key，请先双击“配置千问API密钥.cmd”。");
-  const model = clean(process.env.QWEN_MODEL) || defaultModel;
   const ozonImage = await remoteImageAsDataUrl(task?.enrichment?.mainImageUrl, isTrustedOzonImageUrl);
   const candidateImage = await candidateImageAsDataUrl(candidate).catch(() => "");
   const target = {
@@ -240,22 +212,9 @@ export async function selectSkuOptionWithQwen(task = {}, candidate = {}, skuShee
   ].join("\n");
   const content = [{ type: "text", text: prompt }, { type: "image_url", image_url: { url: ozonImage } }];
   if (candidateImage) content.push({ type: "text", text: "以下是拼多多候选详情图片证据。" }, { type: "image_url", image_url: { url: candidateImage } });
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: { authorization: `Bearer ${credential.key}`, "content-type": "application/json" },
-    body: JSON.stringify({
-      model,
-      messages: [{ role: "user", content }],
-      response_format: { type: "json_object" },
-      enable_thinking: false,
-      temperature: 0.05,
-      max_tokens: 900,
-    }),
-    signal: AbortSignal.timeout(90000),
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(`千问规格判断失败：HTTP ${response.status} ${clean(payload?.error?.message || payload?.message).slice(0, 300)}`);
-  const selection = normalizeSkuSelection(extractMessageJson(payload?.choices?.[0]?.message?.content), options);
+  // The shared compatible-mode request retains response_format JSON and enable_thinking: false.
+  const qwenResponse = await requestQwenJson({ content, temperature: 0.05, maxTokens: 900 });
+  const selection = normalizeSkuSelection(validatePinduoduoSkuSelection(qwenResponse.json), options);
   if (!selection.reason) throw new Error("模型规格判断缺少理由。");
-  return { provider: "aliyun_bailian", model, selection, usage: payload?.usage || null, judgedAt: new Date().toISOString() };
+  return { provider: "aliyun_bailian", model: qwenResponse.model, selection, usage: qwenResponse.usage, judgedAt: new Date().toISOString() };
 }

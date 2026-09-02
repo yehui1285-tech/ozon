@@ -3,8 +3,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
 import { PINDUODUO_PACKAGE, candidateInspectionOrder, detectPinduoduoRiskPage, extractPinduoduoCandidates, extractPinduoduoDetail, extractPinduoduoSkuSheet, findUiNode, isTrustedOzonImageUrl, parseMumuInfo, parsePinduoduoRoute, parseUiNodes, pinduoduoFavoriteState, pinduoduoProductGoodsId, reconcilePinduoduoDisplayedPrice, safeTaskFileName } from "./core.mjs";
 import { judgeTaskWithQwen, qwenStatus, selectSkuOptionWithQwen } from "./qwen-client.mjs";
+import { generate1688Keywords, judge1688Candidates, select1688Sku } from "./sourcing-qwen.mjs";
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(moduleDir, "public");
@@ -15,6 +17,7 @@ const adbSerial = "127.0.0.1:16384";
 const host = "127.0.0.1";
 const port = Number(process.env.OZON_PDD_AGENT_PORT) || 17628;
 const localUiHeader = "local-ui-v1";
+const evidenceRefs = new Map();
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 function createTimingTrace() {
@@ -643,6 +646,42 @@ async function readJsonBody(request) {
   return chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
 }
 
+async function readJpegEvidenceBody(request) {
+  const contentType = String(request.headers["content-type"] || "").toLowerCase().trim();
+  if (!/^image\/jpeg(?:\s*;|$)/.test(contentType)) throw new Error("1688证据只接受image/jpeg。");
+  const chunks = [];
+  let total = 0;
+  for await (const chunk of request) {
+    total += chunk.length;
+    if (total > 1024 * 1024) throw new Error("1688证据图片超过1MB。");
+    chunks.push(chunk);
+  }
+  const bytes = Buffer.concat(chunks);
+  if (!bytes.length) throw new Error("1688证据图片不能为空。");
+  if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes[2] !== 0xff) throw new Error("1688证据不是有效JPEG数据。");
+  return bytes;
+}
+
+function safe1688EvidenceId(value, label) {
+  const id = String(value || "").trim();
+  if (!/^(?=.*\d)[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(id)) throw new Error(`${label}不符合1688本地证据ID安全限制。`);
+  return id;
+}
+
+async function save1688Evidence(url, request) {
+  const taskId = safe1688EvidenceId(url.searchParams.get("taskId"), "任务ID");
+  const candidateId = safe1688EvidenceId(url.searchParams.get("candidateId"), "候选ID");
+  const bytes = await readJpegEvidenceBody(request);
+  const evidenceDir = path.resolve(runtimeDir, "evidence", taskId);
+  const localPath = path.resolve(evidenceDir, `1688-${candidateId}.jpg`);
+  if (!localPath.startsWith(`${evidenceDir}${path.sep}`)) throw new Error("1688证据路径不安全。");
+  await fs.mkdir(evidenceDir, { recursive: true });
+  await fs.writeFile(localPath, bytes);
+  const token = randomUUID().replaceAll("-", "");
+  evidenceRefs.set(token, localPath);
+  return { ok: true, localRef: `/api/evidence/1688/${token}` };
+}
+
 function json(response, statusCode, value) {
   const body = Buffer.from(JSON.stringify(value));
   response.writeHead(statusCode, { "content-type": "application/json; charset=utf-8", "content-length": body.length, "cache-control": "no-store" });
@@ -668,6 +707,20 @@ async function staticFile(requestPath, response) {
 async function evidenceFile(requestPath, response) {
   const prefix = "/api/evidence/";
   if (!requestPath.startsWith(prefix)) return false;
+  const opaque1688 = /^\/api\/evidence\/1688\/([a-f0-9]{32})$/i.exec(requestPath);
+  if (opaque1688) {
+    const target = evidenceRefs.get(opaque1688[1]);
+    const evidenceRoot = path.resolve(runtimeDir, "evidence");
+    if (!target || !target.startsWith(`${evidenceRoot}${path.sep}`) || !/\.jpe?g$/i.test(target)) return false;
+    try {
+      const content = await fs.readFile(target);
+      response.writeHead(200, { "content-type": "image/jpeg", "content-length": content.length, "cache-control": "no-store" });
+      response.end(content);
+      return true;
+    } catch {
+      return false;
+    }
+  }
   const relative = decodeURIComponent(requestPath.slice(prefix.length)).replaceAll("/", path.sep);
   const target = path.resolve(runtimeDir, relative);
   const root = path.resolve(runtimeDir);
@@ -687,6 +740,7 @@ const server = http.createServer(async (request, response) => {
   try {
     const url = new URL(request.url || "/", `http://${host}:${port}`);
     if (request.method === "POST" && request.headers["x-ozon-agent"] !== localUiHeader) return json(response, 403, { ok: false, error: "拒绝非本地控制页面的操作请求。" });
+    if (request.method === "POST" && url.pathname === "/api/evidence/1688") return json(response, 200, await save1688Evidence(url, request));
     if (request.method === "GET" && url.pathname === "/api/status") return json(response, 200, { ok: true, status: await deviceStatus() });
     if (request.method === "GET" && url.pathname === "/api/ai/status") return json(response, 200, { ok: true, status: await qwenStatus() });
     if (request.method === "POST" && url.pathname === "/api/device/launch") {
@@ -711,6 +765,17 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "POST" && url.pathname === "/api/ai/select-sku") {
       const body = await readJsonBody(request);
       return json(response, 200, { ok: true, ...(await selectSkuOptionWithQwen(body.task, body.candidate, body.skuSheet)) });
+    }
+    if (request.method === "POST" && url.pathname === "/api/ai/1688-keywords") {
+      return json(response, 200, { ok: true, ...(await generate1688Keywords(await readJsonBody(request))) });
+    }
+    if (request.method === "POST" && url.pathname === "/api/ai/1688-judge") {
+      const body = await readJsonBody(request);
+      return json(response, 200, { ok: true, ...(await judge1688Candidates(body.task, body.candidates)) });
+    }
+    if (request.method === "POST" && url.pathname === "/api/ai/1688-select-sku") {
+      const body = await readJsonBody(request);
+      return json(response, 200, { ok: true, ...(await select1688Sku(body.task, body.candidate, body.skuOptions)) });
     }
     if (request.method === "GET" && await evidenceFile(url.pathname, response)) return;
     if (request.method === "GET" && await staticFile(url.pathname, response)) return;
