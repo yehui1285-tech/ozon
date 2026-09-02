@@ -31,7 +31,12 @@
   }
 
   function unsafeNode(node) {
-    return UNSAFE_SEMANTICS.test(`${node?.innerText || ""} ${node?.getAttribute?.("aria-label") || ""}`);
+    let current = node;
+    for (let depth = 0; current && depth < 4; depth += 1, current = current.parentElement) {
+      const fields = ["id", "name", "title", "value", "placeholder", "href", "aria-label", "action"];
+      if (UNSAFE_SEMANTICS.test(`${current.innerText || ""} ${fields.map((field) => current.getAttribute?.(field) || "").join(" ")}`)) return true;
+    }
+    return false;
   }
 
   function verifiedUploadInput() {
@@ -57,11 +62,15 @@
   }
 
   async function submitImageSearch(payload = {}) {
-    const bytes = payload.bytes;
+    const imageBase64 = clean(payload.imageBase64);
     const mimeType = clean(payload.mimeType);
-    if (!(bytes instanceof ArrayBuffer) || !bytes.byteLength || !/^image\/(?:jpeg|png|webp|gif)$/i.test(mimeType)) {
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(imageBase64) || !/^image\/(?:jpeg|png|webp|gif)$/i.test(mimeType)) {
       throw new Error("图片搜索数据无效。");
     }
+    const binary = atob(imageBase64);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+    if (!bytes.byteLength || bytes.byteLength > 15 * 1024 * 1024) throw new Error("图片搜索数据无效。");
     const input = verifiedUploadInput();
     const transfer = new DataTransfer();
     transfer.items.add(new File([bytes], "ozon-image", { type: mimeType }));

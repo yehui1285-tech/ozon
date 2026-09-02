@@ -25,6 +25,7 @@ const detailFixture = JSON.parse(fs.readFileSync(new URL("./fixtures/1688-detail
 function storageArea(data, calls) {
   return {
     async get(keys) {
+      if (keys == null) return { ...data };
       const list = Array.isArray(keys) ? keys : typeof keys === "string" ? [keys] : Object.keys(keys || {});
       return Object.fromEntries(list.filter((key) => Object.hasOwn(data, key)).map((key) => [key, data[key]]));
     },
@@ -32,34 +33,37 @@ function storageArea(data, calls) {
   };
 }
 
-function response({ ok = true, contentType = "image/jpeg", bytes = new Uint8Array([1, 2, 3]).buffer, json = {} } = {}) {
+function response({ ok = true, contentType = "image/jpeg", bytes = new Uint8Array([1, 2, 3]).buffer, json = {}, url = "" } = {}) {
   return {
     ok,
+    url,
     headers: { get: (name) => name.toLowerCase() === "content-type" ? contentType : name.toLowerCase() === "content-length" ? String(bytes.byteLength) : null },
     async arrayBuffer() { return bytes; },
     async json() { return json; },
   };
 }
 
-function createDriver({ probe = searchFixture, search = searchFixture, detail = detailFixture, imageResponse, commandDelay = null, captureDataUrl = "data:image/jpeg;base64,AQID" } = {}) {
-  const storageData = {};
+function createDriver({ probe = searchFixture, search = searchFixture, detail = detailFixture, imageResponse, commandDelay = null, captureDataUrl = "data:image/jpeg;base64,AQID", storageSeed = null, taskTabActive = true, fetchDelay = 0 } = {}) {
+  const storageData = storageSeed || {};
   const calls = [];
   let nextTabId = 100;
+  let tabUrl = "https://s.1688.com/";
   const listeners = { messages: [] };
   const chrome = {
     storage: { local: storageArea(storageData, calls) },
     runtime: { onMessage: { addListener: (listener) => listeners.messages.push(listener) } },
     tabs: {
       async query() { return []; },
-      async create(args) { const tab = { id: nextTabId++, windowId: 1, ...args }; calls.push({ create: args }); return tab; },
-      async update(tabId, args) { calls.push({ update: { tabId, args } }); return { id: tabId, windowId: 1, ...args }; },
-      async get(tabId) { return { id: tabId, windowId: 1 }; },
+      async create(args) { tabUrl = args.url; const tab = { id: nextTabId++, windowId: 1, status: "complete", ...args }; calls.push({ create: args }); return tab; },
+      async update(tabId, args) { tabUrl = args.url || tabUrl; calls.push({ update: { tabId, args } }); return { id: tabId, windowId: 1, status: "complete", url: tabUrl, ...args }; },
+      async get(tabId) { return { id: tabId, windowId: 1, active: taskTabActive, status: "complete", url: tabUrl }; },
       async remove(tabId) { calls.push({ remove: tabId }); },
       async captureVisibleTab(_windowId, options) { calls.push({ capture: options }); return captureDataUrl; },
       async sendMessage(tabId, message) {
+        message = JSON.parse(JSON.stringify(message));
         calls.push({ tabId, message });
         if (commandDelay === message.command) await new Promise((resolve) => setTimeout(resolve, 5));
-        const result = message.command === "probe" ? probe
+        const result = message.command === "probe" ? (tabUrl.startsWith("https://detail.1688.com/") ? { ...detailFixture, pageUrl: tabUrl } : probe)
           : message.command === "read_search_results" ? search
             : message.command === "read_product_detail" ? detail
               : message.command === "select_sku_option" ? { selected: true }
@@ -71,10 +75,11 @@ function createDriver({ probe = searchFixture, search = searchFixture, detail = 
   const fetchCalls = [];
   const fetch = async (url, options = {}) => {
     fetchCalls.push({ url, options });
+    if (fetchDelay) await new Promise((resolve) => setTimeout(resolve, fetchDelay));
     if (String(url).startsWith("http://127.0.0.1:17628/api/evidence/1688?")) return response({ json: { localRef: "/api/evidence/1688/test.jpg" } });
     return imageResponse || response();
   };
-  const context = vm.createContext({ chrome, console, URL, fetch, Uint8Array, atob, setTimeout });
+  const context = vm.createContext({ chrome, console, URL, fetch, Uint8Array, atob, btoa, setTimeout, AbortController });
   context.globalThis = context;
   vm.runInContext(coreSource, context, { filename: "1688-core.js" });
   vm.runInContext(driverSource, context, { filename: "1688-background.js" });
@@ -82,7 +87,7 @@ function createDriver({ probe = searchFixture, search = searchFixture, detail = 
 }
 
 const validImageRequest = { requestId: "lifecycle", sku: "1001", strategy: { type: "image", sourceUrl: "https://cdn.ozone.ru/images/1.jpg" } };
-const waitForDriver = () => new Promise((resolve) => setTimeout(resolve, 35));
+const waitForDriver = () => new Promise((resolve) => setTimeout(resolve, 300));
 
 const successful = createDriver();
 const queued = await successful.api.startJob(validImageRequest);
@@ -99,6 +104,7 @@ assert.equal(evidencePost.options.headers["x-ozon-agent"], "local-ui-v1");
 assert.ok(evidencePost.options.body.byteLength <= 1024 * 1024);
 assert.match(completed.detailCandidates[0].evidence.localRef, /^\/api\/evidence\//);
 assert.doesNotMatch(JSON.stringify(successful.storageData), /data:image\/jpeg;base64/i);
+assert.equal((await successful.api.cancelJob(queued.jobId)).status, "cancelled");
 
 const captureFailedDriver = createDriver({ captureDataUrl: null });
 const captureFailedQueued = await captureFailedDriver.api.startJob({ ...validImageRequest, requestId: "capture-failed" });
@@ -109,16 +115,50 @@ assert.equal(captureFailed.detailCandidates[0].evidence.screenshotStatus, "captu
 assert.ok(captureFailed.detailCandidates[0].evidence.text);
 
 const skuDriver = createDriver();
-const skuQueued = await skuDriver.api.startJob({ requestId: "sku", sku: "1002", strategy: { type: "verify_sku", optionId: "red", optionLabel: "红", expectedPrice: 10 } });
+const skuQueued = await skuDriver.api.startJob({ requestId: "sku", sku: "1002", strategy: { type: "verify_sku", sourceUrl: "https://detail.1688.com/offer/1030432861479.html", optionId: "red", optionLabel: "红", expectedPrice: 10 } });
 await waitForDriver();
 assert.equal((await skuDriver.api.getJob(skuQueued.jobId)).status, "completed");
-assert.deepEqual(JSON.parse(JSON.stringify(skuDriver.calls.find((call) => call.message?.command === "select_sku_option").message.payload)), { type: "verify_sku", query: "", sourceUrl: "", optionId: "red", optionLabel: "红", expectedPrice: 10 });
+assert.deepEqual(JSON.parse(JSON.stringify(skuDriver.calls.find((call) => call.message?.command === "select_sku_option").message.payload)), { type: "verify_sku", query: "", sourceUrl: "https://detail.1688.com/offer/1030432861479.html", optionId: "red", optionLabel: "红", expectedPrice: 10 });
 
 const cancelledDriver = createDriver({ commandDelay: "probe" });
 const cancelQueued = await cancelledDriver.api.startJob({ ...validImageRequest, requestId: "cancel" });
 assert.equal((await cancelledDriver.api.cancelJob(cancelQueued.jobId)).status, "cancelled");
 await waitForDriver();
 assert.equal((await cancelledDriver.api.getJob(cancelQueued.jobId)).status, "cancelled");
+
+const abortDownloadDriver = createDriver({ fetchDelay: 120 });
+const abortDownloadQueued = await abortDownloadDriver.api.startJob({ ...validImageRequest, requestId: "abort-download" });
+await new Promise((resolve) => setTimeout(resolve, 20));
+await abortDownloadDriver.api.cancelJob(abortDownloadQueued.jobId);
+await waitForDriver();
+assert.equal((await abortDownloadDriver.api.getJob(abortDownloadQueued.jobId)).status, "cancelled");
+assert.equal(abortDownloadDriver.calls.some((call) => call.message?.command === "submit_image_search"), false);
+
+const inactiveEvidenceDriver = createDriver({ taskTabActive: false });
+const inactiveEvidenceQueued = await inactiveEvidenceDriver.api.startJob({ ...validImageRequest, requestId: "inactive-evidence" });
+await waitForDriver();
+const inactiveEvidence = await inactiveEvidenceDriver.api.getJob(inactiveEvidenceQueued.jobId);
+assert.equal(inactiveEvidence.status, "completed");
+assert.equal(inactiveEvidenceDriver.calls.some((call) => call.capture), false);
+assert.equal(inactiveEvidence.detailCandidates[0].evidence.screenshotStatus, "capture_failed");
+
+const concurrentDriver = createDriver({ commandDelay: "probe" });
+const concurrent = await Promise.allSettled([
+  concurrentDriver.api.startJob({ ...validImageRequest, requestId: "concurrent-a" }),
+  concurrentDriver.api.startJob({ ...validImageRequest, requestId: "concurrent-b" }),
+]);
+assert.equal(concurrent.filter((entry) => entry.status === "fulfilled").length, 1);
+
+const restartSeed = {
+  "ozon1688Job:1688-restart": {
+    jobId: "1688-restart", taskId: "ozon-1003", strategy: { type: "keyword", query: "测试", sourceUrl: "" }, selection: {},
+    status: "queued", phase: "queued", revision: 1, cancellationToken: 0, tabId: null, ownedTabId: null,
+    candidates: [], detailCandidates: [], error: "", diagnostics: null, startedAt: new Date().toISOString(), updatedAt: new Date().toISOString(), completedAt: "",
+  }, ozon1688ActiveJobV1: "1688-restart",
+};
+const restartedDriver = createDriver({ storageSeed: restartSeed });
+await waitForDriver();
+assert.equal((await restartedDriver.api.getJob("1688-restart")).status, "completed");
 
 const verificationDriver = createDriver({ probe: { title: "请登录后完成滑块验证码", nodes: [] } });
 const verificationQueued = await verificationDriver.api.startJob({ ...validImageRequest, requestId: "verification" });
@@ -135,6 +175,7 @@ assert.equal(failed.diagnostics.code, "search_parser_failed");
 for (const [label, url, imageResponse] of [
   ["http", "http://cdn.ozone.ru/image.jpg", response()],
   ["host", "https://example.com/image.jpg", response()],
+  ["redirect-host", "https://cdn.ozone.ru/image.jpg", response({ url: "https://example.com/image.jpg" })],
   ["non-image", "https://cdn.ozone.ru/image.jpg", response({ contentType: "text/html" })],
   ["empty", "https://cdn.ozone.ru/image.jpg", response({ bytes: new ArrayBuffer(0) })],
   ["large", "https://cdn.ozone.ru/image.jpg", response({ bytes: new ArrayBuffer(15 * 1024 * 1024 + 1) })],
@@ -194,5 +235,15 @@ function runSkuCommand({ text = "红", prices = [10, 10] } = {}) {
 assert.deepEqual(JSON.parse(JSON.stringify(await runSkuCommand())), { ok: true, result: { optionId: "red", optionLabel: "红", selected: true, price: 10 } });
 assert.equal((await runSkuCommand({ prices: [10, 11] })).ok, false);
 assert.equal((await runSkuCommand({ text: "立即购买", prices: [10, 10] })).ok, false);
+
+// Review round 1 regressions: Chrome message payloads are JSON-cloned and the
+// persisted state must carry cancellation/restart ownership information.
+assert.match(driverSource, /imageBase64/);
+assert.match(contentSource, /imageBase64/);
+assert.match(driverSource, /AbortController/);
+assert.match(driverSource, /revision/);
+assert.match(driverSource, /ownedTabId/);
+assert.match(driverSource, /waitForTabComplete/);
+assert.match(driverSource, /chrome\.runtime\.onStartup/);
 
 console.log("1688 extension tests passed");
