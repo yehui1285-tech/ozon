@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { webcrypto } from "node:crypto";
 import fs from "node:fs";
 import vm from "node:vm";
 
@@ -22,6 +23,7 @@ const driverSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/16
 const contentSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/1688-content.js", import.meta.url), "utf8");
 const searchFixture = JSON.parse(fs.readFileSync(new URL("./fixtures/1688-search-snapshot.json", import.meta.url), "utf8"));
 const detailFixture = JSON.parse(fs.readFileSync(new URL("./fixtures/1688-detail-snapshot.json", import.meta.url), "utf8"));
+const plain = (value) => JSON.parse(JSON.stringify(value));
 
 function storageArea(data, calls) {
   return {
@@ -31,6 +33,11 @@ function storageArea(data, calls) {
       return Object.fromEntries(list.filter((key) => Object.hasOwn(data, key)).map((key) => [key, data[key]]));
     },
     async set(values) { calls.push({ storageSet: values }); Object.assign(data, JSON.parse(JSON.stringify(values))); },
+    async remove(keys) {
+      const list = Array.isArray(keys) ? keys : [keys];
+      calls.push({ storageRemove: list });
+      for (const key of list) delete data[key];
+    },
   };
 }
 
@@ -44,27 +51,59 @@ function response({ ok = true, contentType = "image/jpeg", bytes = new Uint8Arra
   };
 }
 
-function createDriver({ probe = searchFixture, search = searchFixture, detail = detailFixture, imageResponse, commandDelay = null, captureDataUrl = "data:image/jpeg;base64,AQID", storageSeed = null, taskTabActive = true, fetchDelay = 0 } = {}) {
+function createDriver({ probe = searchFixture, search = searchFixture, detail = detailFixture, imageResponse, commandDelay = null, commandDelayMs = 5, captureDataUrl = "data:image/jpeg;base64,AQID", storageSeed = null, sessionSeed = null, browserState = null, existingTabs = null, taskTabActive = true, fetchDelay = 0, createDelay = 0, removeDelay = 0 } = {}) {
   const storageData = storageSeed || {};
   const calls = [];
-  let nextTabId = 100;
-  let tabUrl = "https://s.1688.com/";
+  const browser = browserState || { nextTabId: 100, tabs: new Map() };
+  if (!browser.tabs) browser.tabs = new Map();
+  if (!Number.isInteger(browser.nextTabId)) browser.nextTabId = 100;
+  for (const [rawTabId, tab] of Object.entries(existingTabs || {})) {
+    const tabId = Number(rawTabId);
+    browser.tabs.set(tabId, { id: tabId, windowId: 1, status: "complete", ...tab });
+  }
   const listeners = { messages: [] };
   const chrome = {
-    storage: { local: storageArea(storageData, calls) },
+    storage: {
+      local: storageArea(storageData, calls),
+      ...(sessionSeed ? { session: storageArea(sessionSeed, calls) } : {}),
+    },
     runtime: { onMessage: { addListener: (listener) => listeners.messages.push(listener) } },
     tabs: {
       async query() { return []; },
-      async create(args) { tabUrl = args.url; const tab = { id: nextTabId++, windowId: 1, status: "complete", ...args }; calls.push({ create: args }); return tab; },
-      async update(tabId, args) { tabUrl = args.url || tabUrl; calls.push({ update: { tabId, args } }); return { id: tabId, windowId: 1, status: "complete", url: tabUrl, ...args }; },
-      async get(tabId) { return { id: tabId, windowId: 1, active: taskTabActive, status: "complete", url: tabUrl }; },
-      async remove(tabId) { calls.push({ remove: tabId }); },
+      async create(args) {
+        const tab = { id: browser.nextTabId++, windowId: 1, status: "complete", ...args };
+        browser.tabs.set(tab.id, tab);
+        calls.push({ create: args });
+        if (createDelay) await new Promise((resolve) => setTimeout(resolve, createDelay));
+        return { ...tab };
+      },
+      async update(tabId, args) {
+        const previous = browser.tabs.get(tabId);
+        if (!previous) throw new Error(`Tab ${tabId} does not exist`);
+        const tab = { ...previous, ...args, url: args.url || previous.url };
+        browser.tabs.set(tabId, tab);
+        calls.push({ update: { tabId, args } });
+        return { ...tab };
+      },
+      async get(tabId) {
+        const tab = browser.tabs.get(tabId);
+        if (!tab) throw new Error(`Tab ${tabId} does not exist`);
+        return { ...tab, active: taskTabActive };
+      },
+      async remove(tabId) {
+        calls.push({ remove: tabId });
+        if (removeDelay) await new Promise((resolve) => setTimeout(resolve, removeDelay));
+        browser.tabs.delete(tabId);
+      },
       async captureVisibleTab(_windowId, options) { calls.push({ capture: options }); return captureDataUrl; },
       async sendMessage(tabId, message) {
+        const tab = browser.tabs.get(tabId);
+        if (!tab) throw new Error(`Tab ${tabId} does not exist`);
         message = JSON.parse(JSON.stringify(message));
         calls.push({ tabId, message });
-        if (commandDelay === message.command) await new Promise((resolve) => setTimeout(resolve, 5));
-        const result = message.command === "probe" ? (tabUrl.startsWith("https://detail.1688.com/") ? { ...detailFixture, pageUrl: tabUrl } : probe)
+        const delay = typeof commandDelay === "function" ? commandDelay(message.command, tabId) : commandDelay === message.command ? commandDelayMs : 0;
+        if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+        const result = message.command === "probe" ? (tab.url.startsWith("https://detail.1688.com/") ? { ...detailFixture, pageUrl: tab.url } : probe)
           : message.command === "read_search_results" ? search
             : message.command === "read_product_detail" ? detail
               : message.command === "select_sku_option" ? { selected: true }
@@ -80,15 +119,36 @@ function createDriver({ probe = searchFixture, search = searchFixture, detail = 
     if (String(url).startsWith("http://127.0.0.1:17628/api/evidence/1688?")) return response({ json: { localRef: "/api/evidence/1688/test.jpg" } });
     return imageResponse || response();
   };
-  const context = vm.createContext({ chrome, console, URL, fetch, Uint8Array, atob, btoa, setTimeout, AbortController });
+  const context = vm.createContext({ chrome, console, URL, fetch, Uint8Array, atob, btoa, setTimeout, AbortController, crypto: webcrypto });
   context.globalThis = context;
   vm.runInContext(coreSource, context, { filename: "1688-core.js" });
   vm.runInContext(driverSource, context, { filename: "1688-background.js" });
-  return { api: context.Ozon1688Background, storageData, calls, fetchCalls };
+  return { api: context.Ozon1688Background, storageData, sessionData: sessionSeed, browserState: browser, calls, fetchCalls };
 }
 
 const validImageRequest = { requestId: "lifecycle", sku: "1001", strategy: { type: "image", sourceUrl: "https://cdn.ozone.ru/images/1.jpg" } };
 const waitForDriver = () => new Promise((resolve) => setTimeout(resolve, 300));
+async function waitForJobStatus(api, jobId, status) {
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const job = await api.getJob(jobId);
+    if (job?.status === status) return job;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`Timed out waiting for ${jobId} to reach ${status}`);
+}
+
+function persistedJob({ requestId, status = "paused_platform_verification", ownerToken, tabId = null, revision = 7 } = {}) {
+  const job = {
+    jobId: `1688-${requestId}`,
+    taskId: "ozon-1999",
+    strategy: { type: "image", query: "", sourceUrl: "https://cdn.ozone.ru/images/1.jpg" },
+    selection: {}, status, phase: status, revision, cancellationToken: 0,
+    tabId, ownedTabId: tabId, candidates: [], detailCandidates: [], error: "", diagnostics: null,
+    startedAt: "2026-09-02T00:00:00.000Z", updatedAt: "2026-09-02T00:00:00.000Z", completedAt: status === "completed" ? "2026-09-02T00:01:00.000Z" : "",
+  };
+  if (ownerToken !== undefined) job.ownerToken = ownerToken;
+  return job;
+}
 
 const successful = createDriver();
 const queued = await successful.api.startJob(validImageRequest);
@@ -127,6 +187,14 @@ assert.equal((await cancelledDriver.api.cancelJob(cancelQueued.jobId)).status, "
 await waitForDriver();
 assert.equal((await cancelledDriver.api.getJob(cancelQueued.jobId)).status, "cancelled");
 
+const createCancellationDriver = createDriver({ createDelay: 120 });
+const createCancellationQueued = await createCancellationDriver.api.startJob({ ...validImageRequest, requestId: "cancel-while-creating-tab" });
+await new Promise((resolve) => setTimeout(resolve, 20));
+await createCancellationDriver.api.cancelJob(createCancellationQueued.jobId);
+await new Promise((resolve) => setTimeout(resolve, 150));
+assert.equal((await createCancellationDriver.api.getJob(createCancellationQueued.jobId)).status, "cancelled");
+assert.equal(createCancellationDriver.calls.some((call) => call.remove === 100), true, "a cancellation during dedicated-tab creation must close only that freshly created tab");
+
 const abortDownloadDriver = createDriver({ fetchDelay: 120 });
 const abortDownloadQueued = await abortDownloadDriver.api.startJob({ ...validImageRequest, requestId: "abort-download" });
 await new Promise((resolve) => setTimeout(resolve, 20));
@@ -153,7 +221,7 @@ assert.equal(concurrent.filter((entry) => entry.status === "fulfilled").length, 
 const restartSeed = {
   "ozon1688Job:1688-restart": {
     jobId: "1688-restart", taskId: "ozon-1003", strategy: { type: "keyword", query: "测试", sourceUrl: "" }, selection: {},
-    status: "queued", phase: "queued", revision: 1, cancellationToken: 0, tabId: null, ownedTabId: null,
+    ownerToken: "c".repeat(48), status: "queued", phase: "queued", revision: 1, cancellationToken: 0, tabId: null, ownedTabId: null,
     candidates: [], detailCandidates: [], error: "", diagnostics: null, startedAt: new Date().toISOString(), updatedAt: new Date().toISOString(), completedAt: "",
   }, ozon1688ActiveJobV1: "1688-restart",
 };
@@ -172,17 +240,102 @@ assert.ok(duplicateRestartDriver.calls.filter((call) => call.create).length <= 1
 assert.equal((await duplicateRestartDriver.api.getJob("1688-restart-2")).status, "paused_platform_verification");
 
 const verificationProbe = { title: "请登录后完成滑块验证码", nodes: [] };
-const verificationDriver = createDriver({ probe: verificationProbe });
+const verificationSession = {};
+const verificationDriver = createDriver({ probe: verificationProbe, sessionSeed: verificationSession });
 const verificationQueued = await verificationDriver.api.startJob({ ...validImageRequest, requestId: "verification" });
 await waitForDriver();
 assert.equal((await verificationDriver.api.getJob(verificationQueued.jobId)).status, "paused_platform_verification");
 const paused = await verificationDriver.api.getJob(verificationQueued.jobId);
 assert.ok(Number.isInteger(paused.ownedTabId));
 assert.equal(verificationDriver.calls.some((call) => call.remove === paused.ownedTabId), false);
+const createsBeforeSameVmResume = verificationDriver.calls.filter((call) => call.create).length;
 verificationProbe.title = "1688 搜索结果";
 await verificationDriver.api.resumeJob(verificationQueued.jobId);
 await waitForDriver();
 assert.equal((await verificationDriver.api.getJob(verificationQueued.jobId)).status, "completed");
+assert.equal(verificationDriver.calls.filter((call) => call.create).length, createsBeforeSameVmResume, "same service worker session must reuse the paused verification tab");
+
+// Regression: a service-worker restart may reuse a paused verification tab
+// only when chrome.storage.session still proves the exact job/tab/token claim.
+const restartVerificationProbe = { title: "请登录后完成滑块验证码", nodes: [] };
+const restartVerificationStorage = {};
+const restartVerificationSession = {};
+const restartVerificationBrowser = { nextTabId: 100, tabs: new Map() };
+const beforeRestartDriver = createDriver({
+  probe: restartVerificationProbe,
+  storageSeed: restartVerificationStorage,
+  sessionSeed: restartVerificationSession,
+  browserState: restartVerificationBrowser,
+});
+const beforeRestartJob = await beforeRestartDriver.api.startJob({ ...validImageRequest, requestId: "restart-paused-verification" });
+const restartPaused = await waitForJobStatus(beforeRestartDriver.api, beforeRestartJob.jobId, "paused_platform_verification");
+assert.ok(Number.isInteger(restartPaused.ownedTabId));
+restartVerificationProbe.title = "1688 搜索结果";
+const afterRestartDriver = createDriver({
+  probe: restartVerificationProbe,
+  storageSeed: restartVerificationStorage,
+  sessionSeed: restartVerificationSession,
+  browserState: restartVerificationBrowser,
+});
+await afterRestartDriver.api.resumeJob(beforeRestartJob.jobId);
+await waitForJobStatus(afterRestartDriver.api, beforeRestartJob.jobId, "completed");
+assert.equal(afterRestartDriver.calls.filter((call) => call.create).length, 0, "shared chrome.storage.session must permit exact paused-tab reuse after a VM rebuild");
+assert.equal(afterRestartDriver.calls.some((call) => call.tabId === restartPaused.ownedTabId), true, "reused paused tab must receive the resumed page commands");
+
+// Regression: no owner token or no session proof means a persisted tab ID is
+// untrusted. It must never become a navigation, command, or close target.
+const untrustedTabId = 77;
+const ownerlessCancelled = persistedJob({ requestId: "ownerless-cancel", ownerToken: undefined, tabId: untrustedTabId });
+const ownerlessCancelDriver = createDriver({
+  storageSeed: { [`ozon1688Job:${ownerlessCancelled.jobId}`]: ownerlessCancelled, ozon1688ActiveJobV1: ownerlessCancelled.jobId },
+  existingTabs: { [untrustedTabId]: { url: "https://s.1688.com/user-search" } },
+});
+await ownerlessCancelDriver.api.cancelJob(ownerlessCancelled.jobId);
+assert.equal(ownerlessCancelDriver.calls.some((call) => call.remove === untrustedTabId), false, "missing owner token must not authorize closing a persisted tab ID");
+
+const untrustedResume = persistedJob({ requestId: "ownerless-resume", ownerToken: "", tabId: untrustedTabId });
+const ownerlessResumeDriver = createDriver({
+  storageSeed: { [`ozon1688Job:${untrustedResume.jobId}`]: untrustedResume, ozon1688ActiveJobV1: untrustedResume.jobId },
+  existingTabs: { [untrustedTabId]: { url: "https://s.1688.com/user-search" } },
+});
+await ownerlessResumeDriver.api.resumeJob(untrustedResume.jobId);
+const renewedOwnerless = await waitForJobStatus(ownerlessResumeDriver.api, untrustedResume.jobId, "completed");
+assert.match(renewedOwnerless.ownerToken, /^[a-f0-9]{32,}$/i, "an empty owner token must be replaced before creating a dedicated tab");
+assert.equal(ownerlessResumeDriver.calls.some((call) => call.update?.tabId === untrustedTabId || call.tabId === untrustedTabId || call.remove === untrustedTabId), false, "untrusted persisted tab ID must not be navigated, messaged, or closed");
+
+// Regression: requestId is an idempotency key for every persisted lifecycle
+// state. A duplicate must return that exact record before the active-job check.
+const duplicateRequest = { ...validImageRequest, requestId: "idempotent" };
+const duplicateDriver = createDriver({ commandDelay: "probe", commandDelayMs: 500 });
+const firstDuplicateStart = await duplicateDriver.api.startJob(duplicateRequest);
+const duplicateWhileRunning = await duplicateDriver.api.startJob(duplicateRequest);
+assert.equal(duplicateWhileRunning.jobId, firstDuplicateStart.jobId);
+assert.equal(duplicateWhileRunning.ownerToken, firstDuplicateStart.ownerToken);
+await new Promise((resolve) => setTimeout(resolve, 25));
+assert.equal(duplicateDriver.calls.filter((call) => call.create).length, 1, "duplicate running request must not create another dedicated tab");
+
+const pausedDuplicate = persistedJob({ requestId: "idempotent-paused", ownerToken: "a".repeat(48), tabId: null });
+const pausedDuplicateDriver = createDriver({ storageSeed: { [`ozon1688Job:${pausedDuplicate.jobId}`]: pausedDuplicate, ozon1688ActiveJobV1: pausedDuplicate.jobId } });
+assert.deepEqual(plain(await pausedDuplicateDriver.api.startJob({ ...validImageRequest, requestId: "idempotent-paused" })), pausedDuplicate, "duplicate paused request must return its persisted record");
+
+const terminalDuplicate = persistedJob({ requestId: "idempotent-terminal", status: "completed", ownerToken: "b".repeat(48) });
+const terminalDuplicateDriver = createDriver({ storageSeed: { [`ozon1688Job:${terminalDuplicate.jobId}`]: terminalDuplicate, ozon1688ActiveJobV1: null } });
+assert.deepEqual(plain(await terminalDuplicateDriver.api.startJob({ ...validImageRequest, requestId: "idempotent-terminal" })), terminalDuplicate, "duplicate terminal request must not be re-queued or overwritten");
+
+// Keep a terminal runner in its delayed cleanup, then create a successor. A
+// duplicate of the old request must not overwrite either record or clear the
+// successor's ACTIVE pointer when the old finally finishes.
+const delayedFinallyDriver = createDriver({
+  removeDelay: 500,
+  commandDelay: (command, tabId) => command === "probe" && tabId === 101 ? 1000 : 0,
+});
+const delayedOriginal = await delayedFinallyDriver.api.startJob({ ...validImageRequest, requestId: "delayed-finally-original" });
+const delayedTerminal = await waitForJobStatus(delayedFinallyDriver.api, delayedOriginal.jobId, "completed");
+const delayedSuccessor = await delayedFinallyDriver.api.startJob({ ...validImageRequest, requestId: "delayed-finally-successor" });
+assert.deepEqual(plain(await delayedFinallyDriver.api.startJob({ ...validImageRequest, requestId: "delayed-finally-original" })), plain(delayedTerminal), "duplicate during an old finally must return the terminal generation");
+await new Promise((resolve) => setTimeout(resolve, 600));
+assert.equal(delayedFinallyDriver.storageData.ozon1688ActiveJobV1?.jobId, delayedSuccessor.jobId, "an old finally must not clear the successor ACTIVE pointer");
+assert.deepEqual(plain(await delayedFinallyDriver.api.getJob(delayedOriginal.jobId)), plain(delayedTerminal), "an old finally must not overwrite the duplicate generation");
 
 const failedDriver = createDriver({ search: { pageUrl: "https://s.1688.com/", title: "空结果", nodes: [] } });
 const failedQueued = await failedDriver.api.startJob({ ...validImageRequest, requestId: "parser" });
@@ -271,9 +424,5 @@ assert.match(driverSource, /ownedTabId/);
 assert.match(driverSource, /waitForTabComplete/);
 assert.match(driverSource, /chrome\.runtime\.onStartup/);
 assert.match(packageJson.scripts.test, /test-1688-extension/);
-assert.match(driverSource, /resumeJob/);
-assert.match(driverSource, /active!==id/);
-assert.match(driverSource, /ownerToken/);
-assert.match(driverSource, /jobId\.localeCompare/);
 
 console.log("1688 extension tests passed");
