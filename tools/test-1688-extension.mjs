@@ -86,11 +86,13 @@ for (const [strategy, expected] of [
   assert.deepEqual(JSON.parse(JSON.stringify(bridge.runtimeMessages.at(-1).request.strategy)), expected);
 }
 for (const strategy of [
-  {}, { type: "image", sourceUrl: "https://ir.ozone.ru/a.jpg", extra: 1 }, { type: "keyword", query: "" }, { type: "keyword", query: "x\u0000" }, { type: "similar_supplier", sourceUrl: "https://user:pass@img.alicdn.com/a.jpg" }, { type: "verify_sku", sourceUrl: "https://detail.1688.com/offer/abc.html", optionId: "red" }, { type: "verify_sku", sourceUrl: "https://detail.1688.com/offer/123.html", optionId: "" }, { type: "verify_sku", sourceUrl: "https://detail.1688.com/offer/123.html", optionId: "red", expectedPrice: -1 },
+  {}, [], "image", null, { type: "image", sourceUrl: "https://ir.ozone.ru/a.jpg", extra: 1 }, { type: "keyword", query: "" }, { type: "keyword", query: "x\u0000" }, { type: "similar_supplier", query: "x\u0000", sourceUrl: "https://img.alicdn.com/a.jpg" }, { type: "similar_supplier", query: "x".repeat(100000), sourceUrl: "https://img.alicdn.com/a.jpg" }, { type: "similar_supplier", sourceUrl: "https://user:pass@img.alicdn.com/a.jpg" }, { type: "verify_sku", query: "x\u0000", sourceUrl: "https://detail.1688.com/offer/abc.html", optionId: "red" }, { type: "verify_sku", sourceUrl: "https://detail.1688.com/offer/abc.html", optionId: "red" }, { type: "verify_sku", sourceUrl: "https://detail.1688.com/offer/123.html", optionId: "" }, { type: "verify_sku", sourceUrl: "https://detail.1688.com/offer/123.html", optionId: "red", expectedPrice: -1 },
 ]) {
   const bridge = createBridge();
   bridge.postBridgeMessage({ type: "OZON_SOURCING_EXTENSION_REQUEST_V1", action: "start_1688_job", requestId: "bad-strategy", taskId: "ozon-2", mainImageUrl: "https://ir.ozone.ru/s3/multimedia-x/a.jpg", strategy });
   assert.equal(bridge.runtimeMessages.length, 0, JSON.stringify(strategy));
+  assert.equal(bridge.posts.at(-1).data.type, "OZON_SOURCING_EXTENSION_RESPONSE_V1");
+  assert.equal(bridge.posts.at(-1).data.ok, false);
 }
 for (const mainImageUrl of ["https://ozone.ru:443/a.jpg", "https://user:pass@ir.ozone.ru/a.jpg", "https://ir.ozone.ru:443/a.jpg", "https://ir.ozone.ru/" + "a".repeat(2050)]) {
   const bridge = createBridge();

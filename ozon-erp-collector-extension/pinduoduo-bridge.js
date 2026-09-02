@@ -64,20 +64,23 @@
 
   function normalizeStrategy(strategy, mainImageUrl) {
     if (strategy === undefined) return { type: "image", sourceUrl: mainImageUrl };
+    if (!strategy || typeof strategy !== "object" || Array.isArray(strategy)) return null;
     if (strategy.type === "image") return ownKeysOnly(strategy, ["type", "sourceUrl"]) ? { type: "image", sourceUrl: mainImageUrl } : null;
     if (strategy.type === "keyword") return ownKeysOnly(strategy, ["type", "query"]) && validText(strategy.query) ? { type: "keyword", query: strategy.query, sourceUrl: "" } : null;
     if (strategy.type === "similar_supplier") {
       if (!ownKeysOnly(strategy, ["type", "query", "sourceUrl"])) return null;
       if (!validAliImage(strategy.sourceUrl)) return null;
-      return { type: "similar_supplier", query: typeof strategy.query === "string" ? strategy.query : "", sourceUrl: strategy.sourceUrl };
+      if (strategy.query !== undefined && !validText(strategy.query)) return null;
+      return { type: "similar_supplier", query: strategy.query || "", sourceUrl: strategy.sourceUrl };
     }
     if (strategy.type === "verify_sku") {
       if (!ownKeysOnly(strategy, ["type", "query", "sourceUrl", "optionId", "optionLabel", "expectedPrice"])) return null;
+      if (strategy.query !== undefined && !validText(strategy.query)) return null;
       const sourceUrl = strategy.sourceUrl;
       if (typeof sourceUrl !== "string" || !/^https:\/\/detail\.1688\.com\/offer\/\d+\.html$/i.test(sourceUrl) || sourceUrl.length > 300) return null;
       if (!(validText(strategy.optionId, 100) || validText(strategy.optionLabel, 100))) return null;
       if (!Number.isFinite(strategy.expectedPrice) || strategy.expectedPrice < 0 || strategy.expectedPrice > 1e9) return null;
-      return { type: "verify_sku", query: typeof strategy.query === "string" ? strategy.query : "", sourceUrl, optionId: validText(strategy.optionId, 100) ? strategy.optionId : "", optionLabel: validText(strategy.optionLabel, 100) ? strategy.optionLabel : "", expectedPrice: strategy.expectedPrice };
+      return { type: "verify_sku", query: strategy.query || "", sourceUrl, optionId: validText(strategy.optionId, 100) ? strategy.optionId : "", optionLabel: validText(strategy.optionLabel, 100) ? strategy.optionLabel : "", expectedPrice: strategy.expectedPrice };
     }
     return null;
   }
