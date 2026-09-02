@@ -11,6 +11,7 @@
     "select_sku_option",
   ]);
   const UNSAFE_SEMANTICS = /(?:下单|订单|支付|付款|联系|客服|聊天|优惠券|购买|立即购买|buy\s*now|payment|contact|chat|coupon|order)/i;
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   function clean(value) {
     return String(value ?? "").replace(/\s+/g, " ").trim();
@@ -32,9 +33,11 @@
 
   function unsafeNode(node) {
     let current = node;
-    for (let depth = 0; current && depth < 4; depth += 1, current = current.parentElement) {
+    while (current) {
       const fields = ["id", "name", "title", "value", "placeholder", "href", "aria-label", "action"];
       if (UNSAFE_SEMANTICS.test(`${current.innerText || ""} ${fields.map((field) => current.getAttribute?.(field) || "").join(" ")}`)) return true;
+      if (current === document.documentElement || current.getAttribute?.("data-1688-safe-container") === "true") break;
+      current = current.parentElement;
     }
     return false;
   }
@@ -129,9 +132,11 @@
     if (matches.length !== 1) throw new Error("未找到唯一且精确的 SKU 选项。");
     const option = matches[0];
     option.click();
-    await Promise.resolve();
+    if (!selectedOption(option)) await sleep(180);
+    if (!selectedOption(option)) throw new Error("SKU 选项未稳定选中。");
     const firstPrice = normalPrice();
-    await Promise.resolve();
+    await sleep(180);
+    if (!selectedOption(option)) throw new Error("SKU 选项未稳定选中。");
     const secondPrice = normalPrice();
     if (!selectedOption(option) || firstPrice === null || firstPrice !== secondPrice || (Number.isFinite(expectedPrice) && firstPrice !== expectedPrice)) {
       throw new Error("SKU 选择状态或正常价格未通过确认。");

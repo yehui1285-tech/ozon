@@ -1259,6 +1259,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   else if (message?.type === "start1688SourcingJob") operation = Ozon1688Background.startJob(message.request);
   else if (message?.type === "get1688SourcingJob") operation = Ozon1688Background.getJob(message.jobId);
   else if (message?.type === "cancel1688SourcingJob") operation = Ozon1688Background.cancelJob(message.jobId);
+  else if (message?.type === "resume1688SourcingJob") operation = Ozon1688Background.resumeJob(message.jobId);
   else if (message?.type === "getStoreScanState") operation = getStoreScanState(message);
   else if (message?.type === "saveStoreScanState") operation = saveStoreScanState(message);
   else if (message?.type === "enrichStoreProductBySku") operation = enrichStoreProductBySku(message);

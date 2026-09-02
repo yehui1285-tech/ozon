@@ -3,6 +3,7 @@ import fs from "node:fs";
 import vm from "node:vm";
 
 const manifest = JSON.parse(fs.readFileSync(new URL("../ozon-erp-collector-extension/manifest.json", import.meta.url), "utf8"));
+const packageJson = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 assert.equal(manifest.version, "0.6.30");
 assert.ok(manifest.host_permissions.includes("https://*.1688.com/*"));
 assert.ok(manifest.host_permissions.includes("https://*.ozone.ru/*"));
@@ -104,7 +105,7 @@ assert.equal(evidencePost.options.headers["x-ozon-agent"], "local-ui-v1");
 assert.ok(evidencePost.options.body.byteLength <= 1024 * 1024);
 assert.match(completed.detailCandidates[0].evidence.localRef, /^\/api\/evidence\//);
 assert.doesNotMatch(JSON.stringify(successful.storageData), /data:image\/jpeg;base64/i);
-assert.equal((await successful.api.cancelJob(queued.jobId)).status, "cancelled");
+assert.equal((await successful.api.cancelJob(queued.jobId)).status, "completed");
 
 const captureFailedDriver = createDriver({ captureDataUrl: null });
 const captureFailedQueued = await captureFailedDriver.api.startJob({ ...validImageRequest, requestId: "capture-failed" });
@@ -159,11 +160,29 @@ const restartSeed = {
 const restartedDriver = createDriver({ storageSeed: restartSeed });
 await waitForDriver();
 assert.equal((await restartedDriver.api.getJob("1688-restart")).status, "completed");
+const duplicateRestartSeed = JSON.parse(JSON.stringify(restartSeed));
+duplicateRestartSeed["ozon1688Job:1688-restart"].status = "queued";
+duplicateRestartSeed["ozon1688Job:1688-restart"].completedAt = "";
+duplicateRestartSeed["ozon1688Job:1688-restart-2"] = { ...duplicateRestartSeed["ozon1688Job:1688-restart"], jobId: "1688-restart-2", taskId: "ozon-1004", startedAt: "2030-01-01T00:00:00.000Z" };
+delete duplicateRestartSeed.ozon1688ActiveJobV1;
+const duplicateRestartDriver = createDriver({ storageSeed: duplicateRestartSeed });
+await duplicateRestartDriver.api.__test.restoreJobs();
+await new Promise((resolve) => setTimeout(resolve, 700));
+assert.ok(duplicateRestartDriver.calls.filter((call) => call.create).length <= 1);
+assert.equal((await duplicateRestartDriver.api.getJob("1688-restart-2")).status, "paused_platform_verification");
 
-const verificationDriver = createDriver({ probe: { title: "请登录后完成滑块验证码", nodes: [] } });
+const verificationProbe = { title: "请登录后完成滑块验证码", nodes: [] };
+const verificationDriver = createDriver({ probe: verificationProbe });
 const verificationQueued = await verificationDriver.api.startJob({ ...validImageRequest, requestId: "verification" });
 await waitForDriver();
 assert.equal((await verificationDriver.api.getJob(verificationQueued.jobId)).status, "paused_platform_verification");
+const paused = await verificationDriver.api.getJob(verificationQueued.jobId);
+assert.ok(Number.isInteger(paused.ownedTabId));
+assert.equal(verificationDriver.calls.some((call) => call.remove === paused.ownedTabId), false);
+verificationProbe.title = "1688 搜索结果";
+await verificationDriver.api.resumeJob(verificationQueued.jobId);
+await waitForDriver();
+assert.equal((await verificationDriver.api.getJob(verificationQueued.jobId)).status, "completed");
 
 const failedDriver = createDriver({ search: { pageUrl: "https://s.1688.com/", title: "空结果", nodes: [] } });
 const failedQueued = await failedDriver.api.startJob({ ...validImageRequest, requestId: "parser" });
@@ -183,6 +202,12 @@ for (const [label, url, imageResponse] of [
   const driver = createDriver({ imageResponse });
   await assert.rejects(() => driver.api.__test.downloadTrustedImage(url), undefined, label);
 }
+const streamTooLarge = {
+  ok: true, url: "https://cdn.ozone.ru/image.jpg", headers: { get: (name) => name === "content-type" ? "image/jpeg" : null },
+  body: { getReader: () => ({ read: async () => ({ done: false, value: new Uint8Array(15 * 1024 * 1024 + 1) }), cancel: async () => {} }) },
+};
+await assert.rejects(() => createDriver({ imageResponse: streamTooLarge }).api.__test.downloadTrustedImage("https://cdn.ozone.ru/image.jpg"));
+await assert.doesNotReject(() => createDriver({ imageResponse: response({ bytes: new Uint8Array([1, 2, 3]).buffer }) }).api.__test.downloadTrustedImage("https://cdn.ozone.ru/image.jpg"));
 
 const oversizedSearch = {
   ...searchFixture,
@@ -224,7 +249,7 @@ function runSkuCommand({ text = "红", prices = [10, 10] } = {}) {
   };
   const listeners = [];
   const chrome = { runtime: { onMessage: { addListener: (listener) => listeners.push(listener) } } };
-  const context = vm.createContext({ chrome, document, location: { href: "https://detail.1688.com/offer/1.html" }, Event: class Event {}, DataTransfer: class DataTransfer {}, File: class File {}, console });
+  const context = vm.createContext({ chrome, document, location: { href: "https://detail.1688.com/offer/1.html" }, Event: class Event {}, DataTransfer: class DataTransfer {}, File: class File {}, console, setTimeout });
   context.globalThis = context;
   vm.runInContext(contentSource, context, { filename: "1688-content.js" });
   return new Promise((resolve) => {
@@ -245,5 +270,7 @@ assert.match(driverSource, /revision/);
 assert.match(driverSource, /ownedTabId/);
 assert.match(driverSource, /waitForTabComplete/);
 assert.match(driverSource, /chrome\.runtime\.onStartup/);
+assert.match(packageJson.scripts.test, /test-1688-extension/);
+assert.match(driverSource, /resumeJob/);
 
 console.log("1688 extension tests passed");
