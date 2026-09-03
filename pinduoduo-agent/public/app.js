@@ -1,4 +1,4 @@
-import { applyFinalOzonPricing, preliminaryPricingDecision } from "./pricing-flow.js";
+import { applyFinalOzonPricing, createFinalPricingRequestGuard, preliminaryPricingDecision, previewFinalOzonPricing } from "./pricing-flow.js";
 
 let queue = null;
 let sourceName = "ozon-sourcing.json";
@@ -8,6 +8,7 @@ const batch = { running: false, paused: false, riskPaused: false, pauseReason: "
 const aiBatch = { running: false, completed: 0, failed: 0, riskPaused: false, pauseReason: "" };
 const skuBatch = { running: false, completed: 0, failed: 0 };
 const batchDelayRangeMs = { min: 12000, max: 25000 };
+const finalPricingRequestGuard = createFinalPricingRequestGuard();
 
 const $ = (id) => document.getElementById(id);
 
@@ -347,7 +348,37 @@ async function requestFinalOzonPricing(task, timeoutMs = 90000) {
   });
 }
 
+function finalPricingTaskIdentity(task) {
+  const taskId = typeof task?.taskId === "string" ? task.taskId : "";
+  return taskId ? `taskId:${taskId}` : task;
+}
+
+function currentQueuedTask(task) {
+  return Array.isArray(queue?.tasks) ? queue.tasks.find((entry) => entry === task) || null : null;
+}
+
+async function preview1688PurchaseCostWithFinalPricing(task, purchaseCost, { batchMode = false } = {}) {
+  const taskIdentity = finalPricingTaskIdentity(task);
+  const requestToken = finalPricingRequestGuard.start(task, taskIdentity);
+  const isCurrentRequest = () => finalPricingRequestGuard.isActive(task, requestToken, currentQueuedTask(task), finalPricingTaskIdentity(task));
+  if (!batchMode) setStatus(`SKU ${task?.ozon?.sku || "-"}：正在执行一次Ozon最终实时复价预览……`);
+  try {
+    const response = await requestFinalOzonPricing(task);
+    if (!isCurrentRequest()) return { stale: true };
+    const preview = previewFinalOzonPricing(task, response, purchaseCost);
+    if (!batchMode) setStatus(`SKU ${task?.ozon?.sku || "-"}：最终成本上限${preview.maxPurchaseCostAt18Pct.toFixed(2)}元，采购价${preview.purchaseCost.toFixed(2)}元，${preview.eligibleAt18Pct ? "达到" : "未达到"}18%利润门槛；等待最终确认。`, preview.eligibleAt18Pct ? "ok" : "bad");
+    return preview;
+  } finally {
+    finalPricingRequestGuard.finish(task, requestToken);
+  }
+}
+
 async function commitPurchaseCostWithFinalPricing(task, purchaseCost, sourceUrl, verification, { batchMode = false } = {}) {
+  if (task?.sourcing?.provider === "1688") {
+    // Task 7 passes this pure preview to Task 5's confirmation capability;
+    // no 1688 purchase cost or final pricing is written before confirmation.
+    return preview1688PurchaseCostWithFinalPricing(task, purchaseCost, { batchMode });
+  }
   const cost = Number(Number(purchaseCost).toFixed(2));
   task.sourcing = task.sourcing || {};
   task.pricing = task.pricing || {};
@@ -381,8 +412,12 @@ async function commitPurchaseCostWithFinalPricing(task, purchaseCost, sourceUrl,
   task.pricing.finalOzonPricing = { status: "running", startedAt: new Date().toISOString(), purchaseCost: cost };
   persistQueue(); render();
   if (!batchMode) setStatus(`SKU ${task.ozon.sku}：规格实价通过历史上限，正在执行一次Ozon最终实时复价……`);
+  const taskIdentity = finalPricingTaskIdentity(task);
+  const requestToken = finalPricingRequestGuard.start(task, taskIdentity);
+  const isCurrentRequest = () => finalPricingRequestGuard.isActive(task, requestToken, currentQueuedTask(task), finalPricingTaskIdentity(task));
   try {
     const response = await requestFinalOzonPricing(task);
+    if (!isCurrentRequest()) return { stale: true };
     const final = applyFinalOzonPricing(task, response, cost);
     task.status = "pending_human_review";
     task.audit.updatedAt = new Date().toISOString();
@@ -390,11 +425,14 @@ async function commitPurchaseCostWithFinalPricing(task, purchaseCost, sourceUrl,
     if (!batchMode) setStatus(`SKU ${task.ozon.sku}：最终成本上限${final.finalLimit.toFixed(2)}元，采购价${cost.toFixed(2)}元，${final.eligibleAt18Pct ? "达到" : "未达到"}18%利润门槛。`, final.eligibleAt18Pct ? "ok" : "bad");
     return final;
   } catch (error) {
+    if (!isCurrentRequest()) return { stale: true };
     task.pricing.finalOzonPricing = { status: "failed", failedAt: new Date().toISOString(), purchaseCost: cost, error: error.message || String(error) };
     task.pricing.eligibleAt18Pct = null;
     persistQueue(); render();
     if (!batchMode) setStatus(`规格实价已保留，但Ozon最终复价失败：${error.message || error}`, "bad");
     throw error;
+  } finally {
+    finalPricingRequestGuard.finish(task, requestToken);
   }
 }
 

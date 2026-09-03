@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { aiJudgementReadiness, applySelectedCandidate, candidateInspectionOrder, detectPinduoduoRiskPage, extractPinduoduoCandidates, extractPinduoduoDetail, extractPinduoduoSkuSheet, findUiNode, isTrustedOzonImageUrl, normalizeAiJudgement, normalizeSkuSelection, parseMumuInfo, parsePinduoduoRoute, parseUiNodes, pinduoduoFavoriteState, pinduoduoProductGoodsId, queueStats, reconcilePinduoduoDisplayedPrice, resolveAiRecommendedCandidate, safeTaskFileName, taskReadiness } from "../pinduoduo-agent/core.mjs";
-import { applyFinalOzonPricing, preliminaryPricingDecision } from "../pinduoduo-agent/public/pricing-flow.js";
+import { applyFinalOzonPricing, createFinalPricingRequestGuard, preliminaryPricingDecision, previewFinalOzonPricing } from "../pinduoduo-agent/public/pricing-flow.js";
 import { isTrustedPinduoduoImageUrl } from "../pinduoduo-agent/qwen-client.mjs";
 
 assert.equal(isTrustedOzonImageUrl("https://ir.ozone.ru/s3/multimedia-test/wc1000/1.jpg"), true);
@@ -140,6 +140,86 @@ assert.equal(preliminaryPricingDecision(refreshedTask, 20, Date.parse("2026-08-2
 const appliedTask = { ozon: {}, enrichment: { maxPurchaseCostAt18Pct: 50.93 }, pricing: {} };
 assert.equal(applyFinalOzonPricing(appliedTask, { ok: true, effectiveGreenPrice: 121.18, originalBlackPrice: 128.95, internationalFreight: 52.52, selectedCommission: 20, maxPurchaseCostAt18Pct: 36.17, calculation: {} }, 51, "2026-08-29T00:00:00Z").eligibleAt18Pct, false);
 assert.equal(appliedTask.pricing.preliminaryMaxPurchaseCostAt18Pct, 50.93);
+const previewTask = { enrichment: { maxPurchaseCostAt18Pct: 50 }, pricing: { preserved: true }, audit: { preserved: true } };
+const previewResponse = {
+  ok: true,
+  maxPurchaseCostAt18Pct: 36.166,
+  effectiveGreenPrice: 121.186,
+  originalBlackPrice: 128.954,
+  internationalFreight: 52.526,
+  selectedCommission: 20,
+  calculation: { margin: { value: 18 }, routes: ["RU"] },
+};
+const previewTaskBefore = JSON.stringify(previewTask);
+const previewResponseBefore = JSON.stringify(previewResponse);
+const preview = previewFinalOzonPricing(previewTask, previewResponse, 36.174, "2026-08-31T00:00:00.000Z");
+assert.deepEqual(preview, {
+  status: "completed",
+  fetchedAt: "2026-08-31T00:00:00.000Z",
+  purchaseCost: 36.17,
+  maxPurchaseCostAt18Pct: 36.17,
+  eligibleAt18Pct: true,
+  effectiveGreenPrice: 121.19,
+  originalBlackPrice: 128.95,
+  internationalFreight: 52.53,
+  selectedCommission: 20,
+  calculation: { margin: { value: 18 }, routes: ["RU"] },
+});
+assert.equal(JSON.stringify(previewTask), previewTaskBefore, "preview must not mutate a task on success");
+assert.equal(JSON.stringify(previewResponse), previewResponseBefore, "preview must not mutate a response on success");
+assert.notStrictEqual(preview.calculation, previewResponse.calculation, "preview calculation must not share the response reference");
+assert.notStrictEqual(preview.calculation.margin, previewResponse.calculation.margin, "preview calculation must be deeply cloned");
+assert.equal(Object.isFrozen(preview.calculation), true, "preview calculation must be read-only");
+assert.throws(() => { preview.calculation.margin.value = 19; }, TypeError, "preview calculation must not be mutable");
+assert.equal(previewResponse.calculation.margin.value, 18, "preview calculation edits must not reach the response");
+const zeroPreview = previewFinalOzonPricing({}, {
+  ok: true,
+  maxPurchaseCostAt18Pct: 0,
+  effectiveGreenPrice: 0,
+  originalBlackPrice: 0,
+  internationalFreight: 0,
+  selectedCommission: 0,
+  calculation: null,
+}, 0, "2026-08-31T00:00:00.000Z");
+assert.equal(zeroPreview.purchaseCost, 0, "zero purchase cost must not be discarded");
+assert.equal(zeroPreview.maxPurchaseCostAt18Pct, 0, "zero limit must not be discarded");
+assert.equal(zeroPreview.effectiveGreenPrice, 0, "zero pricing fields must not become null");
+assert.equal(zeroPreview.eligibleAt18Pct, true, "rounded equal zero values must be eligible");
+assert.equal(previewFinalOzonPricing({}, previewResponse, 23, "2026-08-31T08:00:00+08:00").fetchedAt, "2026-08-31T08:00:00+08:00",
+  "a calendar-valid ISO timestamp with an explicit offset must remain valid");
+for (const invalidMoney of [null, "", NaN, Infinity, "23", -1]) {
+  const invalidTask = { pricing: { untouched: true } };
+  const invalidResponse = { ...previewResponse, effectiveGreenPrice: invalidMoney };
+  const beforeTask = JSON.stringify(invalidTask);
+  const beforeResponse = JSON.stringify(invalidResponse);
+  assert.throws(() => previewFinalOzonPricing(invalidTask, invalidResponse, 23, "2026-08-31T00:00:00.000Z"), /Ozon最终复价响应不完整/,
+    "invalid response money must fail closed");
+  assert.equal(JSON.stringify(invalidTask), beforeTask, "failed preview must not mutate a task");
+  assert.equal(JSON.stringify(invalidResponse), beforeResponse, "failed preview must not mutate a response");
+  assert.throws(() => previewFinalOzonPricing({}, previewResponse, invalidMoney, "2026-08-31T00:00:00.000Z"), /Ozon最终复价响应不完整/,
+    "invalid purchase cost must fail closed");
+}
+assert.throws(() => previewFinalOzonPricing({}, { ...previewResponse, maxPurchaseCostAt18Pct: -0.01 }, 23, "2026-08-31T00:00:00.000Z"), /Ozon最终复价响应不完整/,
+  "negative final limits must fail closed");
+for (const invalidFetchedAt of [null, "", "not-an-iso-time", "2026-02-30T00:00:00.000Z"]) {
+  assert.throws(() => previewFinalOzonPricing({}, previewResponse, 23, invalidFetchedAt), /Ozon最终复价响应不完整/,
+    "invalid fetchedAt must fail closed");
+}
+const requestGuard = createFinalPricingRequestGuard();
+const requestTask = { taskId: "ozon-request-1" };
+const firstRequest = requestGuard.start(requestTask, "taskId:ozon-request-1");
+const laterRequest = requestGuard.start(requestTask, "taskId:ozon-request-1");
+assert.equal(requestGuard.isActive(requestTask, firstRequest, requestTask, "taskId:ozon-request-1"), false,
+  "an earlier response must become stale when a later request starts");
+assert.equal(requestGuard.isActive(requestTask, laterRequest, requestTask, "taskId:ozon-request-1"), true,
+  "the latest request may apply only to its original task");
+assert.equal(requestGuard.isActive(requestTask, laterRequest, { taskId: "ozon-request-1" }, "taskId:ozon-request-1"), false,
+  "a response must not apply after the queue replaces the task object");
+assert.equal(requestGuard.isActive(requestTask, laterRequest, requestTask, "taskId:changed"), false,
+  "a response must not apply after its task identity changes");
+requestGuard.finish(requestTask, laterRequest);
+assert.equal(requestGuard.isActive(requestTask, laterRequest, requestTask, "taskId:ozon-request-1"), false,
+  "a timed-out or completed request must not apply again");
 const aiTask = { ...readyTask, sourcing: { searchCandidates: [{ detail: { detailStatus: "detail_captured" } }] } };
 assert.equal(aiJudgementReadiness(aiTask).ready, true);
 assert.equal(aiJudgementReadiness({ ...aiTask, sourcing: { searchCandidates: [] } }).ready, false);
@@ -229,6 +309,9 @@ assert.match(appSource, /已收藏/);
 assert.match(appSource, /搜索页价/);
 assert.match(appSource, /requestFinalOzonPricing/);
 assert.match(appSource, /preliminaryPricingDecision/);
+assert.match(appSource, /createFinalPricingRequestGuard/);
+assert.match(appSource, /previewFinalOzonPricing/);
+assert.match(appSource, /task\?\.sourcing\?\.provider === "1688"/);
 assert.match(appSource, /aiJudgement/);
 assert.match(appSource, /detail_not_inspected/);
 assert.match(appSource, /详情读取失败/);
@@ -249,7 +332,7 @@ assert.match(qwenSource, /selectSkuOptionWithQwen/);
 assert.match(bridgeSource, /OZON_FINAL_REPRICE_REQUEST_V1/);
 assert.match(bridgeSource, /http:\/\/127\.0\.0\.1:17628/);
 assert.match(bridgeSource, /validTask/);
-assert.equal(extensionManifest.version, "0.6.29");
+assert.equal(extensionManifest.version, "0.6.30");
 assert.ok(extensionManifest.content_scripts.some((entry) => entry.matches?.includes("http://127.0.0.1:17628/*") && entry.js?.includes("pinduoduo-bridge.js")));
 assert.doesNotMatch(qwenSource, /sk-[A-Za-z0-9]{12,}/);
 console.log("Pinduoduo agent core tests passed.");

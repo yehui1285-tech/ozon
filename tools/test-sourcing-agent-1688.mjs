@@ -5,6 +5,7 @@ import fs from "node:fs";
 import { buildFinalConfirmation, confirmRecommendation, normalizeKeywordResult, normalizeSourcingCandidate, recommendationSafetyGate, rejectRecommendation } from "../pinduoduo-agent/sourcing-core.mjs";
 import { parseQwenJsonResponse, readLimitedQwenResponse } from "../pinduoduo-agent/qwen-transport.mjs";
 import { isTrusted1688ImageUrl, normalize1688Judgement, normalize1688Keywords, normalize1688SkuSelection } from "../pinduoduo-agent/sourcing-qwen.mjs";
+import { previewFinalOzonPricing } from "../pinduoduo-agent/public/pricing-flow.js";
 
 const candidate = {
   provider: "1688",
@@ -27,7 +28,21 @@ const quote = { confirmable: true, productPrice: 20, domesticShipping: 3, purcha
 
 assert.deepEqual(recommendationSafetyGate(candidate, judgement, quote).blockers, []);
 const task = { taskId: "ozon-1001", ozon: { sku: "1001" }, sourcing: {}, pricing: {} };
-const current = { task, candidate, judgement, quote, finalPricing: { eligibleAt18Pct: true } };
+const finalPricingResponse = {
+  ok: true,
+  maxPurchaseCostAt18Pct: 23,
+  effectiveGreenPrice: 121.18,
+  originalBlackPrice: 128.95,
+  internationalFreight: 52.52,
+  selectedCommission: 20,
+  calculation: { route: "RU" },
+};
+const finalPricingTaskBefore = JSON.stringify(task);
+const finalPricingResponseBefore = JSON.stringify(finalPricingResponse);
+const finalPricingPreview = previewFinalOzonPricing(task, finalPricingResponse, quote.purchaseCost, "2026-08-31T00:00:00.000Z");
+assert.equal(JSON.stringify(task), finalPricingTaskBefore, "1688 preview must not write pricing before confirmation");
+assert.equal(JSON.stringify(finalPricingResponse), finalPricingResponseBefore, "1688 preview must not mutate the Ozon response");
+const current = { task, candidate, judgement, quote, finalPricing: finalPricingPreview };
 for (const unsafeTaskId of [" task-1", "task-1 ", "task\n1", "task\t1", "task\u00a01", "task\u200b1", "ｔａｓｋ-1"]) {
   assert.throws(() => buildFinalConfirmation({
     task: { taskId: unsafeTaskId, id: "safe-fallback-id" }, candidate, judgement, quote, finalPricing: { eligibleAt18Pct: true },
