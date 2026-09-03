@@ -5,6 +5,7 @@ const PRICE_SOURCES = new Set([
   "manual_exact_product_exception",
 ]);
 const pendingRecords = new WeakMap();
+const pendingTaskObjects = new WeakMap();
 let nextConfirmationId = 1;
 
 function isPlainObject(value) {
@@ -31,6 +32,15 @@ function ownValue(value, key) {
   }
 }
 
+function hasOwnKey(value, key) {
+  if (!isPlainObject(value)) return false;
+  try {
+    return Object.hasOwn(value, key);
+  } catch {
+    return false;
+  }
+}
+
 function ownPlainObject(value, key) {
   return plainObject(ownValue(value, key)) || {};
 }
@@ -51,8 +61,9 @@ function clean(value, limit = 400) {
 }
 
 function safeId(value) {
-  const result = clean(value, 100);
-  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(result) ? result : "";
+  if (typeof value !== "string" || value.length === 0 || value.length > 100) return "";
+  if (/[\s\p{Cc}\p{Cf}]/u.test(value)) return "";
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(value) ? value : "";
 }
 
 function safeHttpsUrl(value) {
@@ -204,6 +215,7 @@ function keywordContext(raw) {
   const allowedModel = safeAllowedTerm(ownValue(source, "allowedModel"));
   const genericTerms = [
     ...allowedTerms(ownValue(source, "allowedGenericTerms")),
+    ...allowedTerms(ownValue(source, "trustedGenericTerms")),
     ...allowedTerms(ownValue(source, "categoryTerms")),
   ];
   const terms = [...new Set([allowedBrand, allowedModel, ...genericTerms].filter(Boolean))];
@@ -320,10 +332,14 @@ export function recommendationSafetyGate(rawCandidate = {}, judgement = {}, quot
 function stableTaskIdentity(task) {
   const source = plainObject(task);
   if (!source) return "";
-  const taskId = safeId(ownValue(source, "taskId"));
-  if (taskId) return `taskId:${taskId}`;
-  const id = safeId(ownValue(source, "id"));
-  if (id) return `id:${id}`;
+  if (hasOwnKey(source, "taskId")) {
+    const taskId = safeId(ownValue(source, "taskId"));
+    return taskId ? `taskId:${taskId}` : "";
+  }
+  if (hasOwnKey(source, "id")) {
+    const id = safeId(ownValue(source, "id"));
+    return id ? `id:${id}` : "";
+  }
   return "";
 }
 
@@ -335,7 +351,8 @@ function trustedFinalPricing(value) {
 /** Build a review object; it never mutates a sourcing task or starts an order. */
 export function buildFinalConfirmation(input = {}) {
   const request = plainObject(input) || {};
-  const taskIdentity = stableTaskIdentity(ownValue(request, "task"));
+  const task = ownValue(request, "task");
+  const taskIdentity = stableTaskIdentity(task);
   if (!taskIdentity) throw new Error("缺少稳定任务身份，拒绝创建待确认记录。");
   const candidate = ownValue(request, "candidate");
   const judgement = ownValue(request, "judgement");
@@ -366,17 +383,21 @@ export function buildFinalConfirmation(input = {}) {
       taskIdentity,
       fingerprint: confirmationFingerprint(pending),
     });
+    pendingTaskObjects.set(pending, task);
   }
   return pending;
 }
 
-function currentConfirmationSafety(current, expectedTaskIdentity) {
+function currentConfirmationSafety(current, expectedTask, expectedTaskIdentity) {
   const source = plainObject(current);
   if (!source || !plainObject(ownValue(source, "candidate")) || !plainObject(ownValue(source, "judgement"))
     || !plainObject(ownValue(source, "quote")) || !plainObject(ownValue(source, "finalPricing"))) {
     throw new Error("确认必须提交最新可信确认数据。");
   }
-  if (stableTaskIdentity(ownValue(source, "task")) !== expectedTaskIdentity) throw new Error("当前确认数据任务身份不匹配，拒绝写入。");
+  const currentTask = ownValue(source, "task");
+  if (currentTask !== expectedTask || stableTaskIdentity(currentTask) !== expectedTaskIdentity) {
+    throw new Error("当前确认数据任务身份或对象不匹配，拒绝写入。");
+  }
   const safety = recommendationSafetyGate(ownValue(source, "candidate"), ownValue(source, "judgement"), ownValue(source, "quote"));
   if (safety.blockers.length || !trustedFinalPricing(ownValue(source, "finalPricing"))) {
     throw new Error("最新可信确认数据未通过安全闸门。");
@@ -404,14 +425,14 @@ function terminalAction(task, pending, action, current, confirmedAt) {
   if (!record) throw new Error("确认对象不是本次流程生成的有效待确认记录。");
   if (!isPlainObject(task)) throw new Error("缺少要更新的找品任务。");
   const taskIdentity = stableTaskIdentity(task);
-  if (!taskIdentity || taskIdentity !== record.taskIdentity || ownValue(pending, "taskIdentity") !== record.taskIdentity) {
-    throw new Error("待确认记录任务身份不匹配，拒绝写入。");
+  if (pendingTaskObjects.get(pending) !== task || !taskIdentity || taskIdentity !== record.taskIdentity || ownValue(pending, "taskIdentity") !== record.taskIdentity) {
+    throw new Error("待确认记录任务身份或对象不匹配，拒绝写入。");
   }
   const existingSourcing = ownPlainObject(task, "sourcing");
   const existingPending = ownValue(existingSourcing, "pendingConfirmation");
   if (existingPending && existingPending !== pending) throw new Error("该任务当前等待另一条确认，拒绝跨确认写入。");
   if (record.fingerprint !== confirmationFingerprint(pending)) throw new Error("待确认记录已变化，拒绝写入。");
-  const safety = action === "confirm" ? currentConfirmationSafety(current, taskIdentity) : null;
+  const safety = action === "confirm" ? currentConfirmationSafety(current, task, taskIdentity) : null;
   if (action === "confirm" && !pendingMatchesCurrent(pending, safety)) throw new Error("当前确认数据已变化，拒绝写入。");
   if (record.status !== "pending") return { task, pending, idempotent: true, status: record.status };
   if (ownValue(pending, "status") !== "final_confirmation_pending") throw new Error("待确认记录状态无效，拒绝写入。");

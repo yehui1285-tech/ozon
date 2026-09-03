@@ -87,6 +87,11 @@ function sourceTask(task = {}) {
       ...structuredTerms(ownValue(enrichment, "allowedGenericTerms")),
       ...structuredTerms(ownValue(qualification, "allowedGenericTerms")),
     ].slice(0, 24),
+    trustedGenericTerms: [
+      ...structuredTerms(ownValue(ozon, "trustedGenericTerms")),
+      ...structuredTerms(ownValue(enrichment, "trustedGenericTerms")),
+      ...structuredTerms(ownValue(qualification, "trustedGenericTerms")),
+    ].slice(0, 24),
     categoryTerms: [
       ...structuredTerms(ownValue(ozon, "categoryTerms")),
       ...structuredTerms(ownValue(enrichment, "categoryTerms")),
@@ -164,7 +169,7 @@ export async function generate1688Keywords(task = {}) {
     "关键词只能由下方允许词白名单中的品牌、型号和通用品类词组合；不得输出白名单外的品牌、型号或通用品类词。",
     "不得生成、猜测或改写价格、MOQ、运费、SKU或任何供应商事实；价格不是同款证据。",
     `Ozon证据：${JSON.stringify({ title: target.title, category: target.category, brand: target.brand, model: target.model, specification: target.specification })}`,
-    `允许词白名单：${JSON.stringify({ allowedBrand: target.brand, allowedModel: target.model, allowedGenericTerms: target.allowedGenericTerms, categoryTerms: target.categoryTerms })}`,
+    `允许词白名单：${JSON.stringify({ allowedBrand: target.brand, allowedModel: target.model, allowedGenericTerms: target.allowedGenericTerms, trustedGenericTerms: target.trustedGenericTerms, categoryTerms: target.categoryTerms })}`,
     "仅返回严格JSON对象：{\"keywords\":[\"关键词\"]}。不得添加其它字段或Markdown。",
   ].join("\n");
   const content = [{ type: "text", text: prompt }];
@@ -174,6 +179,7 @@ export async function generate1688Keywords(task = {}) {
     allowedBrand: target.brand,
     allowedModel: target.model,
     allowedGenericTerms: target.allowedGenericTerms,
+    trustedGenericTerms: target.trustedGenericTerms,
     categoryTerms: target.categoryTerms,
   });
   if (!keywords.length) throw new Error("千问关键词没有留下可验证的检索词。");

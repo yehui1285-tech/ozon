@@ -28,6 +28,20 @@ const quote = { confirmable: true, productPrice: 20, domesticShipping: 3, purcha
 assert.deepEqual(recommendationSafetyGate(candidate, judgement, quote).blockers, []);
 const task = { taskId: "ozon-1001", ozon: { sku: "1001" }, sourcing: {}, pricing: {} };
 const current = { task, candidate, judgement, quote, finalPricing: { eligibleAt18Pct: true } };
+for (const unsafeTaskId of [" task-1", "task-1 ", "task\n1", "task\t1", "task\u00a01", "task\u200b1", "ｔａｓｋ-1"]) {
+  assert.throws(() => buildFinalConfirmation({
+    task: { taskId: unsafeTaskId, id: "safe-fallback-id" }, candidate, judgement, quote, finalPricing: { eligibleAt18Pct: true },
+  }), /任务身份/,
+  "task IDs must reject raw whitespace, controls, format characters, fullwidth text, and unsafe fallback");
+  assert.throws(() => buildFinalConfirmation({
+    task: { id: unsafeTaskId }, candidate, judgement, quote, finalPricing: { eligibleAt18Pct: true },
+  }), /任务身份/,
+  "fallback IDs must apply the same raw strict validation as taskId");
+}
+assert.throws(() => buildFinalConfirmation({
+  task: { id: new String("stable-job-1") }, candidate, judgement, quote, finalPricing: { eligibleAt18Pct: true },
+}), /任务身份/,
+"task IDs must be primitive strings, not coercible objects");
 assert.throws(() => buildFinalConfirmation({ candidate, judgement, quote, finalPricing: { eligibleAt18Pct: true } }), /任务身份/,
   "a final confirmation must bind to a stable, explicit task identity");
 assert.throws(() => buildFinalConfirmation({ task: { ozon: { sku: "same-sku" } }, candidate, judgement, quote, finalPricing: { eligibleAt18Pct: true } }), /任务身份/,
@@ -41,6 +55,14 @@ assert.equal(pending.status, "final_confirmation_pending");
 assert.equal(pending.purchaseCost, 23);
 assert.throws(() => confirmRecommendation(task, pending), /最新可信确认数据/,
   "the old two-argument confirmation must fail closed instead of using a stale WeakMap snapshot");
+const sameIdOtherTask = { taskId: "ozon-1001", ozon: { sku: "1001" }, sourcing: {}, pricing: {} };
+const clonedTask = JSON.parse(JSON.stringify(task));
+assert.throws(() => confirmRecommendation(sameIdOtherTask, pending, { ...current, task: sameIdOtherTask }), /任务.*身份/,
+  "a distinct task object must not confirm another task's pending record even with the same taskId");
+assert.throws(() => rejectRecommendation(sameIdOtherTask, pending), /任务.*身份/,
+  "a distinct task object must not reject another task's pending record even with the same taskId");
+assert.throws(() => confirmRecommendation(clonedTask, pending, { ...current, task: clonedTask }), /任务.*身份/,
+  "a deserialized task clone must not reuse an in-memory confirmation capability");
 const otherTask = { taskId: "ozon-1002", ozon: { sku: "1001" }, sourcing: {}, pricing: {} };
 assert.throws(() => confirmRecommendation(otherTask, pending, current), /任务身份/,
   "a pending confirmation for task A must not write task B");
@@ -62,8 +84,14 @@ assert.equal(task.pricing.purchaseCost, 23);
 assert.equal(task.pricing.sourceUrl, candidate.sourceUrl);
 assert.equal(confirmRecommendation(task, pending, current, "2026-08-31T00:01:00.000Z").idempotent, true, "a terminal confirmation must be idempotent");
 assert.equal(rejectRecommendation(task, pending, "2026-08-31T00:02:00.000Z").idempotent, true, "a terminal confirmation cannot be reversed");
+assert.throws(() => confirmRecommendation(sameIdOtherTask, pending, { ...current, task: sameIdOtherTask }), /任务.*身份/,
+  "terminal confirmation idempotency is limited to the task object that created the capability");
+assert.throws(() => rejectRecommendation(sameIdOtherTask, pending), /任务.*身份/,
+  "terminal rejection idempotency is limited to the task object that created the capability");
 assert.throws(() => confirmRecommendation({}, { ...pending, status: "final_confirmation_pending" }), /有效待确认/,
   "a copied pending confirmation must not be accepted as an authority to write pricing");
+assert.throws(() => confirmRecommendation(task, JSON.parse(JSON.stringify(pending)), current), /有效待确认/,
+  "a serialized pending confirmation must lose its in-memory capability and require a rebuild");
 
 const keywordContext = {
   allowedBrand: "",
@@ -98,6 +126,12 @@ assert.deepEqual(normalizeKeywordResult({ keywords: ["价\u200b格 运动鞋", "
   "Unicode Cc/Cf characters and formatting-obfuscated commercial text must be rejected");
 assert.deepEqual(normalizeKeywordResult({ keywords: ["价格 运动鞋"] }, { allowedBrand: "", allowedModel: "", allowedGenericTerms: ["价\u200b格", "运动鞋"] }), [],
   "unsafe structured generic terms must not grant commercial keyword permission");
+assert.deepEqual(normalizeKeywordResult({ keywords: ["普通 鞋类", "阿迪达斯 鞋类", "普通\u200b鞋类"] }, {
+  trustedGenericTerms: ["普通", "鞋类", "价\u200b格", "采购价", "x".repeat(41)],
+}), ["普通 鞋类"],
+"trusted generic terms must use the same safe per-token allowlist while rejecting competitors and format controls");
+assert.deepEqual(normalizeKeywordResult({ keywords: ["普通 鞋类"] }, Object.create({ trustedGenericTerms: ["普通", "鞋类"] })), [],
+  "trusted generic terms must be own fields of a plain evidence object");
 
 assert.equal(normalizeSourcingCandidate({ ...candidate, ignored: "must-not-pass" }).ignored, undefined,
   "candidate normalization must use an allowlist rather than retain model-controlled fields");
