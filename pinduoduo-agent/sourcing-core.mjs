@@ -175,52 +175,9 @@ export function normalizeSourcingCandidate(raw = {}) {
   };
 }
 
-function evidenceTokens(value) {
-  return ownArrayValues(value, 24).map((item) => clean(item, 80)).filter(Boolean);
-}
-
 function normalizeKeywordText(value) {
   if (typeof value !== "string") return "";
   return value.normalize("NFKC").replace(/\s+/gu, " ").trim().slice(0, 41);
-}
-
-function keywordContext(raw) {
-  const context = plainObject(raw);
-  if (!context) return null;
-  const allowed = {
-    brand: clean(ownValue(context, "allowedBrand"), 80),
-    model: clean(ownValue(context, "allowedModel"), 80),
-  };
-  const trustedText = [
-    clean(ownValue(context, "trustedText"), 1200),
-    clean(ownValue(context, "trustedTitle"), 600),
-    clean(ownValue(context, "trustedCategory"), 300),
-  ].filter(Boolean);
-  if (!trustedText.length) return null;
-  return {
-    allowed,
-    trustedText: trustedText.join(" ").normalize("NFKC"),
-    brandTokens: evidenceTokens(ownValue(context, "trustedBrandTokens")),
-    modelTokens: evidenceTokens(ownValue(context, "trustedModelTokens")),
-  };
-}
-
-function keywordHasUnverifiedBrandOrModel(keyword, context) {
-  const { allowed, brandTokens, modelTokens } = context;
-  const observed = {
-    brand: [...new Set([allowed.brand, ...brandTokens].filter(Boolean))],
-    model: [...new Set([allowed.model, ...modelTokens].filter(Boolean))],
-  };
-  for (const kind of ["brand", "model"]) {
-    for (const token of observed[kind]) {
-      if (keyword.includes(token) && token !== allowed[kind]) return true;
-    }
-  }
-  const declaredParts = keyword.match(/(?:品牌|型号)\s*[:：-]?\s*[^\s,，;；]+/gi) || [];
-  return declaredParts.some((part) => {
-    const kind = part.startsWith("品牌") ? "brand" : "model";
-    return !allowed[kind] || !part.includes(allowed[kind]);
-  });
 }
 
 function keywordHasUnsafeCommercialText(keyword) {
@@ -230,13 +187,44 @@ function keywordHasUnsafeCommercialText(keyword) {
     || /\d+(?:\.\d{1,2})?\s*(?:元|rmb|cny|人民币)/i.test(keyword);
 }
 
-function keywordGroundedInOzon(keyword, context) {
-  const trusted = context.trustedText.replace(/\s+/gu, "");
-  const compactKeyword = keyword.replace(/\s+/gu, "");
-  if (trusted.includes(compactKeyword)) return true;
-  const allowed = new Set([context.allowed.brand, context.allowed.model].filter(Boolean));
-  const tokens = keyword.split(/\s+/u).filter(Boolean);
-  return tokens.length > 0 && tokens.every((token) => allowed.has(token) || trusted.includes(token));
+function safeAllowedTerm(value) {
+  const term = normalizeKeywordText(value);
+  return term && term.length <= 40 && !keywordHasUnsafeCommercialText(term) ? term : "";
+}
+
+function allowedTerms(value, limit = 24) {
+  const rawValues = typeof value === "string" ? [value] : ownArrayValues(value, limit);
+  return rawValues.map((item) => safeAllowedTerm(item)).filter(Boolean);
+}
+
+function keywordContext(raw) {
+  const source = plainObject(raw);
+  if (!source) return null;
+  const allowedBrand = safeAllowedTerm(ownValue(source, "allowedBrand"));
+  const allowedModel = safeAllowedTerm(ownValue(source, "allowedModel"));
+  const genericTerms = [
+    ...allowedTerms(ownValue(source, "allowedGenericTerms")),
+    ...allowedTerms(ownValue(source, "categoryTerms")),
+  ];
+  const terms = [...new Set([allowedBrand, allowedModel, ...genericTerms].filter(Boolean))];
+  if (!terms.length) return null;
+  return { allowedBrand, allowedModel, genericTerms: new Set(genericTerms), terms: terms.sort((left, right) => right.length - left.length) };
+}
+
+function splitAllowedKeyword(keyword, context) {
+  const parts = keyword.split(/[\s,，、/|+]+/u).filter(Boolean);
+  if (!parts.length) return [];
+  const tokens = [];
+  for (const part of parts) {
+    let offset = 0;
+    while (offset < part.length) {
+      const term = context.terms.find((allowed) => part.startsWith(allowed, offset));
+      if (!term) return [];
+      tokens.push(term);
+      offset += term.length;
+    }
+  }
+  return tokens;
 }
 
 /** Only preserve concise search phrases grounded in explicit Ozon brand/model evidence. */
@@ -250,8 +238,8 @@ export function normalizeKeywordResult(raw = {}, evidence = {}) {
   for (const rawKeyword of keywords) {
     if (typeof rawKeyword !== "string" || keywordHasUnsafeCommercialText(rawKeyword)) continue;
     const keyword = normalizeKeywordText(rawKeyword);
-    if (!keyword || keyword.length > 40 || seen.has(keyword) || keywordHasUnsafeCommercialText(keyword)
-      || keywordHasUnverifiedBrandOrModel(keyword, context) || !keywordGroundedInOzon(keyword, context)) continue;
+    const tokens = keyword && !keywordHasUnsafeCommercialText(keyword) ? splitAllowedKeyword(keyword, context) : [];
+    if (!keyword || keyword.length > 40 || seen.has(keyword) || !tokens.length) continue;
     seen.add(keyword);
     result.push(keyword);
     if (result.length === 3) break;
@@ -336,9 +324,7 @@ function stableTaskIdentity(task) {
   if (taskId) return `taskId:${taskId}`;
   const id = safeId(ownValue(source, "id"));
   if (id) return `id:${id}`;
-  const ozon = ownPlainObject(source, "ozon");
-  const sku = safeId(ownValue(ozon, "sku"));
-  return sku ? `ozonSku:${sku}` : "";
+  return "";
 }
 
 function trustedFinalPricing(value) {

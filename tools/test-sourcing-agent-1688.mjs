@@ -30,16 +30,26 @@ const task = { taskId: "ozon-1001", ozon: { sku: "1001" }, sourcing: {}, pricing
 const current = { task, candidate, judgement, quote, finalPricing: { eligibleAt18Pct: true } };
 assert.throws(() => buildFinalConfirmation({ candidate, judgement, quote, finalPricing: { eligibleAt18Pct: true } }), /任务身份/,
   "a final confirmation must bind to a stable, explicit task identity");
+assert.throws(() => buildFinalConfirmation({ task: { ozon: { sku: "same-sku" } }, candidate, judgement, quote, finalPricing: { eligibleAt18Pct: true } }), /任务身份/,
+  "SKU-only task A must not receive a confirmation capability");
+assert.throws(() => buildFinalConfirmation({ task: { ozon: { sku: "same-sku" } }, candidate, judgement, quote, finalPricing: { eligibleAt18Pct: true } }), /任务身份/,
+  "SKU-only task B must not receive a confirmation capability even with the same SKU");
+assert.equal(buildFinalConfirmation({ task: { id: "stable-job-1" }, candidate, judgement, quote, finalPricing: { eligibleAt18Pct: true } }).status, "final_confirmation_pending",
+  "an explicit safe task id may establish the capability identity");
 const pending = buildFinalConfirmation({ task, candidate, judgement, quote, finalPricing: { eligibleAt18Pct: true } });
 assert.equal(pending.status, "final_confirmation_pending");
 assert.equal(pending.purchaseCost, 23);
 assert.throws(() => confirmRecommendation(task, pending), /最新可信确认数据/,
   "the old two-argument confirmation must fail closed instead of using a stale WeakMap snapshot");
-const otherTask = { taskId: "ozon-1002", ozon: { sku: "1002" }, sourcing: {}, pricing: {} };
+const otherTask = { taskId: "ozon-1002", ozon: { sku: "1001" }, sourcing: {}, pricing: {} };
 assert.throws(() => confirmRecommendation(otherTask, pending, current), /任务身份/,
   "a pending confirmation for task A must not write task B");
 assert.throws(() => confirmRecommendation(task, pending, { ...current, task: otherTask }), /任务身份/,
   "current evidence from task B must not confirm task A");
+task.taskId = "ozon-identity-changed";
+assert.throws(() => confirmRecommendation(task, pending, current), /任务身份/,
+  "a task identity change after pending creation must invalidate confirmation");
+task.taskId = "ozon-1001";
 assert.throws(() => confirmRecommendation(task, pending, {
   ...current,
   candidate: { ...candidate, pricing: { selectedSkuPrice: 21, priceSource: "selected_sku" } },
@@ -58,25 +68,36 @@ assert.throws(() => confirmRecommendation({}, { ...pending, status: "final_confi
 const keywordContext = {
   allowedBrand: "",
   allowedModel: "",
-  trustedText: "汽车 螺丝刀 丝杠 组合 更换设备 滚珠丝杠 维修套装 合规关键词 耐克 跑步鞋 普通 运动鞋 普通 鞋类",
-  trustedCategory: "运动鞋",
+  allowedGenericTerms: ["汽车", "螺丝刀", "丝杠", "组合", "更换设备", "滚珠丝杠", "维修套装", "合规关键词", "普通", "运动鞋", "鞋类"],
+  categoryTerms: "运动鞋",
 };
 assert.deepEqual(normalizeKeywordResult({ keywords: ["汽车 螺丝刀", "汽车 螺丝刀", "品牌X 型号Y"] }, keywordContext), ["汽车 螺丝刀"]);
 assert.deepEqual(normalizeKeywordResult({ keywords: ["丝杠 组合 更换设备", "滚珠丝杠 维修套装"] }, keywordContext), ["丝杠 组合 更换设备", "滚珠丝杠 维修套装"]);
-assert.deepEqual(normalizeKeywordResult({ keywords: ["品牌X 型号Y", "合规关键词", "合规关键词", "x".repeat(41)] }, { allowedBrand: "品牌A", allowedModel: "型号B", trustedText: "品牌A 型号B 合规关键词" }), ["合规关键词"],
+assert.deepEqual(normalizeKeywordResult({ keywords: ["品牌X 型号Y", "合规关键词", "合规关键词", "x".repeat(41)] }, { allowedBrand: "品牌A", allowedModel: "型号B", allowedGenericTerms: "合规关键词" }), ["合规关键词"],
   "keywords must not invent unverified brand/model text, duplicates, or oversized values");
 assert.deepEqual(normalizeKeywordResult({ keywords: ["耐克 跑步鞋", "阿迪达斯 跑步鞋", "普通 运动鞋", "¥20 跑步鞋", "采购价 20元", "普通\u0001关键词"] }, {
   allowedBrand: "耐克",
   allowedModel: "",
-  trustedText: "耐克 跑步鞋 普通 运动鞋",
+  allowedGenericTerms: ["跑步鞋", "普通", "运动鞋"],
 }), ["耐克 跑步鞋", "普通 运动鞋"],
   "keywords must preserve ordinary categories but reject unproven brand, control, and price/procurement text");
 assert.deepEqual(normalizeKeywordResult({ keywords: ["价格 运动鞋", "price running shoes", "普通 鞋类"] }, keywordContext), ["普通 鞋类"],
   "obvious commercial words must fail closed even when a model omits an amount");
-assert.deepEqual(normalizeKeywordResult({ keywords: ["阿迪达斯 跑步鞋"] }, { allowedBrand: "耐克", allowedModel: "" }), [],
-  "a brand-like keyword without trusted Ozon text cannot be retained");
+assert.deepEqual(normalizeKeywordResult({ keywords: ["耐克 跑步鞋", "阿迪达斯 跑步鞋"] }, {
+  allowedBrand: "耐克",
+  allowedModel: "",
+  allowedGenericTerms: "跑步鞋",
+  trustedTitle: "耐克 阿迪达斯 跑步鞋",
+}), ["耐克 跑步鞋"],
+  "a free title must never authorize an unlisted brand token");
+assert.deepEqual(normalizeKeywordResult({ keywords: ["普通 运动鞋"] }, { allowedBrand: "", allowedModel: "", categoryTerms: ["普通", "运动鞋"] }), ["普通 运动鞋"],
+  "ordinary no-brand category keywords require explicit structured category terms");
+assert.deepEqual(normalizeKeywordResult({ keywords: ["耐克 跑步鞋"] }, { allowedBrand: "耐克", allowedModel: "" }), [],
+  "without safe generic terms, a brand plus an unlisted category term must fail closed");
 assert.deepEqual(normalizeKeywordResult({ keywords: ["价\u200b格 运动鞋", "采\u200b购价 运动鞋", "\ufeff普通 鞋类"] }, keywordContext), [],
   "Unicode Cc/Cf characters and formatting-obfuscated commercial text must be rejected");
+assert.deepEqual(normalizeKeywordResult({ keywords: ["价格 运动鞋"] }, { allowedBrand: "", allowedModel: "", allowedGenericTerms: ["价\u200b格", "运动鞋"] }), [],
+  "unsafe structured generic terms must not grant commercial keyword permission");
 
 assert.equal(normalizeSourcingCandidate({ ...candidate, ignored: "must-not-pass" }).ignored, undefined,
   "candidate normalization must use an allowlist rather than retain model-controlled fields");
