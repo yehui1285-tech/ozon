@@ -689,14 +689,15 @@ function safe1688EvidenceId(value, label) {
 
 async function save1688Evidence(url, request) {
   const taskId = safe1688EvidenceId(url.searchParams.get("taskId"), "任务ID");
-  const candidateId = safe1688EvidenceId(url.searchParams.get("candidateId"), "候选ID");
+  safe1688EvidenceId(url.searchParams.get("candidateId"), "候选ID");
   const bytes = await readJpegEvidenceBody(request);
-  const evidenceDir = path.resolve(runtimeDir, "evidence", taskId);
-  const localPath = path.resolve(evidenceDir, `1688-${candidateId}.jpg`);
+  const evidenceRoot = path.resolve(runtimeDir, "evidence", "1688");
+  const evidenceDir = path.resolve(evidenceRoot, taskId);
+  const token = randomUUID().replaceAll("-", "");
+  const localPath = path.resolve(evidenceDir, `${token}.jpg`);
   if (!localPath.startsWith(`${evidenceDir}${path.sep}`)) throw new Error("1688证据路径不安全。");
   await fs.mkdir(evidenceDir, { recursive: true });
   await fs.writeFile(localPath, bytes);
-  const token = randomUUID().replaceAll("-", "");
   evidenceRefs.set(token, localPath);
   return { ok: true, localRef: `/api/evidence/1688/${token}` };
 }
@@ -729,7 +730,7 @@ async function evidenceFile(requestPath, response) {
   const opaque1688 = /^\/api\/evidence\/1688\/([a-f0-9]{32})$/i.exec(requestPath);
   if (opaque1688) {
     const target = evidenceRefs.get(opaque1688[1]);
-    const evidenceRoot = path.resolve(runtimeDir, "evidence");
+    const evidenceRoot = path.resolve(runtimeDir, "evidence", "1688");
     if (!target || !target.startsWith(`${evidenceRoot}${path.sep}`) || !/\.jpe?g$/i.test(target)) return false;
     try {
       const content = await fs.readFile(target);
@@ -741,6 +742,7 @@ async function evidenceFile(requestPath, response) {
     }
   }
   const relative = decodeURIComponent(requestPath.slice(prefix.length)).replaceAll("/", path.sep);
+  if (/^evidence[\\/](?:1688(?:[\\/]|$)|[^\\/]+[\\/]1688-[^\\/]+\.jpe?g$)/i.test(relative)) return false;
   const target = path.resolve(runtimeDir, relative);
   const root = path.resolve(runtimeDir);
   if (!target.startsWith(`${root}${path.sep}`) || !/\.(?:png|jpe?g)$/i.test(target)) return false;

@@ -66,36 +66,56 @@ function safeMaxTokens(value) {
   return Number.isInteger(value) && value >= 1 && value <= 4096 ? value : 900;
 }
 
+function qwenReadError(error) {
+  if (error?.name === "AbortError" || error?.name === "TimeoutError") return new Error("千问调用超时，请稍后重试。");
+  return new Error("千问响应读取失败，请稍后重试。");
+}
+
+function responseTooLargeError() {
+  const error = new Error("千问响应超过安全大小限制。");
+  error.code = "qwen_response_too_large";
+  return error;
+}
+
 /** Read a Fetch response incrementally so chunked responses cannot bypass the size limit. */
 export async function readLimitedQwenResponse(response, maxBytes = maxResponseBytes) {
   const limit = Number.isInteger(maxBytes) && maxBytes > 0 ? maxBytes : maxResponseBytes;
-  const declaredSize = Number(response?.headers?.get?.("content-length"));
-  if (Number.isFinite(declaredSize) && declaredSize > limit) throw new Error("千问响应超过安全大小限制。");
-  const body = response?.body;
-  if (body?.getReader) {
-    const reader = body.getReader();
-    const chunks = [];
-    let total = 0;
-    try {
+  let reader;
+  try {
+    const declaredSize = Number(response?.headers?.get?.("content-length"));
+    if (Number.isFinite(declaredSize) && declaredSize > limit) throw responseTooLargeError();
+    const body = response?.body;
+    if (body?.getReader) {
+      reader = body.getReader();
+      const chunks = [];
+      let total = 0;
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         const chunk = Buffer.from(value);
         total += chunk.length;
         if (total > limit) {
-          await reader.cancel().catch(() => {});
-          throw new Error("千问响应超过安全大小限制。");
+          await reader.cancel();
+          throw responseTooLargeError();
         }
         chunks.push(chunk);
       }
       return Buffer.concat(chunks).toString("utf8");
-    } finally {
-      reader.releaseLock?.();
+    }
+    const responseText = await response?.text?.();
+    if (typeof responseText !== "string") throw new Error("response_text_unavailable");
+    if (Buffer.byteLength(responseText, "utf8") > limit) throw responseTooLargeError();
+    return responseText;
+  } catch (error) {
+    if (error?.code === "qwen_response_too_large") throw error;
+    throw qwenReadError(error);
+  } finally {
+    try {
+      reader?.releaseLock?.();
+    } catch {
+      // A lock-release failure is deliberately not exposed to callers.
     }
   }
-  const responseText = await response?.text?.();
-  if (typeof responseText !== "string" || Buffer.byteLength(responseText, "utf8") > limit) throw new Error("千问响应超过安全大小限制。");
-  return responseText;
 }
 
 /**

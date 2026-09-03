@@ -8,11 +8,38 @@ const SKU_VERDICTS = new Set(["exact_match", "no_match", "insufficient_evidence"
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
 function clean(value, limit = 600) {
-  return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, limit);
+  return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, limit) : "";
 }
 
 function ownObject(value) {
-  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  try {
+    const prototype = Object.getPrototypeOf(value);
+    return prototype === Object.prototype || prototype === null ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function ownValue(value, key) {
+  if (!ownObject(value)) return undefined;
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor && Object.hasOwn(descriptor, "value") ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function ownStringArray(value, limit = 20) {
+  if (!Array.isArray(value)) return [];
+  const result = [];
+  const length = Math.min(Number.isSafeInteger(value.length) ? value.length : 0, limit);
+  for (let index = 0; index < length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, index);
+    if (descriptor && typeof descriptor.value === "string") result.push(clean(descriptor.value, 100));
+  }
+  return result.filter(Boolean);
 }
 
 function requireExactKeys(value, keys, label) {
@@ -29,21 +56,23 @@ function strictConfidence(value, label) {
 }
 
 function sourceTask(task = {}) {
-  const ozon = ownObject(task?.ozon) || {};
-  const enrichment = ownObject(task?.enrichment) || {};
-  const evidenceTokens = (value) => Array.isArray(value)
-    ? value.filter((token) => typeof token === "string").map((token) => clean(token, 100)).filter(Boolean).slice(0, 20)
-    : [];
+  const source = ownObject(task) || {};
+  const ozon = ownObject(ownValue(source, "ozon")) || {};
+  const enrichment = ownObject(ownValue(source, "enrichment")) || {};
+  const title = clean(ownValue(ozon, "name") || ownValue(enrichment, "title"), 500);
+  const category = clean(ownValue(ozon, "category") || ownValue(ownObject(ownValue(source, "qualification")) || {}, "category"), 200);
+  const specification = clean(ownValue(ozon, "specification") || ownValue(enrichment, "specification"), 600);
   return {
-    sku: clean(ozon.sku, 100),
-    title: clean(ozon.name || enrichment.title, 500),
-    category: clean(ozon.category || task?.qualification?.category, 200),
-    brand: clean(ozon.brand || enrichment.brand, 100),
-    model: clean(ozon.model || enrichment.model, 100),
-    brandTokens: evidenceTokens(ozon.brandTokens || enrichment.brandTokens),
-    modelTokens: evidenceTokens(ozon.modelTokens || enrichment.modelTokens),
-    specification: clean(ozon.specification || enrichment.specification, 600),
-    mainImageUrl: clean(enrichment.mainImageUrl || ozon.mainImageUrl, 1200),
+    sku: clean(ownValue(ozon, "sku"), 100),
+    title,
+    category,
+    brand: clean(ownValue(ozon, "brand") || ownValue(enrichment, "brand"), 100),
+    model: clean(ownValue(ozon, "model") || ownValue(enrichment, "model"), 100),
+    brandTokens: ownStringArray(ownValue(ozon, "brandTokens") || ownValue(enrichment, "brandTokens")),
+    modelTokens: ownStringArray(ownValue(ozon, "modelTokens") || ownValue(enrichment, "modelTokens")),
+    specification,
+    trustedText: [title, category, specification].filter(Boolean).join(" "),
+    mainImageUrl: clean(ownValue(enrichment, "mainImageUrl") || ownValue(ozon, "mainImageUrl"), 1200),
   };
 }
 
@@ -79,6 +108,7 @@ function safeCandidateList(candidates) {
   if (!Array.isArray(candidates) || !candidates.length || candidates.length > 12) throw new Error("1688候选数量必须为1到12个。");
   const ids = new Set();
   return candidates.map((raw) => {
+    const source = ownObject(raw) || {};
     const candidate = normalizeSourcingCandidate(raw);
     const offerId = /^https:\/\/detail\.1688\.com\/offer\/(\d+)\.html$/.exec(candidate.sourceUrl)?.[1] || "";
     if (candidate.provider !== "1688" || candidate.candidateId !== `1688-${offerId}` || !candidate.title || ids.has(candidate.candidateId)) {
@@ -87,7 +117,7 @@ function safeCandidateList(candidates) {
     ids.add(candidate.candidateId);
     return {
       candidate,
-      imageUrl: isTrusted1688ImageUrl(raw?.imageUrl) ? clean(raw.imageUrl, 1200) : "",
+      imageUrl: isTrusted1688ImageUrl(ownValue(source, "imageUrl")) ? clean(ownValue(source, "imageUrl"), 1200) : "",
     };
   });
 }
@@ -119,8 +149,11 @@ export async function generate1688Keywords(task = {}) {
   const keywords = normalize1688Keywords(qwenResponse.json, {
     allowedBrand: target.brand,
     allowedModel: target.model,
-    brandTokens: target.brandTokens,
-    modelTokens: target.modelTokens,
+    trustedText: target.trustedText,
+    trustedTitle: target.title,
+    trustedCategory: target.category,
+    trustedBrandTokens: target.brandTokens,
+    trustedModelTokens: target.modelTokens,
   });
   if (!keywords.length) throw new Error("千问关键词没有留下可验证的检索词。");
   return { ...responseMetadata(qwenResponse), keywords };
@@ -193,8 +226,9 @@ function safeSkuOptions(options) {
   if (!Array.isArray(options) || !options.length || options.length > 100) throw new Error("1688规格选项数量无效。");
   const ids = new Set();
   return options.map((option) => {
-    const optionId = clean(option?.optionId || option?.id, 100);
-    const label = clean(option?.label, 300);
+    const source = ownObject(option) || {};
+    const optionId = clean(ownValue(source, "optionId") || ownValue(source, "id"), 100);
+    const label = clean(ownValue(source, "label"), 300);
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(optionId) || !label || ids.has(optionId)) throw new Error("1688规格选项没有通过输入白名单校验。");
     ids.add(optionId);
     return { optionId, label };

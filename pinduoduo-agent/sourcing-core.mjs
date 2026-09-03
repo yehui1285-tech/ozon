@@ -7,8 +7,47 @@ const PRICE_SOURCES = new Set([
 const pendingRecords = new WeakMap();
 let nextConfirmationId = 1;
 
+function isPlainObject(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  try {
+    const prototype = Object.getPrototypeOf(value);
+    return prototype === Object.prototype || prototype === null;
+  } catch {
+    return false;
+  }
+}
+
+function plainObject(value) {
+  return isPlainObject(value) ? value : null;
+}
+
+function ownValue(value, key) {
+  if (!isPlainObject(value)) return undefined;
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor && Object.hasOwn(descriptor, "value") ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function ownPlainObject(value, key) {
+  return plainObject(ownValue(value, key)) || {};
+}
+
+function ownArrayValues(value, limit = 100) {
+  if (!Array.isArray(value)) return [];
+  const result = [];
+  const length = Math.min(Number.isSafeInteger(value.length) ? value.length : 0, limit);
+  for (let index = 0; index < length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, index);
+    if (descriptor && Object.hasOwn(descriptor, "value")) result.push(descriptor.value);
+  }
+  return result;
+}
+
 function clean(value, limit = 400) {
-  return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, limit);
+  return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, limit) : "";
 }
 
 function safeId(value) {
@@ -43,36 +82,52 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-function safeJudgement(judgement = {}) {
-  const assessments = Array.isArray(judgement?.candidateAssessments) ? judgement.candidateAssessments : [];
+function normalizeJudgement(judgement) {
+  const source = plainObject(judgement) || {};
+  const assessments = ownArrayValues(ownValue(source, "candidateAssessments"), 24).filter(isPlainObject);
   return {
-    verdict: clean(judgement?.verdict, 40),
-    confidence: Number.isInteger(judgement?.confidence) ? judgement.confidence : null,
-    bestCandidateId: clean(judgement?.bestCandidateId, 100) || null,
-    needsHumanReview: judgement?.needsHumanReview === false ? false : true,
-    specConflicts: (Array.isArray(judgement?.specConflicts) ? judgement.specConflicts : []).map((value) => clean(value, 300)).filter(Boolean),
+    verdict: clean(ownValue(source, "verdict"), 40),
+    confidence: Number.isInteger(ownValue(source, "confidence")) ? ownValue(source, "confidence") : null,
+    bestCandidateId: clean(ownValue(source, "bestCandidateId"), 100) || null,
+    needsHumanReview: ownValue(source, "needsHumanReview") === false ? false : true,
+    specConflicts: ownArrayValues(ownValue(source, "specConflicts"), 24).map((value) => clean(value, 300)).filter(Boolean),
     candidateAssessments: assessments.map((entry) => ({
-      candidateId: safeId(entry?.candidateId) || null,
-      verdict: clean(entry?.verdict, 40),
-      confidence: Number.isInteger(entry?.confidence) ? entry.confidence : null,
-      differences: (Array.isArray(entry?.differences) ? entry.differences : []).map((value) => clean(value, 300)).filter(Boolean),
+      candidateId: safeId(ownValue(entry, "candidateId")) || null,
+      verdict: clean(ownValue(entry, "verdict"), 40),
+      confidence: Number.isInteger(ownValue(entry, "confidence")) ? ownValue(entry, "confidence") : null,
+      differences: ownArrayValues(ownValue(entry, "differences"), 24).map((value) => clean(value, 300)).filter(Boolean),
     })),
   };
 }
 
+function normalizeQuote(quote) {
+  const source = plainObject(quote) || {};
+  const priceSource = clean(ownValue(source, "priceSource"), 50);
+  return {
+    confirmable: ownValue(source, "confirmable") === true,
+    productPrice: finiteMoney(ownValue(source, "productPrice")),
+    domesticShipping: finiteMoney(ownValue(source, "domesticShipping")),
+    purchaseCost: finiteMoney(ownValue(source, "purchaseCost")),
+    priceSource: PRICE_SOURCES.has(priceSource) ? priceSource : "unknown",
+    blockers: ownArrayValues(ownValue(source, "blockers"), 24).map((value) => clean(value, 100)).filter(Boolean),
+  };
+}
+
 function confirmationFingerprint(pending) {
+  const source = plainObject(pending) || {};
   return JSON.stringify({
-    confirmationId: pending?.confirmationId,
-    status: pending?.status,
-    candidate: pending?.candidate,
-    judgement: pending?.judgement,
-    purchaseCost: pending?.purchaseCost,
-    productPrice: pending?.productPrice,
-    domesticShipping: pending?.domesticShipping,
-    priceSource: pending?.priceSource,
-    sourceUrl: pending?.sourceUrl,
-    eligibleAt18Pct: pending?.eligibleAt18Pct,
-    blockers: pending?.blockers,
+    confirmationId: ownValue(source, "confirmationId"),
+    taskIdentity: ownValue(source, "taskIdentity"),
+    status: ownValue(source, "status"),
+    candidate: ownValue(source, "candidate"),
+    judgement: ownValue(source, "judgement"),
+    purchaseCost: ownValue(source, "purchaseCost"),
+    productPrice: ownValue(source, "productPrice"),
+    domesticShipping: ownValue(source, "domesticShipping"),
+    priceSource: ownValue(source, "priceSource"),
+    sourceUrl: ownValue(source, "sourceUrl"),
+    eligibleAt18Pct: ownValue(source, "eligibleAt18Pct"),
+    blockers: ownValue(source, "blockers"),
   });
 }
 
@@ -82,54 +137,79 @@ function confirmationFingerprint(pending) {
  * brand, or model from free text.
  */
 export function normalizeSourcingCandidate(raw = {}) {
-  const pricing = raw?.pricing && typeof raw.pricing === "object" ? raw.pricing : {};
-  const shipping = raw?.shipping && typeof raw.shipping === "object" ? raw.shipping : {};
-  const sku = raw?.sku && typeof raw.sku === "object" ? raw.sku : {};
-  const minimumOrderQuantity = Number.isInteger(raw?.minimumOrderQuantity) && raw.minimumOrderQuantity > 0
-    ? raw.minimumOrderQuantity
+  const source = plainObject(raw) || {};
+  const pricing = ownPlainObject(source, "pricing");
+  const shipping = ownPlainObject(source, "shipping");
+  const sku = ownPlainObject(source, "sku");
+  const minimumOrderQuantity = Number.isInteger(ownValue(source, "minimumOrderQuantity")) && ownValue(source, "minimumOrderQuantity") > 0
+    ? ownValue(source, "minimumOrderQuantity")
     : null;
-  const shippingStatus = clean(shipping.status, 30).toLowerCase();
-  const shippingFee = finiteMoney(shipping.fee);
+  const shippingStatus = clean(ownValue(shipping, "status"), 30).toLowerCase();
+  const shippingFee = finiteMoney(ownValue(shipping, "fee"));
   const safeShipping = shippingStatus === "free"
     ? { status: "free", fee: 0 }
     : shippingStatus === "known" && shippingFee !== null
       ? { status: "known", fee: shippingFee }
       : { status: "unknown", fee: null };
-  const priceSource = PRICE_SOURCES.has(clean(pricing.priceSource, 50))
-    ? clean(pricing.priceSource, 50)
+  const priceSource = PRICE_SOURCES.has(clean(ownValue(pricing, "priceSource"), 50))
+    ? clean(ownValue(pricing, "priceSource"), 50)
     : "unknown";
 
   return {
-    provider: clean(raw?.provider, 40),
-    candidateId: safeId(raw?.candidateId),
-    sourceUrl: safeHttpsUrl(raw?.sourceUrl),
-    title: clean(raw?.title, 500),
+    provider: clean(ownValue(source, "provider"), 40),
+    candidateId: safeId(ownValue(source, "candidateId")),
+    sourceUrl: safeHttpsUrl(ownValue(source, "sourceUrl")),
+    title: clean(ownValue(source, "title"), 500),
     minimumOrderQuantity,
     pricing: {
-      selectedSkuPrice: finiteMoney(pricing.selectedSkuPrice),
-      onePiecePrice: finiteMoney(pricing.onePiecePrice),
-      samplePrice: finiteMoney(pricing.samplePrice),
+      selectedSkuPrice: finiteMoney(ownValue(pricing, "selectedSkuPrice")),
+      onePiecePrice: finiteMoney(ownValue(pricing, "onePiecePrice")),
+      samplePrice: finiteMoney(ownValue(pricing, "samplePrice")),
       priceSource,
     },
     shipping: safeShipping,
     sku: {
-      selectedOptionId: safeId(sku.selectedOptionId) || null,
-      selectionVerified: sku.selectionVerified === true,
+      selectedOptionId: safeId(ownValue(sku, "selectedOptionId")) || null,
+      selectionVerified: ownValue(sku, "selectionVerified") === true,
     },
   };
 }
 
 function evidenceTokens(value) {
-  return Array.isArray(value)
-    ? value.filter((item) => typeof item === "string").map((item) => clean(item, 80)).filter(Boolean)
-    : [];
+  return ownArrayValues(value, 24).map((item) => clean(item, 80)).filter(Boolean);
 }
 
-function keywordHasUnverifiedBrandOrModel(keyword, { allowedBrand = "", allowedModel = "", brandTokens = [], modelTokens = [] } = {}) {
-  const allowed = { brand: clean(allowedBrand, 80), model: clean(allowedModel, 80) };
+function normalizeKeywordText(value) {
+  if (typeof value !== "string") return "";
+  return value.normalize("NFKC").replace(/\s+/gu, " ").trim().slice(0, 41);
+}
+
+function keywordContext(raw) {
+  const context = plainObject(raw);
+  if (!context) return null;
+  const allowed = {
+    brand: clean(ownValue(context, "allowedBrand"), 80),
+    model: clean(ownValue(context, "allowedModel"), 80),
+  };
+  const trustedText = [
+    clean(ownValue(context, "trustedText"), 1200),
+    clean(ownValue(context, "trustedTitle"), 600),
+    clean(ownValue(context, "trustedCategory"), 300),
+  ].filter(Boolean);
+  if (!trustedText.length) return null;
+  return {
+    allowed,
+    trustedText: trustedText.join(" ").normalize("NFKC"),
+    brandTokens: evidenceTokens(ownValue(context, "trustedBrandTokens")),
+    modelTokens: evidenceTokens(ownValue(context, "trustedModelTokens")),
+  };
+}
+
+function keywordHasUnverifiedBrandOrModel(keyword, context) {
+  const { allowed, brandTokens, modelTokens } = context;
   const observed = {
-    brand: [...new Set([allowed.brand, ...evidenceTokens(brandTokens)].filter(Boolean))],
-    model: [...new Set([allowed.model, ...evidenceTokens(modelTokens)].filter(Boolean))],
+    brand: [...new Set([allowed.brand, ...brandTokens].filter(Boolean))],
+    model: [...new Set([allowed.model, ...modelTokens].filter(Boolean))],
   };
   for (const kind of ["brand", "model"]) {
     for (const token of observed[kind]) {
@@ -144,21 +224,34 @@ function keywordHasUnverifiedBrandOrModel(keyword, { allowedBrand = "", allowedM
 }
 
 function keywordHasUnsafeCommercialText(keyword) {
-  return /[\x00-\x1f\x7f-\x9f]/.test(keyword)
+  return /[\p{Cc}\p{Cf}]/u.test(keyword)
     || /[¥￥$€£₽₹]/.test(keyword)
     || /(?:采购(?:价|成本)?|价格|单价|成本|运费|报价|起订|MOQ|\b(?:price|shipping)\b)/i.test(keyword)
     || /\d+(?:\.\d{1,2})?\s*(?:元|rmb|cny|人民币)/i.test(keyword);
 }
 
+function keywordGroundedInOzon(keyword, context) {
+  const trusted = context.trustedText.replace(/\s+/gu, "");
+  const compactKeyword = keyword.replace(/\s+/gu, "");
+  if (trusted.includes(compactKeyword)) return true;
+  const allowed = new Set([context.allowed.brand, context.allowed.model].filter(Boolean));
+  const tokens = keyword.split(/\s+/u).filter(Boolean);
+  return tokens.length > 0 && tokens.every((token) => allowed.has(token) || trusted.includes(token));
+}
+
 /** Only preserve concise search phrases grounded in explicit Ozon brand/model evidence. */
 export function normalizeKeywordResult(raw = {}, evidence = {}) {
-  const keywords = Array.isArray(raw?.keywords) ? raw.keywords : [];
+  const source = plainObject(raw) || {};
+  const context = keywordContext(evidence);
+  const keywords = ownArrayValues(ownValue(source, "keywords"), 24);
   const result = [];
   const seen = new Set();
+  if (!context) return result;
   for (const rawKeyword of keywords) {
     if (typeof rawKeyword !== "string" || keywordHasUnsafeCommercialText(rawKeyword)) continue;
-    const keyword = clean(rawKeyword, 41);
-    if (!keyword || keyword.length > 40 || seen.has(keyword) || keywordHasUnsafeCommercialText(keyword) || keywordHasUnverifiedBrandOrModel(keyword, evidence)) continue;
+    const keyword = normalizeKeywordText(rawKeyword);
+    if (!keyword || keyword.length > 40 || seen.has(keyword) || keywordHasUnsafeCommercialText(keyword)
+      || keywordHasUnverifiedBrandOrModel(keyword, context) || !keywordGroundedInOzon(keyword, context)) continue;
     seen.add(keyword);
     result.push(keyword);
     if (result.length === 3) break;
@@ -181,17 +274,19 @@ function quoteCandidatePrice(candidate, quote) {
  */
 export function recommendationSafetyGate(rawCandidate = {}, judgement = {}, quote = {}) {
   const candidate = normalizeSourcingCandidate(rawCandidate);
+  const safeJudgement = normalizeJudgement(judgement);
+  const safeQuote = normalizeQuote(quote);
   const blockers = [];
-  const confidence = judgement?.confidence;
-  const assessments = Array.isArray(judgement?.candidateAssessments) ? judgement.candidateAssessments : [];
+  const confidence = safeJudgement.confidence;
+  const assessments = safeJudgement.candidateAssessments;
   const candidateAssessment = assessments.filter((entry) => clean(entry?.candidateId, 100) === candidate.candidateId);
 
   if (!candidate.provider || !candidate.candidateId || !candidate.sourceUrl) blockers.push("candidate_not_whitelisted");
-  if (clean(judgement?.verdict, 40) !== "same_product") blockers.push("judgement_not_same_product");
+  if (clean(safeJudgement.verdict, 40) !== "same_product") blockers.push("judgement_not_same_product");
   if (!Number.isInteger(confidence) || confidence < 0 || confidence > 100) blockers.push("confidence_invalid");
   if (!Number.isInteger(confidence) || confidence < 85) blockers.push("confidence_below_85");
-  if (clean(judgement?.bestCandidateId, 100) !== candidate.candidateId) blockers.push("candidate_not_whitelisted");
-  if (judgement?.needsHumanReview !== false) blockers.push("needs_human_review");
+  if (clean(safeJudgement.bestCandidateId, 100) !== candidate.candidateId) blockers.push("candidate_not_whitelisted");
+  if (safeJudgement.needsHumanReview !== false) blockers.push("needs_human_review");
   if (candidateAssessment.length !== 1) blockers.push("candidate_assessment_conflict");
   const assessment = candidateAssessment[0];
   if (assessment && (clean(assessment.verdict, 40) !== "same_product"
@@ -199,8 +294,8 @@ export function recommendationSafetyGate(rawCandidate = {}, judgement = {}, quot
     || assessment.confidence < 85
     || assessment.confidence > 100)) blockers.push("candidate_assessment_conflict");
   const criticalDifferences = [
-    ...(Array.isArray(judgement?.specConflicts) ? judgement.specConflicts : []),
-    ...(Array.isArray(assessment?.differences) ? assessment.differences : []),
+    ...safeJudgement.specConflicts,
+    ...(assessment?.differences || []),
   ].map((value) => clean(value, 300)).filter(Boolean);
   if (criticalDifferences.length) blockers.push("critical_spec_difference");
 
@@ -209,23 +304,18 @@ export function recommendationSafetyGate(rawCandidate = {}, judgement = {}, quot
   if (candidate.minimumOrderQuantity === null) blockers.push("minimum_order_quantity_unknown");
   if (candidate.minimumOrderQuantity > 2) blockers.push("minimum_order_quantity_gt_2");
 
-  if (quote?.confirmable !== true) blockers.push("quote_not_confirmable");
-  for (const code of Array.isArray(quote?.blockers) ? quote.blockers : []) {
-    const safeCode = clean(code, 100);
-    if (safeCode) blockers.push(safeCode);
-  }
-  const productPrice = finiteMoney(quote?.productPrice);
-  const domesticShipping = finiteMoney(quote?.domesticShipping);
-  const purchaseCost = finiteMoney(quote?.purchaseCost);
+  if (safeQuote.confirmable !== true) blockers.push("quote_not_confirmable");
+  blockers.push(...safeQuote.blockers);
+  const { productPrice, domesticShipping, purchaseCost } = safeQuote;
   if (productPrice === null || domesticShipping === null || purchaseCost === null) {
     blockers.push("quote_monetary_fields_invalid");
   } else {
     if (purchaseCost !== roundedTotal(productPrice, domesticShipping)) blockers.push("quote_total_mismatch");
-    const recordedPrice = quoteCandidatePrice(candidate, quote);
+    const recordedPrice = quoteCandidatePrice(candidate, safeQuote);
     if (recordedPrice === null || recordedPrice !== productPrice) blockers.push("price_changed");
   }
-  if (!PRICE_SOURCES.has(clean(quote?.priceSource, 50))) blockers.push("single_unit_price_unverified");
-  if (candidate.minimumOrderQuantity === 2 && !["one_piece", "sample", "manual_exact_product_exception"].includes(clean(quote?.priceSource, 50))) {
+  if (!PRICE_SOURCES.has(safeQuote.priceSource)) blockers.push("single_unit_price_unverified");
+  if (candidate.minimumOrderQuantity === 2 && !["one_piece", "sample", "manual_exact_product_exception"].includes(safeQuote.priceSource)) {
     // Task 2 owns the one-piece/sample/manual-exception proof. This gate only
     // trusts its confirmable quote and never creates an exception from AI text.
     blockers.push("single_unit_price_unverified");
@@ -233,26 +323,45 @@ export function recommendationSafetyGate(rawCandidate = {}, judgement = {}, quot
 
   return {
     candidate,
-    judgement: safeJudgement(judgement),
-    quote: {
-      confirmable: quote?.confirmable === true,
-      productPrice,
-      domesticShipping,
-      purchaseCost,
-      priceSource: PRICE_SOURCES.has(clean(quote?.priceSource, 50)) ? clean(quote.priceSource, 50) : "unknown",
-    },
+    judgement: safeJudgement,
+    quote: { ...safeQuote, productPrice, domesticShipping, purchaseCost },
     blockers: unique(blockers),
   };
 }
 
+function stableTaskIdentity(task) {
+  const source = plainObject(task);
+  if (!source) return "";
+  const taskId = safeId(ownValue(source, "taskId"));
+  if (taskId) return `taskId:${taskId}`;
+  const id = safeId(ownValue(source, "id"));
+  if (id) return `id:${id}`;
+  const ozon = ownPlainObject(source, "ozon");
+  const sku = safeId(ownValue(ozon, "sku"));
+  return sku ? `ozonSku:${sku}` : "";
+}
+
+function trustedFinalPricing(value) {
+  const finalPricing = plainObject(value) || {};
+  return ownValue(finalPricing, "eligibleAt18Pct") === true;
+}
+
 /** Build a review object; it never mutates a sourcing task or starts an order. */
-export function buildFinalConfirmation({ candidate, judgement, quote, finalPricing } = {}) {
+export function buildFinalConfirmation(input = {}) {
+  const request = plainObject(input) || {};
+  const taskIdentity = stableTaskIdentity(ownValue(request, "task"));
+  if (!taskIdentity) throw new Error("缺少稳定任务身份，拒绝创建待确认记录。");
+  const candidate = ownValue(request, "candidate");
+  const judgement = ownValue(request, "judgement");
+  const quote = ownValue(request, "quote");
+  const finalPricingEligible = trustedFinalPricing(ownValue(request, "finalPricing"));
   const safety = recommendationSafetyGate(candidate, judgement, quote);
   const blockers = [...safety.blockers];
-  if (finalPricing?.eligibleAt18Pct !== true) blockers.push("final_pricing_not_eligible_at_18pct");
+  if (!finalPricingEligible) blockers.push("final_pricing_not_eligible_at_18pct");
   const finalBlockers = unique(blockers);
   const pending = {
     confirmationId: `sourcing-confirmation-${nextConfirmationId++}`,
+    taskIdentity,
     status: finalBlockers.length ? "final_confirmation_blocked" : "final_confirmation_pending",
     candidate: clone(safety.candidate),
     judgement: clone(safety.judgement),
@@ -261,56 +370,68 @@ export function buildFinalConfirmation({ candidate, judgement, quote, finalPrici
     domesticShipping: safety.quote.domesticShipping,
     priceSource: safety.quote.priceSource,
     sourceUrl: safety.candidate.sourceUrl,
-    eligibleAt18Pct: finalPricing?.eligibleAt18Pct === true,
+    eligibleAt18Pct: finalPricingEligible,
     blockers: finalBlockers,
   };
   if (!finalBlockers.length) {
     pendingRecords.set(pending, {
       status: "pending",
       confirmationId: pending.confirmationId,
+      taskIdentity,
       fingerprint: confirmationFingerprint(pending),
     });
   }
   return pending;
 }
 
-function currentConfirmationSafety(current) {
-  if (!current || typeof current !== "object" || !current.candidate || !current.judgement || !current.quote || !current.finalPricing) {
+function currentConfirmationSafety(current, expectedTaskIdentity) {
+  const source = plainObject(current);
+  if (!source || !plainObject(ownValue(source, "candidate")) || !plainObject(ownValue(source, "judgement"))
+    || !plainObject(ownValue(source, "quote")) || !plainObject(ownValue(source, "finalPricing"))) {
     throw new Error("确认必须提交最新可信确认数据。");
   }
-  const safety = recommendationSafetyGate(current.candidate, current.judgement, current.quote);
-  if (safety.blockers.length || current.finalPricing?.eligibleAt18Pct !== true) {
+  if (stableTaskIdentity(ownValue(source, "task")) !== expectedTaskIdentity) throw new Error("当前确认数据任务身份不匹配，拒绝写入。");
+  const safety = recommendationSafetyGate(ownValue(source, "candidate"), ownValue(source, "judgement"), ownValue(source, "quote"));
+  if (safety.blockers.length || !trustedFinalPricing(ownValue(source, "finalPricing"))) {
     throw new Error("最新可信确认数据未通过安全闸门。");
   }
   return safety;
 }
 
 function pendingMatchesCurrent(pending, safety) {
-  return pending?.eligibleAt18Pct === true
-    && JSON.stringify(pending.candidate) === JSON.stringify(safety.candidate)
-    && JSON.stringify(pending.judgement) === JSON.stringify(safety.judgement)
-    && pending.purchaseCost === safety.quote.purchaseCost
-    && pending.productPrice === safety.quote.productPrice
-    && pending.domesticShipping === safety.quote.domesticShipping
-    && pending.priceSource === safety.quote.priceSource
-    && pending.sourceUrl === safety.candidate.sourceUrl
-    && Array.isArray(pending.blockers) && pending.blockers.length === 0;
+  const source = plainObject(pending);
+  return Boolean(source)
+    && ownValue(source, "eligibleAt18Pct") === true
+    && JSON.stringify(ownValue(source, "candidate")) === JSON.stringify(safety.candidate)
+    && JSON.stringify(ownValue(source, "judgement")) === JSON.stringify(safety.judgement)
+    && ownValue(source, "purchaseCost") === safety.quote.purchaseCost
+    && ownValue(source, "productPrice") === safety.quote.productPrice
+    && ownValue(source, "domesticShipping") === safety.quote.domesticShipping
+    && ownValue(source, "priceSource") === safety.quote.priceSource
+    && ownValue(source, "sourceUrl") === safety.candidate.sourceUrl
+    && ownArrayValues(ownValue(source, "blockers"), 24).length === 0;
 }
 
 function terminalAction(task, pending, action, current, confirmedAt) {
+  if (!isPlainObject(pending)) throw new Error("确认对象不是本次流程生成的有效待确认记录。");
   const record = pendingRecords.get(pending);
   if (!record) throw new Error("确认对象不是本次流程生成的有效待确认记录。");
-  if (!task || typeof task !== "object") throw new Error("缺少要更新的找品任务。");
-  const existingPending = task?.sourcing?.pendingConfirmation;
+  if (!isPlainObject(task)) throw new Error("缺少要更新的找品任务。");
+  const taskIdentity = stableTaskIdentity(task);
+  if (!taskIdentity || taskIdentity !== record.taskIdentity || ownValue(pending, "taskIdentity") !== record.taskIdentity) {
+    throw new Error("待确认记录任务身份不匹配，拒绝写入。");
+  }
+  const existingSourcing = ownPlainObject(task, "sourcing");
+  const existingPending = ownValue(existingSourcing, "pendingConfirmation");
   if (existingPending && existingPending !== pending) throw new Error("该任务当前等待另一条确认，拒绝跨确认写入。");
   if (record.fingerprint !== confirmationFingerprint(pending)) throw new Error("待确认记录已变化，拒绝写入。");
-  const safety = action === "confirm" ? currentConfirmationSafety(current) : null;
+  const safety = action === "confirm" ? currentConfirmationSafety(current, taskIdentity) : null;
   if (action === "confirm" && !pendingMatchesCurrent(pending, safety)) throw new Error("当前确认数据已变化，拒绝写入。");
   if (record.status !== "pending") return { task, pending, idempotent: true, status: record.status };
-  if (pending.status !== "final_confirmation_pending") throw new Error("待确认记录状态无效，拒绝写入。");
+  if (ownValue(pending, "status") !== "final_confirmation_pending") throw new Error("待确认记录状态无效，拒绝写入。");
   if (action === "confirm") {
-    task.sourcing = task.sourcing && typeof task.sourcing === "object" ? task.sourcing : {};
-    task.pricing = task.pricing && typeof task.pricing === "object" ? task.pricing : {};
+    task.sourcing = plainObject(ownValue(task, "sourcing")) || {};
+    task.pricing = plainObject(ownValue(task, "pricing")) || {};
     task.sourcing.pendingConfirmation = pending;
     task.sourcing.status = "confirmed_purchase_source";
     task.sourcing.selectedCandidate = clone(safety.candidate);
@@ -324,7 +445,7 @@ function terminalAction(task, pending, action, current, confirmedAt) {
     pending.status = "final_confirmation_confirmed";
     record.fingerprint = confirmationFingerprint(pending);
   } else {
-    task.sourcing = task.sourcing && typeof task.sourcing === "object" ? task.sourcing : {};
+    task.sourcing = plainObject(ownValue(task, "sourcing")) || {};
     task.sourcing.pendingConfirmation = pending;
     task.sourcing.status = "final_confirmation_rejected";
     task.sourcing.rejectedAt = clean(confirmedAt, 80) || new Date().toISOString();
