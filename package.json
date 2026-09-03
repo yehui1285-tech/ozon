@@ -22,6 +22,6 @@
     "test:parsing": "node tools/test-parsing-fixtures.mjs",
     "test:1688-core": "node tools/test-1688-core.mjs",
     "test:1688-extension": "node tools/test-1688-extension.mjs",
-    "test": "node tools/build-web.mjs --check && node tools/sync-freight-rules.mjs --check && node tools/test-freight-rules.mjs && node tools/test-commission-rules.mjs && node tools/test-black-price.mjs && node tools/test-main-image.mjs && node tools/test-task-pricing.mjs && node tools/test-1688-core.mjs && node tools/test-1688-extension.mjs && node tools/test-sourcing-queue.mjs && node tools/test-pinduoduo-agent.mjs && node tools/test-store-scanner.mjs && node tools/test-store-background-integration.mjs && node tools/test-pricing-core.mjs && node tools/test-worker-security.mjs && node tools/test-parsing-fixtures.mjs"
+    "test": "node tools/build-web.mjs --check && node tools/sync-freight-rules.mjs --check && node tools/test-freight-rules.mjs && node tools/test-commission-rules.mjs && node tools/test-black-price.mjs && node tools/test-main-image.mjs && node tools/test-task-pricing.mjs && node tools/test-1688-core.mjs && node tools/test-1688-extension.mjs && node tools/test-sourcing-agent-1688.mjs && node tools/test-sourcing-queue.mjs && node tools/test-pinduoduo-agent.mjs && node tools/test-store-scanner.mjs && node tools/test-store-background-integration.mjs && node tools/test-pricing-core.mjs && node tools/test-worker-security.mjs && node tools/test-parsing-fixtures.mjs"
   }
 }

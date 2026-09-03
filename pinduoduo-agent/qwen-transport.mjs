@@ -66,6 +66,38 @@ function safeMaxTokens(value) {
   return Number.isInteger(value) && value >= 1 && value <= 4096 ? value : 900;
 }
 
+/** Read a Fetch response incrementally so chunked responses cannot bypass the size limit. */
+export async function readLimitedQwenResponse(response, maxBytes = maxResponseBytes) {
+  const limit = Number.isInteger(maxBytes) && maxBytes > 0 ? maxBytes : maxResponseBytes;
+  const declaredSize = Number(response?.headers?.get?.("content-length"));
+  if (Number.isFinite(declaredSize) && declaredSize > limit) throw new Error("千问响应超过安全大小限制。");
+  const body = response?.body;
+  if (body?.getReader) {
+    const reader = body.getReader();
+    const chunks = [];
+    let total = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = Buffer.from(value);
+        total += chunk.length;
+        if (total > limit) {
+          await reader.cancel().catch(() => {});
+          throw new Error("千问响应超过安全大小限制。");
+        }
+        chunks.push(chunk);
+      }
+      return Buffer.concat(chunks).toString("utf8");
+    } finally {
+      reader.releaseLock?.();
+    }
+  }
+  const responseText = await response?.text?.();
+  if (typeof responseText !== "string" || Buffer.byteLength(responseText, "utf8") > limit) throw new Error("千问响应超过安全大小限制。");
+  return responseText;
+}
+
 /**
  * Calls the existing Bailian compatible-mode endpoint. The outward result is
  * parsed JSON plus non-secret metadata, shared by Pinduoduo and 1688 flows.
@@ -94,10 +126,7 @@ export async function requestQwenJson({ content, temperature, maxTokens, timeout
     if (error?.name === "AbortError" || error?.name === "TimeoutError") throw new Error("千问调用超时，请稍后重试。");
     throw new Error("千问调用失败，请稍后重试。");
   }
-  const declaredSize = Number(response.headers.get("content-length"));
-  if (Number.isFinite(declaredSize) && declaredSize > maxResponseBytes) throw new Error("千问响应超过安全大小限制。");
-  const responseText = await response.text();
-  if (Buffer.byteLength(responseText, "utf8") > maxResponseBytes) throw new Error("千问响应超过安全大小限制。");
+  const responseText = await readLimitedQwenResponse(response);
   let payload;
   try {
     payload = JSON.parse(responseText);

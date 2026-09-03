@@ -43,6 +43,39 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function safeJudgement(judgement = {}) {
+  const assessments = Array.isArray(judgement?.candidateAssessments) ? judgement.candidateAssessments : [];
+  return {
+    verdict: clean(judgement?.verdict, 40),
+    confidence: Number.isInteger(judgement?.confidence) ? judgement.confidence : null,
+    bestCandidateId: clean(judgement?.bestCandidateId, 100) || null,
+    needsHumanReview: judgement?.needsHumanReview === false ? false : true,
+    specConflicts: (Array.isArray(judgement?.specConflicts) ? judgement.specConflicts : []).map((value) => clean(value, 300)).filter(Boolean),
+    candidateAssessments: assessments.map((entry) => ({
+      candidateId: safeId(entry?.candidateId) || null,
+      verdict: clean(entry?.verdict, 40),
+      confidence: Number.isInteger(entry?.confidence) ? entry.confidence : null,
+      differences: (Array.isArray(entry?.differences) ? entry.differences : []).map((value) => clean(value, 300)).filter(Boolean),
+    })),
+  };
+}
+
+function confirmationFingerprint(pending) {
+  return JSON.stringify({
+    confirmationId: pending?.confirmationId,
+    status: pending?.status,
+    candidate: pending?.candidate,
+    judgement: pending?.judgement,
+    purchaseCost: pending?.purchaseCost,
+    productPrice: pending?.productPrice,
+    domesticShipping: pending?.domesticShipping,
+    priceSource: pending?.priceSource,
+    sourceUrl: pending?.sourceUrl,
+    eligibleAt18Pct: pending?.eligibleAt18Pct,
+    blockers: pending?.blockers,
+  });
+}
+
 /**
  * Removes fields which are not part of the canonical provider candidate.
  * It intentionally does not manufacture a price, MOQ, shipping amount, SKU,
@@ -86,11 +119,35 @@ export function normalizeSourcingCandidate(raw = {}) {
   };
 }
 
-function keywordHasUnverifiedBrandOrModel(keyword, { allowedBrand = "", allowedModel = "" } = {}) {
-  const approved = [clean(allowedBrand, 80), clean(allowedModel, 80)].filter(Boolean);
-  if (!approved.length) return /(?:品牌|型号)/i.test(keyword);
+function evidenceTokens(value) {
+  return Array.isArray(value)
+    ? value.filter((item) => typeof item === "string").map((item) => clean(item, 80)).filter(Boolean)
+    : [];
+}
+
+function keywordHasUnverifiedBrandOrModel(keyword, { allowedBrand = "", allowedModel = "", brandTokens = [], modelTokens = [] } = {}) {
+  const allowed = { brand: clean(allowedBrand, 80), model: clean(allowedModel, 80) };
+  const observed = {
+    brand: [...new Set([allowed.brand, ...evidenceTokens(brandTokens)].filter(Boolean))],
+    model: [...new Set([allowed.model, ...evidenceTokens(modelTokens)].filter(Boolean))],
+  };
+  for (const kind of ["brand", "model"]) {
+    for (const token of observed[kind]) {
+      if (keyword.includes(token) && token !== allowed[kind]) return true;
+    }
+  }
   const declaredParts = keyword.match(/(?:品牌|型号)\s*[:：-]?\s*[^\s,，;；]+/gi) || [];
-  return declaredParts.some((part) => !approved.some((approvedValue) => part.includes(approvedValue)));
+  return declaredParts.some((part) => {
+    const kind = part.startsWith("品牌") ? "brand" : "model";
+    return !allowed[kind] || !part.includes(allowed[kind]);
+  });
+}
+
+function keywordHasUnsafeCommercialText(keyword) {
+  return /[\x00-\x1f\x7f-\x9f]/.test(keyword)
+    || /[¥￥$€£₽₹]/.test(keyword)
+    || /(?:采购(?:价|成本)?|价格|单价|成本|运费|报价|起订|MOQ|\b(?:price|shipping)\b)/i.test(keyword)
+    || /\d+(?:\.\d{1,2})?\s*(?:元|rmb|cny|人民币)/i.test(keyword);
 }
 
 /** Only preserve concise search phrases grounded in explicit Ozon brand/model evidence. */
@@ -99,8 +156,9 @@ export function normalizeKeywordResult(raw = {}, evidence = {}) {
   const result = [];
   const seen = new Set();
   for (const rawKeyword of keywords) {
+    if (typeof rawKeyword !== "string" || keywordHasUnsafeCommercialText(rawKeyword)) continue;
     const keyword = clean(rawKeyword, 41);
-    if (!keyword || keyword.length > 40 || seen.has(keyword) || keywordHasUnverifiedBrandOrModel(keyword, evidence)) continue;
+    if (!keyword || keyword.length > 40 || seen.has(keyword) || keywordHasUnsafeCommercialText(keyword) || keywordHasUnverifiedBrandOrModel(keyword, evidence)) continue;
     seen.add(keyword);
     result.push(keyword);
     if (result.length === 3) break;
@@ -133,7 +191,7 @@ export function recommendationSafetyGate(rawCandidate = {}, judgement = {}, quot
   if (!Number.isInteger(confidence) || confidence < 0 || confidence > 100) blockers.push("confidence_invalid");
   if (!Number.isInteger(confidence) || confidence < 85) blockers.push("confidence_below_85");
   if (clean(judgement?.bestCandidateId, 100) !== candidate.candidateId) blockers.push("candidate_not_whitelisted");
-  if (judgement?.needsHumanReview === true) blockers.push("needs_human_review");
+  if (judgement?.needsHumanReview !== false) blockers.push("needs_human_review");
   if (candidateAssessment.length !== 1) blockers.push("candidate_assessment_conflict");
   const assessment = candidateAssessment[0];
   if (assessment && (clean(assessment.verdict, 40) !== "same_product"
@@ -175,12 +233,7 @@ export function recommendationSafetyGate(rawCandidate = {}, judgement = {}, quot
 
   return {
     candidate,
-    judgement: {
-      verdict: clean(judgement?.verdict, 40),
-      confidence: Number.isInteger(confidence) ? confidence : null,
-      bestCandidateId: clean(judgement?.bestCandidateId, 100) || null,
-      needsHumanReview: judgement?.needsHumanReview === true,
-    },
+    judgement: safeJudgement(judgement),
     quote: {
       confirmable: quote?.confirmable === true,
       productPrice,
@@ -208,41 +261,68 @@ export function buildFinalConfirmation({ candidate, judgement, quote, finalPrici
     domesticShipping: safety.quote.domesticShipping,
     priceSource: safety.quote.priceSource,
     sourceUrl: safety.candidate.sourceUrl,
+    eligibleAt18Pct: finalPricing?.eligibleAt18Pct === true,
     blockers: finalBlockers,
   };
   if (!finalBlockers.length) {
     pendingRecords.set(pending, {
       status: "pending",
-      candidate: clone(safety.candidate),
-      judgement: clone(safety.judgement),
-      quote: clone(safety.quote),
       confirmationId: pending.confirmationId,
+      fingerprint: confirmationFingerprint(pending),
     });
   }
   return pending;
 }
 
-function terminalAction(task, pending, action, confirmedAt) {
+function currentConfirmationSafety(current) {
+  if (!current || typeof current !== "object" || !current.candidate || !current.judgement || !current.quote || !current.finalPricing) {
+    throw new Error("确认必须提交最新可信确认数据。");
+  }
+  const safety = recommendationSafetyGate(current.candidate, current.judgement, current.quote);
+  if (safety.blockers.length || current.finalPricing?.eligibleAt18Pct !== true) {
+    throw new Error("最新可信确认数据未通过安全闸门。");
+  }
+  return safety;
+}
+
+function pendingMatchesCurrent(pending, safety) {
+  return pending?.eligibleAt18Pct === true
+    && JSON.stringify(pending.candidate) === JSON.stringify(safety.candidate)
+    && JSON.stringify(pending.judgement) === JSON.stringify(safety.judgement)
+    && pending.purchaseCost === safety.quote.purchaseCost
+    && pending.productPrice === safety.quote.productPrice
+    && pending.domesticShipping === safety.quote.domesticShipping
+    && pending.priceSource === safety.quote.priceSource
+    && pending.sourceUrl === safety.candidate.sourceUrl
+    && Array.isArray(pending.blockers) && pending.blockers.length === 0;
+}
+
+function terminalAction(task, pending, action, current, confirmedAt) {
   const record = pendingRecords.get(pending);
   if (!record) throw new Error("确认对象不是本次流程生成的有效待确认记录。");
   if (!task || typeof task !== "object") throw new Error("缺少要更新的找品任务。");
   const existingPending = task?.sourcing?.pendingConfirmation;
   if (existingPending && existingPending !== pending) throw new Error("该任务当前等待另一条确认，拒绝跨确认写入。");
+  if (record.fingerprint !== confirmationFingerprint(pending)) throw new Error("待确认记录已变化，拒绝写入。");
+  const safety = action === "confirm" ? currentConfirmationSafety(current) : null;
+  if (action === "confirm" && !pendingMatchesCurrent(pending, safety)) throw new Error("当前确认数据已变化，拒绝写入。");
   if (record.status !== "pending") return { task, pending, idempotent: true, status: record.status };
+  if (pending.status !== "final_confirmation_pending") throw new Error("待确认记录状态无效，拒绝写入。");
   if (action === "confirm") {
     task.sourcing = task.sourcing && typeof task.sourcing === "object" ? task.sourcing : {};
     task.pricing = task.pricing && typeof task.pricing === "object" ? task.pricing : {};
     task.sourcing.pendingConfirmation = pending;
     task.sourcing.status = "confirmed_purchase_source";
-    task.sourcing.selectedCandidate = clone(record.candidate);
-    task.sourcing.aiJudgement = clone(record.judgement);
+    task.sourcing.selectedCandidate = clone(safety.candidate);
+    task.sourcing.aiJudgement = clone(safety.judgement);
     task.sourcing.confirmedAt = clean(confirmedAt, 80) || new Date().toISOString();
-    task.pricing.purchaseCost = record.quote.purchaseCost;
-    task.pricing.sourceUrl = record.candidate.sourceUrl;
+    task.pricing.purchaseCost = safety.quote.purchaseCost;
+    task.pricing.sourceUrl = safety.candidate.sourceUrl;
     task.pricing.eligibleAt18Pct = true;
     task.status = "confirmed_purchase_source";
     record.status = "confirmed";
     pending.status = "final_confirmation_confirmed";
+    record.fingerprint = confirmationFingerprint(pending);
   } else {
     task.sourcing = task.sourcing && typeof task.sourcing === "object" ? task.sourcing : {};
     task.sourcing.pendingConfirmation = pending;
@@ -251,16 +331,17 @@ function terminalAction(task, pending, action, confirmedAt) {
     task.status = "pending_human_review";
     record.status = "rejected";
     pending.status = "final_confirmation_rejected";
+    record.fingerprint = confirmationFingerprint(pending);
   }
   return { task, pending, idempotent: false, status: record.status };
 }
 
 /** The only new helper that may write task.pricing.purchaseCost/sourceUrl. */
-export function confirmRecommendation(task, pending, confirmedAt) {
-  return terminalAction(task, pending, "confirm", confirmedAt);
+export function confirmRecommendation(task, pending, current, confirmedAt) {
+  return terminalAction(task, pending, "confirm", current, confirmedAt);
 }
 
 /** Rejecting never writes a purchase price or creates an order. */
 export function rejectRecommendation(task, pending, rejectedAt) {
-  return terminalAction(task, pending, "reject", rejectedAt);
+  return terminalAction(task, pending, "reject", null, rejectedAt);
 }

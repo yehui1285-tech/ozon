@@ -658,8 +658,27 @@ async function readJpegEvidenceBody(request) {
   }
   const bytes = Buffer.concat(chunks);
   if (!bytes.length) throw new Error("1688证据图片不能为空。");
-  if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes[2] !== 0xff) throw new Error("1688证据不是有效JPEG数据。");
+  const marker = bytes[3];
+  const validStartMarker = marker === 0xdb || (marker >= 0xe0 && marker <= 0xef);
+  const firstSegmentLength = bytes.length >= 6 ? bytes.readUInt16BE(4) : 0;
+  const firstSegmentEndsBeforeEoi = 4 + firstSegmentLength <= bytes.length - 2;
+  if (bytes.length < 8 || bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes[2] !== 0xff
+    || !validStartMarker || firstSegmentLength < 2 || !firstSegmentEndsBeforeEoi
+    || bytes.at(-2) !== 0xff || bytes.at(-1) !== 0xd9) {
+    throw new Error("1688证据不是有效JPEG数据。");
+  }
   return bytes;
+}
+
+function requireJsonObject(value, label) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label}请求体必须是JSON对象。`);
+  return value;
+}
+
+async function read1688JsonObject(request, label) {
+  const contentType = String(request.headers["content-type"] || "").toLowerCase().trim();
+  if (!/^application\/json(?:\s*;|$)/.test(contentType)) throw new Error(`${label}请求必须使用application/json。`);
+  return requireJsonObject(await readJsonBody(request), label);
 }
 
 function safe1688EvidenceId(value, label) {
@@ -767,14 +786,15 @@ const server = http.createServer(async (request, response) => {
       return json(response, 200, { ok: true, ...(await selectSkuOptionWithQwen(body.task, body.candidate, body.skuSheet)) });
     }
     if (request.method === "POST" && url.pathname === "/api/ai/1688-keywords") {
-      return json(response, 200, { ok: true, ...(await generate1688Keywords(await readJsonBody(request))) });
+      const body = await read1688JsonObject(request, "1688关键词");
+      return json(response, 200, { ok: true, ...(await generate1688Keywords(body)) });
     }
     if (request.method === "POST" && url.pathname === "/api/ai/1688-judge") {
-      const body = await readJsonBody(request);
+      const body = await read1688JsonObject(request, "1688同款判断");
       return json(response, 200, { ok: true, ...(await judge1688Candidates(body.task, body.candidates)) });
     }
     if (request.method === "POST" && url.pathname === "/api/ai/1688-select-sku") {
-      const body = await readJsonBody(request);
+      const body = await read1688JsonObject(request, "1688规格选择");
       return json(response, 200, { ok: true, ...(await select1688Sku(body.task, body.candidate, body.skuOptions)) });
     }
     if (request.method === "GET" && await evidenceFile(url.pathname, response)) return;
@@ -795,6 +815,7 @@ server.on("error", (error) => {
 server.listen(port, host, () => {
   const address = `http://${host}:${port}/`;
   console.log(`拼多多找品Agent已启动：${address}`);
+  if (process.env.OZON_AGENT_NO_BROWSER === "1") return;
   const browser = spawn("explorer.exe", [address], { detached: true, windowsHide: true, stdio: "ignore" });
   browser.unref();
 });

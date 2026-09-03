@@ -31,12 +31,17 @@ function strictConfidence(value, label) {
 function sourceTask(task = {}) {
   const ozon = ownObject(task?.ozon) || {};
   const enrichment = ownObject(task?.enrichment) || {};
+  const evidenceTokens = (value) => Array.isArray(value)
+    ? value.filter((token) => typeof token === "string").map((token) => clean(token, 100)).filter(Boolean).slice(0, 20)
+    : [];
   return {
     sku: clean(ozon.sku, 100),
     title: clean(ozon.name || enrichment.title, 500),
     category: clean(ozon.category || task?.qualification?.category, 200),
     brand: clean(ozon.brand || enrichment.brand, 100),
     model: clean(ozon.model || enrichment.model, 100),
+    brandTokens: evidenceTokens(ozon.brandTokens || enrichment.brandTokens),
+    modelTokens: evidenceTokens(ozon.modelTokens || enrichment.modelTokens),
     specification: clean(ozon.specification || enrichment.specification, 600),
     mainImageUrl: clean(enrichment.mainImageUrl || ozon.mainImageUrl, 1200),
   };
@@ -111,7 +116,12 @@ export async function generate1688Keywords(task = {}) {
   const content = [{ type: "text", text: prompt }];
   if (isTrustedOzonImageUrl(target.mainImageUrl)) content.push(await imageContent(target.mainImageUrl, isTrustedOzonImageUrl));
   const qwenResponse = await requestQwenJson({ content, temperature: 0.1, maxTokens: 360 });
-  const keywords = normalize1688Keywords(qwenResponse.json, { allowedBrand: target.brand, allowedModel: target.model });
+  const keywords = normalize1688Keywords(qwenResponse.json, {
+    allowedBrand: target.brand,
+    allowedModel: target.model,
+    brandTokens: target.brandTokens,
+    modelTokens: target.modelTokens,
+  });
   if (!keywords.length) throw new Error("千问关键词没有留下可验证的检索词。");
   return { ...responseMetadata(qwenResponse), keywords };
 }
