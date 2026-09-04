@@ -724,6 +724,34 @@ async function staticFile(requestPath, response) {
   }
 }
 
+/**
+ * Deliberately expose only the reviewed, dependency-free final-confirmation
+ * gate to the local browser. This is not a generic module or agent-root file
+ * server: query strings, subpaths, and every other filename remain unavailable.
+ */
+async function sourcingCoreModule(url, request, response) {
+  if (url.pathname !== "/sourcing-core.mjs") return false;
+  // URL.search is empty for a bare trailing question mark, so match the
+  // original request target as well. This route intentionally has no query
+  // protocol and must not fall through to a future static file of the same name.
+  if (request.url !== "/sourcing-core.mjs") {
+    json(response, 404, { ok: false, error: "未找到接口或页面。" });
+    return true;
+  }
+  if (request.method !== "GET") {
+    json(response, 405, { ok: false, error: "sourcing-core.mjs只允许GET读取。" });
+    return true;
+  }
+  const content = await fs.readFile(path.join(moduleDir, "sourcing-core.mjs"));
+  response.writeHead(200, {
+    "content-type": "text/javascript; charset=utf-8",
+    "content-length": content.length,
+    "cache-control": "no-store",
+  });
+  response.end(content);
+  return true;
+}
+
 async function evidenceFile(requestPath, response) {
   const prefix = "/api/evidence/";
   if (!requestPath.startsWith(prefix)) return false;
@@ -760,6 +788,7 @@ async function evidenceFile(requestPath, response) {
 const server = http.createServer(async (request, response) => {
   try {
     const url = new URL(request.url || "/", `http://${host}:${port}`);
+    if (await sourcingCoreModule(url, request, response)) return;
     if (request.method === "POST" && request.headers["x-ozon-agent"] !== localUiHeader) return json(response, 403, { ok: false, error: "拒绝非本地控制页面的操作请求。" });
     if (request.method === "POST" && url.pathname === "/api/evidence/1688") return json(response, 200, await save1688Evidence(url, request));
     if (request.method === "GET" && url.pathname === "/api/status") return json(response, 200, { ok: true, status: await deviceStatus() });

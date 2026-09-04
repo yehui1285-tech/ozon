@@ -3,6 +3,8 @@ import fs from "node:fs";
 import vm from "node:vm";
 import { aiJudgementReadiness, applySelectedCandidate, candidateInspectionOrder, detectPinduoduoRiskPage, extractPinduoduoCandidates, extractPinduoduoDetail, extractPinduoduoSkuSheet, findUiNode, isTrustedOzonImageUrl, normalizeAiJudgement, normalizeSkuSelection, parseMumuInfo, parsePinduoduoRoute, parseUiNodes, pinduoduoFavoriteState, pinduoduoProductGoodsId, queueStats, reconcilePinduoduoDisplayedPrice, resolveAiRecommendedCandidate, safeTaskFileName, taskReadiness } from "../pinduoduo-agent/core.mjs";
 import { applyFinalOzonPricing, createFinalPricingRequestGuard, MAX_OZON_PREVIEW_MONEY, preliminaryPricingDecision, previewFinalOzonPricing } from "../pinduoduo-agent/public/pricing-flow.js";
+import * as sourcingFlow from "../pinduoduo-agent/public/sourcing-flow.js";
+import { buildFinalConfirmation, confirmRecommendation, rejectRecommendation } from "../pinduoduo-agent/sourcing-core.mjs";
 import { isTrustedPinduoduoImageUrl } from "../pinduoduo-agent/qwen-client.mjs";
 
 assert.equal(isTrustedOzonImageUrl("https://ir.ozone.ru/s3/multimedia-test/wc1000/1.jpg"), true);
@@ -289,44 +291,109 @@ const qwenSource = fs.readFileSync(new URL("../pinduoduo-agent/qwen-client.mjs",
 const bridgeSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/pinduoduo-bridge.js", import.meta.url), "utf8");
 const extensionManifest = JSON.parse(fs.readFileSync(new URL("../ozon-erp-collector-extension/manifest.json", import.meta.url), "utf8"));
 
-function createAppHarness() {
+function createAppHarness({ apiHandler = null, extensionHandler = null, finalPricingResponse = null, storedValues = {}, sourcingFlowDeps = sourcingFlow } = {}) {
   const listeners = new Set();
   const requests = [];
+  const extensionRequests = [];
+  const apiRequests = [];
   const elements = new Map();
   const element = () => ({
     style: {}, children: [], value: "", textContent: "", className: "", innerHTML: "", disabled: false,
     addEventListener() {}, append(...children) { this.children.push(...children); }, replaceChildren(...children) { this.children = children; },
   });
+  const emitMessage = (data) => {
+    for (const listener of listeners) listener({ source: fakeWindow, origin: fakeWindow.location.origin, data });
+  };
   const fakeWindow = {
     location: { origin: "http://127.0.0.1:17628" },
+    confirm() { return true; },
     addEventListener(type, listener) { if (type === "message") listeners.add(listener); },
     removeEventListener(type, listener) { if (type === "message") listeners.delete(listener); },
     postMessage(data) {
       if (data?.type === "OZON_FINAL_REPRICE_PING_V1") {
-        Promise.resolve().then(() => {
-          for (const listener of listeners) listener({ source: fakeWindow, origin: fakeWindow.location.origin, data: { type: "OZON_FINAL_REPRICE_READY_V1", requestId: data.requestId } });
-        });
-      } else if (data?.type === "OZON_FINAL_REPRICE_REQUEST_V1") requests.push(data);
+        Promise.resolve().then(() => emitMessage({ type: "OZON_FINAL_REPRICE_READY_V1", requestId: data.requestId }));
+      } else if (data?.type === "OZON_FINAL_REPRICE_REQUEST_V1") {
+        requests.push(data);
+        if (finalPricingResponse) Promise.resolve().then(() => emitMessage({ type: "OZON_FINAL_REPRICE_RESPONSE_V1", requestId: data.requestId, ...finalPricingResponse }));
+      } else if (data?.type === "OZON_SOURCING_EXTENSION_REQUEST_V1") {
+        extensionRequests.push(data);
+        Promise.resolve().then(async () => extensionHandler ? extensionHandler(data) : { ok: false, error: "test bridge missing" })
+          .then((response) => emitMessage({ type: "OZON_SOURCING_EXTENSION_RESPONSE_V1", requestId: data.requestId, ...response }));
+      }
     },
   };
   const savedQueue = JSON.stringify({ queue: { tasks: [], meta: { pinduoduoBatch: {} } }, sourceName: "test.json" });
   const context = {
     __pricingDeps: { applyFinalOzonPricing, createFinalPricingRequestGuard, preliminaryPricingDecision, previewFinalOzonPricing },
+    __sourcingFlowDeps: sourcingFlowDeps,
+    // The VM owns app-created object literals while the imported safety module
+    // is evaluated in this test realm. Keep the task reference intact for
+    // Task 5's capability check, while copying only untrusted serial facts
+    // across that artificial realm boundary.
+    __sourcingCoreDeps: {
+      buildFinalConfirmation(input) {
+        return buildFinalConfirmation({
+          task: input.task,
+          candidate: JSON.parse(JSON.stringify(input.candidate)),
+          judgement: JSON.parse(JSON.stringify(input.judgement)),
+          quote: JSON.parse(JSON.stringify(input.quote)),
+          finalPricing: JSON.parse(JSON.stringify(input.finalPricing)),
+        });
+      },
+      confirmRecommendation(task, pending, current, confirmedAt) {
+        return confirmRecommendation(task, pending, {
+          task: current.task,
+          candidate: JSON.parse(JSON.stringify(current.candidate)),
+          judgement: JSON.parse(JSON.stringify(current.judgement)),
+          quote: JSON.parse(JSON.stringify(current.quote)),
+          finalPricing: JSON.parse(JSON.stringify(current.finalPricing)),
+        }, confirmedAt);
+      },
+      rejectRecommendation,
+    },
     window: fakeWindow,
-    document: { getElementById(id) { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); }, createElement: element },
-    localStorage: { getItem() { return savedQueue; }, setItem() {} },
-    URL, Blob, console, setTimeout, clearTimeout,
+    document: {
+      getElementById(id) { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); },
+      createElement: element,
+      createTextNode(value) { return String(value); },
+    },
+    localStorage: {
+      getItem(key) {
+        if (Object.hasOwn(storedValues, key)) return storedValues[key];
+        return Object.keys(storedValues).length ? null : savedQueue;
+      },
+      setItem(key, value) { storedValues[key] = value; },
+    },
+    fetch: async (path, options = {}) => {
+      apiRequests.push({ path: String(path), options });
+      const payload = apiHandler ? await apiHandler(String(path), options) : { ok: true, status: { configured: false, model: "test" } };
+      return { ok: payload?.httpOk !== false, async json() { return payload; } };
+    },
+    URL, Blob, console, setTimeout, clearTimeout, AbortController,
   };
-  const appForVm = appSource.replace(/^import .* from "\.\/pricing-flow\.js";\r?$/m,
-    "const { applyFinalOzonPricing, createFinalPricingRequestGuard, preliminaryPricingDecision, previewFinalOzonPricing } = globalThis.__pricingDeps;")
-    + "\nglobalThis.__appTest = { commitPurchaseCostWithFinalPricing, setQueue: (value) => { queue = value; } };";
+  const appForVm = appSource
+    .replace(/^import .* from "\.\/pricing-flow\.js";\r?$/m,
+      "const { applyFinalOzonPricing, createFinalPricingRequestGuard, preliminaryPricingDecision, previewFinalOzonPricing } = globalThis.__pricingDeps;")
+    .replace(/^import \* as sourcingFlow from "\.\/sourcing-flow\.js";\r?$/m, "const sourcingFlow = globalThis.__sourcingFlowDeps;")
+    .replace(/^import \* as sourcingCore from "\/sourcing-core\.mjs";\r?$/m, "const sourcingCore = globalThis.__sourcingCoreDeps;")
+    + "\nglobalThis.__appTest = { commitPurchaseCostWithFinalPricing, runAutomatic1688Task, runAutomatic1688Batch, confirmFinalCandidate, rejectFinalCandidate, saveSingleUnitException, startSinglePinduoduoDeepSearch, setQueue: (value) => { queue = value; }, getQueue: () => queue };";
   vm.runInNewContext(appForVm, context, { filename: "app.js" });
   return {
     commit: context.__appTest.commitPurchaseCostWithFinalPricing,
+    runAutomatic: context.__appTest.runAutomatic1688Task,
+    runAutomaticBatch: context.__appTest.runAutomatic1688Batch,
+    confirmFinal: context.__appTest.confirmFinalCandidate,
+    rejectFinal: context.__appTest.rejectFinalCandidate,
+    saveException: context.__appTest.saveSingleUnitException,
+    startSinglePinduoduo: context.__appTest.startSinglePinduoduoDeepSearch,
     setQueue: context.__appTest.setQueue,
+    getQueue: context.__appTest.getQueue,
+    apiRequests,
+    extensionRequests,
+    storedValues,
     nextRequest() { return requests.at(-1); },
     reply(request, response) {
-      for (const listener of listeners) listener({ source: fakeWindow, origin: fakeWindow.location.origin, data: { type: "OZON_FINAL_REPRICE_RESPONSE_V1", requestId: request.requestId, ...response } });
+      emitMessage({ type: "OZON_FINAL_REPRICE_RESPONSE_V1", requestId: request.requestId, ...response });
     },
     replyAfter(request, response, delayMs) {
       return new Promise((resolve) => setTimeout(() => {
@@ -345,6 +412,29 @@ async function waitForFinalPricingRequest(harness, previousRequest = null) {
   }
   assert.fail("expected the app to send a final Ozon pricing request");
 }
+
+const migrationValues = {
+  "ozon-pinduoduo-agent-mvp3": JSON.stringify({
+    sourceName: "mvp53-history.json",
+    queue: {
+      meta: { pinduoduoBatch: { cursor: 4 }, legacyMarker: "keep" },
+      tasks: [{
+        taskId: "ozon-mvp53-history", history: [{ result: "kept" }],
+        sourcing: { searchCandidates: [{ candidateId: "legacy-candidate" }], manualResult: { outcome: "keep" } },
+        pricing: { purchaseCost: 18.8, sourceUrl: "https://mobile.yangkeduo.com/goods.html?goods_id=1" },
+      }],
+    },
+  }),
+};
+const migrationHarness = createAppHarness({ storedValues: migrationValues });
+const migratedBrowserRecord = JSON.parse(migrationValues["ozon-sourcing-agent-mvp6"]);
+assert.equal(migratedBrowserRecord.sourceName, "mvp53-history.json");
+assert.equal(migratedBrowserRecord.queue.meta.sourcingSchema, "mvp6");
+assert.deepEqual(migratedBrowserRecord.queue.meta.pinduoduoBatch, { cursor: 4 });
+assert.equal(migratedBrowserRecord.queue.tasks[0].history[0].result, "kept");
+assert.equal(migratedBrowserRecord.queue.tasks[0].sourcing.manualResult.outcome, "keep");
+assert.equal(migrationHarness.getQueue().tasks[0].pricing.purchaseCost, 18.8,
+  "MVP 5.3 historical candidates, manual outcomes, and pricing are copied without mutation");
 
 const appHarness = createAppHarness();
 const appPreviewTask = {
@@ -382,6 +472,173 @@ await delayedOldReply;
 assert.equal((await delayedFirst).stale, true, "a delayed old bridge response must be ignored after the newer preview completes");
 assert.equal(JSON.stringify(appPreviewTask), appBefore, "an ignored old response must not mutate any 1688 task field");
 
+const automaticCandidate = {
+  provider: "1688",
+  candidateId: "1688-77",
+  productId: "77",
+  sourceUrl: "https://detail.1688.com/offer/77.html",
+  title: "自动测试候选",
+  imageUrl: "https://cbu01.alicdn.com/img/ibank/test.jpg",
+  supplierName: "测试供应商",
+  minimumOrderQuantity: 1,
+  supportsOnePiece: false,
+  supportsSample: false,
+  pricing: { selectedSkuPrice: 20, onePiecePrice: null, samplePrice: null, priceSource: "selected_sku" },
+  shipping: { status: "known", fee: 3 },
+  sku: { options: [{ id: "sku-77", label: "标准款" }], selectedOptionId: null, selectionVerified: false },
+  detailStatus: "complete",
+  evidence: { localRef: "/api/evidence/test/77.jpg" },
+};
+const automaticJobs = new Map();
+let automaticJobSequence = 0;
+const automaticHarness = createAppHarness({
+  finalPricingResponse: previewResponse,
+  apiHandler: async (path) => {
+    if (path === "/api/ai/status") return { ok: true, status: { configured: true, model: "test" } };
+    if (path === "/api/ai/1688-judge") {
+      return {
+        ok: true,
+        judgement: {
+          verdict: "same_product", confidence: 92, bestCandidateId: "1688-77", needsHumanReview: false,
+          candidateAssessments: [{ candidateId: "1688-77", verdict: "same_product", confidence: 92, differences: [] }],
+        },
+        provider: "test", model: "test", usage: {}, judgedAt: "2026-08-31T00:00:00.000Z",
+      };
+    }
+    if (path === "/api/ai/1688-select-sku") {
+      return {
+        ok: true,
+        selection: { verdict: "exact_match", selectedOptionId: "sku-77", confidence: 92, reason: "规格一致", needsHumanReview: false },
+        provider: "test", model: "test", usage: {}, judgedAt: "2026-08-31T00:00:00.000Z",
+      };
+    }
+    return { ok: false, error: `unexpected API ${path}` };
+  },
+  extensionHandler: async (request) => {
+    if (request.action === "start_1688_job") {
+      const jobId = `1688-test-${++automaticJobSequence}`;
+      automaticJobs.set(jobId, { jobId, strategy: request.strategy });
+      return { ok: true, jobId, status: "queued", phase: "queued", strategy: request.strategy };
+    }
+    if (request.action === "get_1688_job") {
+      const job = automaticJobs.get(request.jobId);
+      assert.ok(job, "the automatic flow may poll only a job it started");
+      return {
+        ok: true,
+        ...job,
+        status: "completed",
+        phase: "completed",
+        candidates: job.strategy.type === "verify_sku" ? [] : [automaticCandidate],
+        detailCandidates: job.strategy.type === "verify_sku" ? [] : [automaticCandidate],
+        diagnostics: job.strategy.type === "verify_sku" ? { code: "sku_verified" } : null,
+      };
+    }
+    if (request.action === "cancel_1688_job") return { ok: true, jobId: request.jobId, status: "cancelled" };
+    return { ok: false, error: "unexpected bridge action" };
+  },
+});
+const automaticTask = {
+  taskId: "ozon-auto-1",
+  status: "pending_human_review",
+  ozon: { sku: "auto-1", name: "自动测试商品", allowedGenericTerms: ["自动", "测试", "商品"] },
+  enrichment: { mainImageUrl: "https://ir.ozone.ru/s3/multimedia-test/auto.jpg", maxPurchaseCostAt18Pct: 50 },
+  sourcing: {},
+  pricing: {},
+};
+automaticHarness.setQueue({ tasks: [automaticTask], meta: {} });
+await automaticHarness.runAutomatic(automaticTask);
+assert.equal(automaticTask.sourcing.provider, "1688");
+assert.deepEqual(Array.from(automaticTask.sourcing.searchAttempts, (attempt) => attempt.strategy), ["image"]);
+assert.equal(automaticTask.sourcing.finalConfirmation.status, "final_confirmation_pending", JSON.stringify(automaticTask.sourcing.finalConfirmation));
+assert.equal(automaticTask.pricing.purchaseCost, undefined, "automatic final preview must not write a purchase price");
+assert.deepEqual(automaticHarness.extensionRequests.filter((request) => request.action === "start_1688_job").map((request) => request.strategy.type), ["image", "verify_sku"]);
+assert.equal(automaticHarness.apiRequests.some((request) => /\/api\/(?:pinduoduo|task\/search)/.test(request.path)), false,
+  "automatic 1688 sourcing must never call a Pinduoduo or MuMu endpoint");
+await automaticHarness.confirmFinal("ozon-auto-1");
+assert.equal(automaticTask.sourcing.status, "confirmed_purchase_source");
+assert.equal(automaticTask.sourcing.confirmedCandidate.candidateId, "1688-77");
+assert.equal(automaticTask.pricing.purchaseCost, 23, "only final task-bound confirmation may write the purchase cost");
+
+const exhaustedBudgetHarness = createAppHarness({
+  sourcingFlowDeps: { ...sourcingFlow, automaticRequestTimeoutMs: () => 0 },
+  extensionHandler: async () => ({ ok: false, error: "a request must not start after the automatic budget is exhausted" }),
+});
+const exhaustedBudgetTask = {
+  taskId: "ozon-auto-budget-1",
+  status: "pending_human_review",
+  ozon: { sku: "auto-budget-1", name: "预算耗尽商品", allowedGenericTerms: ["预算", "耗尽", "商品"] },
+  enrichment: { mainImageUrl: "https://ir.ozone.ru/s3/multimedia-test/auto-budget.jpg", maxPurchaseCostAt18Pct: 50 },
+  sourcing: {},
+  pricing: {},
+};
+exhaustedBudgetHarness.setQueue({ tasks: [exhaustedBudgetTask], meta: {} });
+await exhaustedBudgetHarness.runAutomatic(exhaustedBudgetTask);
+assert.ok(exhaustedBudgetTask.sourcing.finalConfirmation.blockers.includes("automatic_timeout"),
+  "an exhausted automatic budget must enter the explicit timeout confirmation queue");
+assert.equal(exhaustedBudgetHarness.extensionRequests.length, 0,
+  "an exhausted automatic budget must not send another 1688 bridge request");
+
+const verificationDiagnosticCandidate = {
+  ...automaticCandidate,
+  candidateId: "1688-verify-timeout",
+  productId: "88",
+  sourceUrl: "https://detail.1688.com/offer/88.html",
+  sku: { options: [{ id: "sku-88", label: "标准款" }], selectedOptionId: null, selectionVerified: false },
+};
+const verificationDiagnosticJobs = new Map();
+let verificationDiagnosticSequence = 0;
+const verificationDiagnosticHarness = createAppHarness({
+  apiHandler: async (path) => {
+    if (path === "/api/ai/1688-judge") return {
+      ok: true,
+      judgement: {
+        verdict: "same_product", confidence: 92, bestCandidateId: "1688-verify-timeout", needsHumanReview: false,
+        candidateAssessments: [{ candidateId: "1688-verify-timeout", verdict: "same_product", confidence: 92, differences: [] }],
+      },
+      provider: "test", model: "test", usage: {}, judgedAt: "2026-08-31T00:00:00.000Z",
+    };
+    if (path === "/api/ai/1688-select-sku") return {
+      ok: true,
+      selection: { verdict: "exact_match", selectedOptionId: "sku-88", confidence: 92, reason: "规格一致", needsHumanReview: false },
+      provider: "test", model: "test", usage: {}, judgedAt: "2026-08-31T00:00:00.000Z",
+    };
+    return { ok: false, error: `unexpected API ${path}` };
+  },
+  extensionHandler: async (request) => {
+    if (request.action === "start_1688_job") {
+      const jobId = `1688-diagnostic-${++verificationDiagnosticSequence}`;
+      verificationDiagnosticJobs.set(jobId, { jobId, strategy: request.strategy });
+      return { ok: true, jobId, status: "queued", phase: "queued" };
+    }
+    if (request.action === "get_1688_job") {
+      const job = verificationDiagnosticJobs.get(request.jobId);
+      assert.ok(job, "a verification diagnostic belongs to the job that produced it");
+      if (job.strategy.type === "verify_sku") return {
+        ok: true, ...job, status: "failed", phase: "failed",
+        diagnostics: { code: "stage_timeout", stage: "detail_or_sku" }, candidates: [], detailCandidates: [],
+      };
+      return { ok: true, ...job, status: "completed", phase: "completed", diagnostics: null, candidates: [verificationDiagnosticCandidate], detailCandidates: [verificationDiagnosticCandidate] };
+    }
+    if (request.action === "cancel_1688_job") return { ok: true, jobId: request.jobId, status: "cancelled" };
+    return { ok: false, error: "unexpected bridge action" };
+  },
+});
+const verificationDiagnosticTask = {
+  taskId: "ozon-verify-diagnostic-1",
+  status: "pending_human_review",
+  ozon: { sku: "verify-diagnostic-1", name: "核验诊断商品", allowedGenericTerms: ["核验", "诊断", "商品"] },
+  enrichment: { mainImageUrl: "https://ir.ozone.ru/s3/multimedia-test/verify-diagnostic.jpg", maxPurchaseCostAt18Pct: 50 },
+  sourcing: {},
+  pricing: {},
+};
+verificationDiagnosticHarness.setQueue({ tasks: [verificationDiagnosticTask], meta: {} });
+await verificationDiagnosticHarness.runAutomatic(verificationDiagnosticTask);
+assert.equal(verificationDiagnosticTask.sourcing.skuVerification?.diagnostics?.code, "stage_timeout",
+  "a SKU-stage timeout diagnostic code must survive in the persisted task state");
+assert.equal(verificationDiagnosticTask.sourcing.skuVerification?.diagnostics?.stage, "detail_or_sku",
+  "a SKU-stage timeout diagnostic stage must survive in the persisted task state");
+assert.ok(verificationDiagnosticTask.sourcing.finalConfirmation.blockers.includes("sku_verification_failed"));
+
 assert.match(serverSource, /127\.0\.0\.1/);
 assert.match(serverSource, /MuMuManager\.exe/);
 assert.match(serverSource, /adb\(\["shell", "getprop", "sys\.boot_completed"\]/);
@@ -414,44 +671,44 @@ assert.match(serverSource, /saveSkuDiagnostic/);
 assert.match(serverSource, /hydrateSeparatedSkuPrices/);
 assert.match(serverSource, /selected_header_per_option/);
 assert.match(serverSource, /optionPrice/);
-assert.match(appSource, /pending_pinduoduo_search/);
+assert.match(appSource, /const storageKey = "ozon-sourcing-agent-mvp6"/);
+assert.match(appSource, /const legacyStorageKeys = \["ozon-pinduoduo-agent-mvp3"\]/);
+assert.match(appSource, /migrateMvp6StoredQueue/);
 assert.match(appSource, /x-ozon-agent/);
 assert.match(appSource, /eligibleAt18Pct/);
 assert.match(appSource, /localStorage\.setItem/);
-assert.match(appSource, /candidateSearchComplete/);
-assert.match(appSource, /async function runBatch/);
-assert.match(appSource, /batch\.paused/);
-assert.match(appSource, /batch\.stopRequested/);
-assert.match(appSource, /search_failed_retryable/);
-assert.match(appSource, /AI判断失败/);
+assert.match(appSource, /async function sourcingExtensionRequest/);
+assert.match(appSource, /OZON_SOURCING_EXTENSION_REQUEST_V1/);
+assert.match(appSource, /paused_platform_verification/);
+assert.match(appSource, /automatic_timeout/);
+assert.match(appSource, /async function runAutomatic1688Task/);
+assert.match(appSource, /async function runAutomatic1688Batch/);
+assert.match(appSource, /async function confirmFinalCandidate/);
+assert.match(appSource, /async function rejectFinalCandidate/);
+assert.match(appSource, /async function saveSingleUnitException/);
+assert.match(appSource, /import \* as sourcingCore from "\/sourcing-core\.mjs"/);
 assert.match(qwenSource, /evidenceWarnings/);
-assert.match(appSource, /const appVersion = "MVP 5\.3"/);
+assert.match(appSource, /const appVersion = "MVP 6\.0"/);
 assert.doesNotMatch(appSource, /MVP 5\.2/);
-assert.match(appSource, /batchDelayRangeMs/);
-assert.match(appSource, /paused_risk_control/);
-assert.match(appSource, /async function runAiBatch/);
-assert.match(appSource, /async function favoriteRecommendedCandidate/);
-assert.match(appSource, /async function openCandidateInApp/);
-assert.match(appSource, /在App打开/);
-assert.match(appSource, /已收藏/);
-assert.match(appSource, /搜索页价/);
 assert.match(appSource, /requestFinalOzonPricing/);
 assert.match(appSource, /preliminaryPricingDecision/);
 assert.match(appSource, /createFinalPricingRequestGuard/);
 assert.match(appSource, /previewFinalOzonPricing/);
 assert.match(appSource, /task\?\.sourcing\?\.provider === "1688"/);
 assert.match(appSource, /aiJudgement/);
-assert.match(appSource, /detail_not_inspected/);
-assert.match(appSource, /详情读取失败/);
-assert.match(appSource, /链接已取得/);
-assert.match(appSource, /searchTiming/);
 assert.match(appSource, /renderTimingPanel/);
-assert.match(appSource, /aiJudgementHasSafetyConflict/);
-assert.match(appSource, /安全闸门/);
 assert.match(indexSource, /id="timingSummary"/);
 assert.match(indexSource, /id="timingRows"/);
-assert.match(appSource, /详情缺/);
-assert.doesNotMatch(appSource, /链接未取得/);
+assert.match(indexSource, /<title>采购找品 Agent<\/title>/);
+assert.match(indexSource, /批量自动找货源/);
+assert.match(indexSource, /id="confirmationSummary"/);
+assert.match(indexSource, /id="confirmationRows"/);
+assert.match(indexSource, /最终商品确认/);
+assert.doesNotMatch(indexSource, /id="openPdd"|批量AI判断同款|批量核验规格价/);
+const automaticBatchBody = appSource.slice(appSource.indexOf("async function runAutomatic1688Batch"), appSource.indexOf("async function startSinglePinduoduoDeepSearch"));
+assert.doesNotMatch(automaticBatchBody, /\/api\/pinduoduo\//, "automatic batch must never call a Pinduoduo endpoint");
+assert.doesNotMatch(automaticBatchBody, /\/api\/task\/search/, "automatic batch must never start MuMu deep search");
+assert.match(appSource, /startSinglePinduoduoDeepSearch[\s\S]*\/api\/task\/search/, "only the explicit final-card action may use the legacy deep-search endpoint");
 assert.match(qwenSource, /qwen3\.7-flash/);
 assert.match(qwenSource, /enable_thinking: false/);
 assert.match(qwenSource, /response_format/);

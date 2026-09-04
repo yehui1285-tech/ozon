@@ -264,6 +264,12 @@ function quoteCandidatePrice(candidate, quote) {
   if (source === "selected_sku") return candidate.pricing.selectedSkuPrice;
   if (source === "one_piece") return candidate.pricing.onePiecePrice;
   if (source === "sample") return candidate.pricing.samplePrice;
+  // Task 2 validates this exceptional price against the exact canonical
+  // product before Task 7 constructs the quote. Its price is therefore not
+  // expected to be present in page-derived candidate pricing, but all three
+  // normalized quote amounts and their rounded total are still rechecked
+  // below before any confirmation capability can be created.
+  if (source === "manual_exact_product_exception" && candidate.minimumOrderQuantity === 2) return quote.productPrice;
   return null;
 }
 

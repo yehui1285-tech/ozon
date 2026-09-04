@@ -3,29 +3,66 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>拼多多自动找同款与采购价补全</title>
+  <title>采购找品 Agent</title>
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="ai.css">
 </head>
 <body>
   <main class="shell">
-    <header><div><h1>拼多多自动找同款与采购价补全</h1><p>候选最低价仅用于找款；详情加载较慢时先保留商品链接，再补标题、详情价和运费；确认同款后才核验目标规格常规价。</p></div><span id="modelStatus">MVP 5.1 · AI尚未检查</span></header>
+    <header>
+      <div>
+        <h1>采购找品 Agent</h1>
+        <p>自动按图片、关键词、相似供应商三轮检索1688；系统只试算和进入人工确认，不会自动下单、购买或联系商家。</p>
+      </div>
+      <span id="modelStatus">MVP 6.0 · 1688自动找货源</span>
+    </header>
+
     <section class="panel toolbar">
       <label class="file">选择Ozon补全JSON<input id="queueFile" type="file" accept=".json,application/json"></label>
-      <button id="checkDevice">检查模拟器</button><button id="startDevice" class="secondary">启动模拟器</button><button id="openPdd" class="secondary">启动拼多多</button><button id="download" class="secondary" disabled>下载采购价补全JSON</button>
-      <button id="batchStart">批量自动找同款</button><button id="batchPause" class="secondary" disabled>暂停</button><button id="batchResume" class="secondary" disabled>继续</button><button id="batchStop" class="secondary" disabled>停止</button>
-      <button id="aiBatchStart">批量AI判断同款</button>
-      <button id="skuBatchStart">批量核验规格价与最终复价</button>
-      <p id="status">请先检查模拟器，或导入已完成Ozon核价的任务JSON。</p>
+      <button id="download" class="secondary" disabled>下载结果JSON</button>
+      <button id="batchStart">批量自动找货源</button>
+      <button id="batchPause" class="secondary" disabled>暂停</button>
+      <button id="batchResume" class="secondary" disabled>恢复</button>
+      <button id="batchStop" class="secondary" disabled>取消</button>
+      <strong id="batchState" class="batch-state">待运行</strong>
+      <p id="status">导入已完成Ozon核价的任务JSON后，可启动1688自动找货源。</p>
     </section>
-    <section class="stats"><div><small>任务总数</small><strong id="total">0</strong></div><div><small>可进入拼多多</small><strong id="ready">0</strong></div><div><small>已完成找同款</small><strong id="sourced">0</strong></div><div><small>AI已判断</small><strong id="judged">0</strong></div><div><small>已收藏</small><strong id="favorited">0</strong></div><div><small>规格价已核验</small><strong id="skuVerified">0</strong></div><div><small>前置未完成</small><strong id="blocked">0</strong></div><div><small>已填采购价</small><strong id="priced">0</strong></div><div><small>最终达到18%</small><strong id="eligible">0</strong></div></section>
+
+    <section class="stats">
+      <div><small>任务总数</small><strong id="total">0</strong></div>
+      <div><small>可自动找货源</small><strong id="ready">0</strong></div>
+      <div><small>自动处理中</small><strong id="running">0</strong></div>
+      <div><small>待最终确认</small><strong id="pending">0</strong></div>
+      <div><small>需人工处理</small><strong id="blocked">0</strong></div>
+      <div><small>平台验证暂停</small><strong id="paused">0</strong></div>
+      <div><small>已确认采购来源</small><strong id="confirmed">0</strong></div>
+      <div><small>无可确认货源</small><strong id="noSource">0</strong></div>
+    </section>
+
     <section class="panel timing-panel">
-      <div class="timing-head"><div><h2>耗时埋点</h2><p>只记录本地找同款链路的实际阶段耗时，用于定位慢在 MuMu、拼多多页面还是候选详情。</p></div><strong id="timingSummary">尚无样本</strong></div>
-      <div id="timingRows" class="timing-rows"><p class="muted">完成或失败一件找同款后，这里会显示阶段耗时。</p></div>
+      <div class="timing-head">
+        <div><h2>自动找货源进度</h2><p>每件最多150秒活动时间；1688平台验证等待会暂停整批且不计入活动时间。</p></div>
+        <strong id="timingSummary">尚无自动找货源记录</strong>
+      </div>
+      <div id="timingRows" class="timing-rows"><p class="muted">自动链路按每件最多150秒活动时间计算，平台验证等待不计入。</p></div>
     </section>
+
+    <section class="panel confirmation-panel">
+      <div class="confirmation-head">
+        <div><h2>最终商品确认</h2><p>系统已完成找款、同款判断、目标规格核验和利润试算；确认后才写入采购结果。</p></div>
+        <strong id="confirmationSummary">待确认0件</strong>
+      </div>
+      <div id="confirmationRows" class="confirmation-rows"><p class="muted">自动找货源完成后，需要人工确认的商品会显示在这里。</p></div>
+    </section>
+
     <section class="panel">
-      <p class="notice">页面最低价不再预填为采购价。明确同款会读取购买弹窗的规格列表，AI只负责选择目标规格，程序以页面“已选”回执确认常规规格价；账号余额、券后提交订单价均忽略且不会下单。规格价高于历史上限直接淘汰，低于或等于历史上限才调用扩展做Ozon最终实时复价（30分钟缓存）。</p>
-      <div class="table-wrap"><table><thead><tr><th>#</th><th>主图</th><th>SKU / 商品</th><th>18%最高采购成本</th><th>阶段</th><th>模拟器</th><th>候选采购价</th><th>候选链接</th><th>结果</th><th>操作</th></tr></thead><tbody id="rows"><tr><td colspan="10" class="empty">尚未导入任务。</td></tr></tbody></table></div>
+      <p class="notice">自动批量只调用1688浏览器桥接和Ozon最终复价。候选、判断、报价或试算缺失/变化都会留在最终人工队列；MOQ 2仅可在当前精确商品页保存经客服确认的一件价，再单独确认采用。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>#</th><th>SKU / 商品</th><th>18%最高采购成本</th><th>阶段</th><th>当前候选</th><th>确认/阻断原因</th><th>采购成本</th></tr></thead>
+          <tbody id="rows"><tr><td colspan="7" class="empty">尚未导入任务。</td></tr></tbody>
+        </table>
+      </div>
     </section>
   </main>
   <script type="module" src="app.js"></script>

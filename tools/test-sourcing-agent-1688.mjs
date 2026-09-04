@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import http from "node:http";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import fs from "node:fs";
@@ -6,6 +7,81 @@ import { buildFinalConfirmation, confirmRecommendation, normalizeKeywordResult, 
 import { parseQwenJsonResponse, readLimitedQwenResponse } from "../pinduoduo-agent/qwen-transport.mjs";
 import { isTrusted1688ImageUrl, normalize1688Judgement, normalize1688Keywords, normalize1688SkuSelection } from "../pinduoduo-agent/sourcing-qwen.mjs";
 import { previewFinalOzonPricing } from "../pinduoduo-agent/public/pricing-flow.js";
+import * as automaticFlowModule from "../pinduoduo-agent/public/sourcing-flow.js";
+import {
+  AUTOMATIC_1688_LIMITS,
+  automaticElapsedMs,
+  automaticTimeBudgetExceeded,
+  canonical1688OfferUrl,
+  detailCandidatesForInspection,
+  mergeAutomaticCandidates,
+  migrateMvp6StoredQueue,
+  nextAutomaticAction,
+  pauseAutomaticTiming,
+  promoteNextCandidate,
+  quoteAutomaticSingleUnit,
+  resumeAutomaticTiming,
+} from "../pinduoduo-agent/public/sourcing-flow.js";
+
+assert.equal(nextAutomaticAction({ searchAttempts: [] }).type, "start_image_search");
+assert.equal(nextAutomaticAction({ searchAttempts: [{ strategy: "image", usableCount: 0 }] }).type, "generate_keywords");
+assert.equal(nextAutomaticAction({ searchAttempts: [{ strategy: "image", usableCount: 0 }], keywords: ["测试关键词"] }).type, "start_keyword_search");
+assert.equal(nextAutomaticAction({ searchAttempts: [{ strategy: "image", usableCount: 0 }, { strategy: "keyword", usableCount: 0 }] }).type, "start_similar_supplier_search");
+assert.equal(nextAutomaticAction({ searchAttempts: [{ strategy: "image", usableCount: 0 }, { strategy: "keyword", usableCount: 0 }, { strategy: "similar_supplier", usableCount: 0 }] }).type, "queue_no_source_confirmation");
+assert.equal(nextAutomaticAction({ finalConfirmation: { status: "final_confirmation_pending" } }).type, "complete",
+  "a durable final-confirmation record is terminal and must not restart sourcing after refresh");
+assert.equal(nextAutomaticAction({ status: "paused_platform_verification", searchAttempts: [] }).type, "pause_platform_verification",
+  "platform verification pauses the whole persisted sequence before any new search is started");
+assert.equal(promoteNextCandidate([{ candidateId: "a" }, { candidateId: "b" }], ["a"]).candidateId, "b");
+
+const automaticCandidateFixture = (id) => ({
+  candidateId: `1688-${id}`,
+  sourceUrl: `https://detail.1688.com/offer/${id}.html?from=search`,
+  title: `候选${id}`,
+});
+assert.equal(canonical1688OfferUrl("https://detail.1688.com/offer/42.html?trace=1"), "https://detail.1688.com/offer/42.html");
+assert.equal(canonical1688OfferUrl("https://supplier.example/offer/42.html"), "");
+const mergedAutomaticCandidates = mergeAutomaticCandidates(
+  [automaticCandidateFixture(1)],
+  [automaticCandidateFixture(1), ...Array.from({ length: 13 }, (_, index) => automaticCandidateFixture(index + 2))],
+);
+assert.equal(mergedAutomaticCandidates.length, AUTOMATIC_1688_LIMITS.maxLightweightCandidates,
+  "all three strategies together must retain no more than 12 canonical 1688 offers");
+assert.deepEqual(mergedAutomaticCandidates.map((entry) => entry.sourceUrl), [
+  ...Array.from({ length: 12 }, (_, index) => `https://detail.1688.com/offer/${index + 1}.html`),
+]);
+assert.equal(detailCandidatesForInspection(mergedAutomaticCandidates).length, AUTOMATIC_1688_LIMITS.maxDetailCandidates,
+  "one strategy must inspect no more than five complete details");
+
+const legacyMvp53Task = {
+  taskId: "ozon-legacy-1",
+  status: "pending_human_review",
+  history: [{ stage: "mvp5.3", result: "kept" }],
+  sourcing: { searchCandidates: [{ candidateId: "legacy-candidate" }], legacyResult: { selected: true } },
+  pricing: { purchaseCost: 12.34, sourceUrl: "https://mobile.yangkeduo.com/goods.html?goods_id=1" },
+};
+const legacyMvp53Saved = { queue: { meta: { pinduoduoBatch: { cursor: 2 }, preservedFlag: "yes" }, tasks: [legacyMvp53Task] }, sourceName: "mvp53.json" };
+const migratedMvp6Saved = migrateMvp6StoredQueue(null, [JSON.stringify(legacyMvp53Saved)]);
+assert.equal(migratedMvp6Saved.migratedFromLegacy, true, "an absent mvp6 record must copy the first valid MVP 5.3 queue");
+assert.equal(migratedMvp6Saved.saved.sourceName, "mvp53.json");
+assert.equal(migratedMvp6Saved.saved.queue.meta.sourcingSchema, "mvp6");
+assert.deepEqual(migratedMvp6Saved.saved.queue.meta.pinduoduoBatch, { cursor: 2 }, "migration must retain legacy batch recovery data");
+assert.equal(migratedMvp6Saved.saved.queue.tasks[0].history[0].result, "kept", "migration must retain MVP 5.3 history");
+assert.equal(migratedMvp6Saved.saved.queue.tasks[0].sourcing.legacyResult.selected, true, "migration must retain historical candidates and manual decisions");
+assert.deepEqual(migratedMvp6Saved.saved.queue.meta.singleUnitExceptions, {});
+
+let automaticTiming = resumeAutomaticTiming({}, 0);
+automaticTiming = pauseAutomaticTiming(automaticTiming, 20_000);
+assert.equal(automaticElapsedMs(automaticTiming, 2_000_000), 20_000,
+  "time spent paused for a platform verification must not consume the active sourcing budget");
+automaticTiming = resumeAutomaticTiming(automaticTiming, 2_000_000);
+assert.equal(automaticTimeBudgetExceeded(automaticTiming, 2_129_999), false);
+assert.equal(automaticTimeBudgetExceeded(automaticTiming, 2_130_000), true,
+  "the automatic sequence must stop after 150 active seconds, excluding platform-verification pauses");
+assert.equal(automaticFlowModule.automaticRequestTimeoutMs?.({ elapsedMs: 149_000 }, 75_000, 2_000_000), 1_000,
+  "a Qwen or bridge request may consume only the remaining active 1688 budget");
+assert.equal(automaticFlowModule.automaticRequestTimeoutMs?.({ elapsedMs: 150_000 }, 15_000, 2_000_000), 0,
+  "an exhausted automatic task must not start another bridge request");
 
 const candidate = {
   provider: "1688",
@@ -25,6 +101,52 @@ const judgement = {
   candidateAssessments: [{ candidateId: "1688-1", verdict: "same_product", confidence: 92, differences: [] }],
 };
 const quote = { confirmable: true, productPrice: 20, domesticShipping: 3, purchaseCost: 23, priceSource: "selected_sku", blockers: [] };
+
+const manualExceptionCandidate = {
+  ...candidate,
+  minimumOrderQuantity: 2,
+  pricing: { selectedSkuPrice: 20, onePiecePrice: null, samplePrice: null, priceSource: "selected_sku" },
+};
+const manualExceptionQuote = {
+  confirmable: true,
+  productPrice: 20.5,
+  domesticShipping: 3,
+  purchaseCost: 23.5,
+  priceSource: "manual_exact_product_exception",
+  blockers: [],
+};
+assert.deepEqual(recommendationSafetyGate(manualExceptionCandidate, judgement, manualExceptionQuote).blockers, [],
+  "an exact-product Task 2 manual one-piece exception may pass only with a complete, internally consistent quote");
+
+const twoUnitAutomaticCandidate = {
+  ...candidate,
+  productId: "1",
+  minimumOrderQuantity: 2,
+  supportsOnePiece: false,
+  supportsSample: false,
+  pricing: { selectedSkuPrice: 20, onePiecePrice: null, samplePrice: null, priceSource: "selected_sku" },
+};
+assert.ok(quoteAutomaticSingleUnit(twoUnitAutomaticCandidate).blockers.includes("single_unit_price_unverified"),
+  "MOQ two must never borrow a tier price as a single-unit cost");
+const exactAutomaticException = {
+  productId: "1",
+  sourceUrl: "https://detail.1688.com/offer/1.html?copy=1",
+  onePiecePrice: 20.5,
+  confirmedAt: "2026-08-31T00:00:00.000Z",
+};
+assert.deepEqual(quoteAutomaticSingleUnit(twoUnitAutomaticCandidate, exactAutomaticException), {
+  confirmable: true,
+  productPrice: 20.5,
+  domesticShipping: 3,
+  purchaseCost: 23.5,
+  priceSource: "manual_exact_product_exception",
+  blockers: [],
+});
+assert.ok(quoteAutomaticSingleUnit(twoUnitAutomaticCandidate, {
+  ...exactAutomaticException,
+  sourceUrl: "https://detail.1688.com/offer/999.html",
+}).blockers.includes("single_unit_price_unverified"),
+"a one-piece exception must not follow a supplier URL to another exact product");
 
 assert.deepEqual(recommendationSafetyGate(candidate, judgement, quote).blockers, []);
 const task = { taskId: "ozon-1001", ozon: { sku: "1001" }, sourcing: {}, pricing: {} };
@@ -285,8 +407,40 @@ async function startLocalAgent() {
   return { child, baseUrl: `http://127.0.0.1:${port}` };
 }
 
+function rawHttpStatus(baseUrl, requestPath) {
+  const url = new URL(baseUrl);
+  return new Promise((resolve, reject) => {
+    const request = http.request({ host: url.hostname, port: url.port, method: "GET", path: requestPath }, (response) => {
+      response.resume();
+      response.once("end", () => resolve(response.statusCode));
+    });
+    request.once("error", reject);
+    request.end();
+  });
+}
+
 const agent = await startLocalAgent();
 try {
+  const sourcingCoreModule = await fetch(`${agent.baseUrl}/sourcing-core.mjs`);
+  assert.equal(sourcingCoreModule.status, 200, "the browser may import only the reviewed sourcing-core module");
+  assert.match(sourcingCoreModule.headers.get("content-type") || "", /^text\/javascript;\s*charset=utf-8$/i);
+  assert.equal(sourcingCoreModule.headers.get("cache-control"), "no-store");
+  const sourcingCoreText = await sourcingCoreModule.text();
+  assert.match(sourcingCoreText, /buildFinalConfirmation/);
+  assert.doesNotMatch(sourcingCoreText, /DASHSCOPE_API_KEY|sk-[A-Za-z0-9]{12,}/,
+    "the narrow browser module route must not disclose an agent secret");
+  for (const invalidCoreRequest of [
+    new Request(`${agent.baseUrl}/sourcing-core.mjs`, { method: "POST" }),
+    new Request(`${agent.baseUrl}/sourcing-core.mjs/`),
+    new Request(`${agent.baseUrl}/sourcing-core.mjs%2F..%2Fqwen-client.mjs`),
+  ]) {
+    const response = await fetch(invalidCoreRequest);
+    assert.ok(response.status === 404 || response.status === 405,
+      `only exact GET /sourcing-core.mjs may expose the reviewed browser module: ${invalidCoreRequest.method} ${new URL(invalidCoreRequest.url).pathname}`);
+  }
+  assert.equal(await rawHttpStatus(agent.baseUrl, "/sourcing-core.mjs?"), 404,
+    "a raw trailing question mark is a query form, not the exact reviewed module route");
+
   const evidenceTaskId = `task-${Date.now()}`;
   const evidenceCandidateId = "1688-123";
   const evidencePath = `/api/evidence/1688?taskId=${evidenceTaskId}&candidateId=${evidenceCandidateId}`;

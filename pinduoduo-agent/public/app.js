@@ -1,822 +1,585 @@
 import { applyFinalOzonPricing, createFinalPricingRequestGuard, preliminaryPricingDecision, previewFinalOzonPricing } from "./pricing-flow.js";
+import * as sourcingFlow from "./sourcing-flow.js";
+import * as sourcingCore from "/sourcing-core.mjs";
+
+const storageKey = "ozon-sourcing-agent-mvp6";
+const legacyStorageKeys = ["ozon-pinduoduo-agent-mvp3"];
+const appVersion = "MVP 6.0";
+const finalPricingRequestGuard = createFinalPricingRequestGuard();
+const automaticRuns = new Map();
+const taskActionLocks = new Map();
+const automaticBatch = { running: false, paused: false, stopRequested: false, cursor: 0, completed: 0, failed: 0, activeTaskId: "", pauseReason: "", status: "idle" };
 
 let queue = null;
 let sourceName = "ozon-sourcing.json";
-const storageKey = "ozon-pinduoduo-agent-mvp3";
-const appVersion = "MVP 5.3";
-const batch = { running: false, paused: false, riskPaused: false, pauseReason: "", stopRequested: false, cursor: 0, completed: 0, failed: 0 };
-const aiBatch = { running: false, completed: 0, failed: 0, riskPaused: false, pauseReason: "" };
-const skuBatch = { running: false, completed: 0, failed: 0 };
-const batchDelayRangeMs = { min: 12000, max: 25000 };
-const finalPricingRequestGuard = createFinalPricingRequestGuard();
+let pageUnloading = false;
+let requestSequence = 0;
 
 const $ = (id) => document.getElementById(id);
-
-function setStatus(message, state = "") {
-  $("status").textContent = message;
-  $("status").className = state;
-}
-
-function candidateSearchComplete(task) {
-  return Array.isArray(task?.sourcing?.searchCandidates)
-    && task.sourcing.searchCandidates.some((candidate) => candidate?.detail?.detailStatus === "detail_captured");
-}
-
-function aiJudgementComplete(task) {
-  return Boolean(task?.sourcing?.aiJudgement?.judgedAt && task?.sourcing?.aiJudgement?.verdict);
-}
-
-function hasCriticalSpecConflictText(value) {
-  const text = String(value || "").trim().toLowerCase()
-    .replace(/(?:均|皆)?无(?:任何|明显|关键)?[^，。；]{0,12}(?:冲突|不匹配|不一致)/g, "")
-    .replace(/(?:没有|未发现|不存在|未见)(?:任何|明显|关键)?[^，。；]{0,12}(?:冲突|不匹配|不一致)/g, "");
-  return /不匹配|不一致|(?:规格|型号|尺寸|数量|方向|左右|套装|配件|制式|类型|颜色|适配|车型)[^，。；]{0,10}冲突|(?:torx|星型|梅花)[^，。；]{0,16}(?:hex|内六角)|(?:hex|内六角)[^，。；]{0,16}(?:torx|星型|梅花)/i.test(text);
-}
-
-function aiJudgementHasSafetyConflict(judgement) {
-  if (!judgement || judgement.verdict !== "same_product") return false;
-  if (Array.isArray(judgement.specConflicts) && judgement.specConflicts.length) return true;
-  if (hasCriticalSpecConflictText(judgement.reason)) return true;
-  const bestCandidateIndex = Number(judgement.bestCandidateIndex);
-  const assessment = Array.isArray(judgement.candidateAssessments)
-    ? judgement.candidateAssessments.find((entry) => Number(entry?.candidateIndex) === bestCandidateIndex)
-    : null;
-  if (!Number.isInteger(bestCandidateIndex) || bestCandidateIndex < 1 || !assessment) return true;
-  if (assessment.verdict !== "same_product" || Number(assessment.confidence) < 85) return true;
-  return Array.isArray(assessment.differences) && assessment.differences.some((difference) => /型号|规格|尺寸|数量|方向|左右|套装|配件|制式|类型|颜色|适配|车型|torx|hex|星型|梅花|六角/i.test(String(difference || "")));
-}
-
-function aiReady(task) {
-  const candidates = Array.isArray(task?.sourcing?.searchCandidates)
-    ? task.sourcing.searchCandidates.filter((candidate) => candidate?.detail?.detailStatus === "detail_captured")
-    : [];
-  return { ready: Boolean(task?.enrichment?.mainImageUrl && candidates.length), candidates };
-}
-
-function aiRecommendsSameProduct(task) {
-  const judgement = task?.sourcing?.aiJudgement;
-  return judgement?.verdict === "same_product" && judgement?.needsHumanReview === false && Number(judgement?.confidence) >= 85 && !aiJudgementHasSafetyConflict(judgement);
-}
-
-function resolveRecommendedCandidate(task) {
-  const judgement = task?.sourcing?.aiJudgement;
-  const candidates = aiReady(task).candidates.slice(0, 3);
-  const candidateId = String(judgement?.bestCandidateId || "").trim();
-  if (candidateId) {
-    const exact = candidates.find((candidate) => String(candidate?.candidateId || "").trim() === candidateId);
-    if (exact) return exact;
+const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+window.addEventListener("beforeunload", () => {
+  pageUnloading = true;
+  const activeTask = currentQueuedTask(automaticBatch.activeTaskId);
+  if (activeTask?.sourcing?.timing) {
+    activeTask.sourcing.timing = sourcingFlow.pauseAutomaticTiming(activeTask.sourcing.timing);
+    activeTask.sourcing.status = "paused_manual";
+    persistQueue();
   }
-  const index = Number(judgement?.bestCandidateIndex);
-  return Number.isInteger(index) && index >= 1 && index <= candidates.length ? candidates[index - 1] : null;
-}
+});
 
-function favoriteComplete(task) {
-  return task?.sourcing?.favorite?.status === "favorited";
+function object(value) { return value && typeof value === "object" && !Array.isArray(value) ? value : null; }
+function text(value, fallback = "") { return typeof value === "string" ? value.trim() : fallback; }
+function clone(value, fallback = null) { try { return JSON.parse(JSON.stringify(value)); } catch { return fallback; } }
+function taskIdOf(task) { return text(task?.taskId || task?.id); }
+function stableTaskIdentity(task) { const id = taskIdOf(task); return /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(id) ? `taskId:${id}` : ""; }
+function currentQueuedTask(taskOrId) {
+  if (!Array.isArray(queue?.tasks)) return null;
+  if (taskOrId && typeof taskOrId === "object") return queue.tasks.find((task) => task === taskOrId) || null;
+  const id = text(taskOrId);
+  return id ? queue.tasks.find((task) => taskIdOf(task) === id) || null : null;
 }
-
-function skuVerificationComplete(task) {
-  return task?.sourcing?.skuVerification?.status === "sku_price_verified";
+function sourcingState(task) { task.sourcing = object(task?.sourcing) || {}; return task.sourcing; }
+function pricingState(task) { task.pricing = object(task?.pricing) || {}; return task.pricing; }
+function queueMeta() {
+  if (!queue) return {};
+  queue.meta = object(queue.meta) || {};
+  queue.meta.sourcingSchema = "mvp6";
+  if (!object(queue.meta.singleUnitExceptions)) queue.meta.singleUnitExceptions = {};
+  return queue.meta;
 }
-
-function finalEligibility(task) {
-  const status = task?.pricing?.finalOzonPricing?.status;
-  if (status === "completed" || status === "rejected_preliminary") return task?.pricing?.eligibleAt18Pct === true;
-  return null;
-}
+function setStatus(message, state = "") { const node = $("status"); if (node) { node.textContent = message; node.className = state; } }
 
 function persistQueue() {
   if (!queue) return;
-  queue.meta = queue.meta && typeof queue.meta === "object" ? queue.meta : {};
-  queue.meta.pinduoduoBatch = {
-    cursor: batch.cursor,
-    completed: batch.completed,
-    failed: batch.failed,
-    status: batch.running ? (batch.paused ? (batch.riskPaused ? "paused_risk_control" : "paused") : "running") : (batch.stopRequested ? "stopped" : "idle"),
-    pauseReason: batch.pauseReason || null,
-    updatedAt: new Date().toISOString(),
+  const meta = queueMeta();
+  meta.automatic1688Batch = {
+    cursor: automaticBatch.cursor, completed: automaticBatch.completed, failed: automaticBatch.failed,
+    activeTaskId: automaticBatch.activeTaskId || null, status: automaticBatch.running ? "running" : automaticBatch.status,
+    pauseReason: automaticBatch.pauseReason || null, updatedAt: new Date().toISOString(),
   };
   try { localStorage.setItem(storageKey, JSON.stringify({ queue, sourceName })); }
-  catch (error) { setStatus(`本地保存失败：${error.message}`, "bad"); }
+  catch (error) { setStatus(`本地保存失败：${error?.message || "浏览器存储不可用"}`, "bad"); }
 }
 
 function restoreQueue() {
   try {
-    const saved = JSON.parse(localStorage.getItem(storageKey) || "null");
-    if (!Array.isArray(saved?.queue?.tasks)) return false;
-    queue = saved.queue;
-    sourceName = saved.sourceName || sourceName;
-    const state = queue?.meta?.pinduoduoBatch || {};
-    batch.cursor = Number(state.cursor) || 0;
-    batch.completed = Number(state.completed) || 0;
-    batch.failed = Number(state.failed) || 0;
+    const primary = localStorage.getItem(storageKey);
+    const migrated = sourcingFlow.migrateMvp6StoredQueue(primary, legacyStorageKeys.map((key) => localStorage.getItem(key)));
+    if (!migrated.saved) return false;
+    queue = migrated.saved.queue;
+    sourceName = migrated.saved.sourceName || sourceName;
+    const state = queueMeta().automatic1688Batch;
+    automaticBatch.cursor = Number.isInteger(state.cursor) && state.cursor >= 0 ? state.cursor : 0;
+    automaticBatch.completed = Number.isInteger(state.completed) && state.completed >= 0 ? state.completed : 0;
+    automaticBatch.failed = Number.isInteger(state.failed) && state.failed >= 0 ? state.failed : 0;
+    automaticBatch.status = text(state.status, "idle") || "idle";
+    automaticBatch.pauseReason = text(state.pauseReason);
+    if (migrated.migratedFromLegacy || !primary) localStorage.setItem(storageKey, JSON.stringify(migrated.saved));
     return true;
   } catch { return false; }
 }
 
+function trustedOzonImage(rawUrl) {
+  try {
+    const url = new URL(text(rawUrl)); const host = url.hostname.toLowerCase();
+    return url.protocol === "https:" && !url.port && !url.username && !url.password && (host === "ozone.ru" || host.endsWith(".ozone.ru"));
+  } catch { return false; }
+}
+function trusted1688Image(rawUrl) {
+  try {
+    const url = new URL(text(rawUrl)); const host = url.hostname.toLowerCase();
+    return url.protocol === "https:" && !url.port && !url.username && !url.password
+      && (host === "alicdn.com" || host.endsWith(".alicdn.com") || host === "1688.com" || host.endsWith(".1688.com"));
+  } catch { return false; }
+}
 function readiness(task) {
   const reasons = [];
-  if (task?.status !== "pending_pinduoduo_search" && task?.status !== "pending_human_review") reasons.push("Ozon补全未完成");
-  if (!task?.enrichment?.mainImageUrl) reasons.push("缺主图");
-  if (!(Number(task?.enrichment?.maxPurchaseCostAt18Pct) >= 0)) reasons.push("缺18%成本上限");
+  if (!taskIdOf(task)) reasons.push("任务ID缺失");
+  if (!trustedOzonImage(task?.enrichment?.mainImageUrl || task?.ozon?.mainImageUrl)) reasons.push("缺可信Ozon主图");
+  if (!(Number(task?.enrichment?.maxPurchaseCostAt18Pct ?? task?.pricing?.preliminaryMaxPurchaseCostAt18Pct) >= 0)) reasons.push("缺18%成本上限");
   return { ready: reasons.length === 0, reasons };
 }
+function formatMoney(value) { return typeof value === "number" && Number.isFinite(value) ? `¥${value.toFixed(2)}` : "—"; }
+function stageLabel(status) {
+  return ({ automatic_running: "自动处理中", paused_platform_verification: "平台验证暂停", paused_manual: "已暂停", automatic_cancelled: "已取消", final_confirmation_pending: "待最终确认", final_confirmation_blocked: "需人工处理", confirmed_purchase_source: "已确认采购来源", no_source_found: "未找到可确认货源" })[status] || text(status) || "待处理";
+}
 
-function stats() {
+function actionButton(label, action, { secondary = false, disabled = false } = {}) {
+  const button = document.createElement("button");
+  button.textContent = label; button.className = secondary ? "secondary" : ""; button.disabled = disabled;
+  button.addEventListener("click", () => Promise.resolve(action()).catch((error) => setStatus(error?.message || "操作未完成，请稍后重试。", "bad")));
+  return button;
+}
+function fact(label, value) {
+  const node = document.createElement("div"); node.className = "confirmation-fact";
+  const small = document.createElement("small"); small.textContent = label;
+  const strong = document.createElement("strong"); strong.textContent = value || "—";
+  node.append(small, strong); return node;
+}
+function currentCardCandidate(task, final) {
+  if (task?.sourcing?.activeCandidate) return task.sourcing.activeCandidate;
+  const id = text(final?.candidate?.candidateId || final?.candidateSnapshot?.candidateId);
+  return (task?.sourcing?.detailCandidates || []).find((candidate) => text(candidate?.candidateId) === id)
+    || final?.candidateSnapshot || final?.candidate || null;
+}
+
+function renderStats() {
   const tasks = queue?.tasks || [];
-  return {
-    total: tasks.length,
-    ready: tasks.filter((task) => readiness(task).ready).length,
-    blocked: tasks.filter((task) => !readiness(task).ready).length,
-    priced: tasks.filter((task) => Number(task?.pricing?.purchaseCost) > 0).length,
-    eligible: tasks.filter((task) => finalEligibility(task) === true).length,
-    sourced: tasks.filter(candidateSearchComplete).length,
-    judged: tasks.filter(aiJudgementComplete).length,
-    favorited: tasks.filter(favoriteComplete).length,
-    skuVerified: tasks.filter(skuVerificationComplete).length,
+  const values = {
+    total: tasks.length, ready: tasks.filter((task) => readiness(task).ready).length,
+    running: tasks.filter((task) => task?.sourcing?.status === "automatic_running").length,
+    pending: tasks.filter((task) => task?.sourcing?.finalConfirmation?.status === "final_confirmation_pending").length,
+    blocked: tasks.filter((task) => task?.sourcing?.finalConfirmation?.status === "final_confirmation_blocked").length,
+    paused: tasks.filter((task) => task?.sourcing?.status === "paused_platform_verification").length,
+    confirmed: tasks.filter((task) => task?.sourcing?.status === "confirmed_purchase_source").length,
+    noSource: tasks.filter((task) => task?.sourcing?.status === "no_source_found").length,
   };
+  for (const [id, value] of Object.entries(values)) if ($(id)) $(id).textContent = String(value);
 }
-
-function updateStats() {
-  const value = stats();
-  Object.entries(value).forEach(([key, count]) => $(key).textContent = count);
-}
-
-function durationLabel(milliseconds) {
-  const value = Number(milliseconds) || 0;
-  return value >= 60000 ? `${(value / 60000).toFixed(1)}分` : `${(value / 1000).toFixed(1)}秒`;
-}
-
-function timingEntries() {
-  return (queue?.tasks || [])
-    .map((task) => ({ task, timing: task?.sourcing?.searchTiming }))
-    .filter((entry) => entry.timing && Number(entry.timing.totalMs) >= 0)
-    .sort((left, right) => String(right.timing.completedAt || "").localeCompare(String(left.timing.completedAt || "")));
-}
-
-function renderTimingPanel() {
-  const summary = $("timingSummary");
-  const container = $("timingRows");
-  const entries = timingEntries();
-  if (!entries.length) {
-    summary.textContent = "尚无样本";
-    container.replaceChildren(Object.assign(document.createElement("p"), { className: "muted", textContent: "完成或失败一件找同款后，这里会显示阶段耗时。" }));
-    return;
-  }
-  const totals = entries.map((entry) => Number(entry.timing.totalMs) || 0);
-  const average = totals.reduce((sum, value) => sum + value, 0) / totals.length;
-  summary.textContent = `${entries.length}件 · 平均${durationLabel(average)} · 最慢${durationLabel(Math.max(...totals))}`;
-  container.replaceChildren(...entries.slice(0, 6).map(({ task, timing }) => {
-    const card = document.createElement("article"); card.className = `timing-card ${timing.status === "failed" ? "failed" : ""}`;
-    const stages = Array.isArray(timing.stages) ? timing.stages : [];
-    const slowest = stages.reduce((current, stage) => !current || Number(stage.durationMs) > Number(current.durationMs) ? stage : current, null);
-    const heading = document.createElement("div"); heading.className = "timing-card-head";
-    const title = document.createElement("strong"); title.textContent = `SKU ${task?.ozon?.sku || "-"} · ${durationLabel(timing.totalMs)}`;
-    const meta = document.createElement("small"); meta.textContent = `${timing.status === "failed" ? "失败记录" : "完成"}${slowest ? ` · 最慢：${slowest.label} ${durationLabel(slowest.durationMs)}` : ""}`;
-    heading.replaceChildren(title, meta);
-    const details = document.createElement("div"); details.className = "timing-stages";
-    stages.forEach((stage) => {
-      const chip = document.createElement("span"); chip.className = stage.status === "error" ? "bad" : ""; chip.textContent = `${stage.label} ${durationLabel(stage.durationMs)}`; details.append(chip);
-    });
-    card.replaceChildren(heading, details);
-    return card;
-  }));
-}
-
-function money(value) {
-  const amount = Number(value);
-  return Number.isFinite(amount) ? amount.toFixed(2) : "-";
-}
-
-function render() {
-  updateStats();
-  renderTimingPanel();
-  $("download").disabled = !queue;
-  $("batchStart").disabled = !queue || batch.running || aiBatch.running || skuBatch.running;
-  $("aiBatchStart").disabled = !queue || batch.running || aiBatch.running || skuBatch.running;
-  $("skuBatchStart").disabled = !queue || batch.running || aiBatch.running || skuBatch.running;
-  $("batchPause").disabled = !batch.running || batch.paused;
-  $("batchResume").disabled = !batch.running || !batch.paused;
-  $("batchStop").disabled = !batch.running;
+function renderRows() {
+  const rows = $("rows"); if (!rows) return; rows.replaceChildren();
   const tasks = queue?.tasks || [];
   if (!tasks.length) {
-    $("rows").innerHTML = '<tr><td colspan="10" class="empty">尚未导入任务。</td></tr>';
-    return;
+    const row = document.createElement("tr"), cell = document.createElement("td");
+    cell.colSpan = 7; cell.className = "empty"; cell.textContent = "尚未导入任务。"; row.append(cell); rows.append(row); return;
   }
-  $("rows").replaceChildren(...tasks.map((task, index) => {
-    const ready = readiness(task);
-    const row = document.createElement("tr");
-    const purchaseCost = Number(task?.pricing?.purchaseCost);
-    const judgement = task?.sourcing?.aiJudgement;
-    const judgedCandidate = resolveRecommendedCandidate(task);
-    const suggestedCandidate = judgedCandidate || task?.sourcing?.suggestedCandidate;
-    const verifiedCost = Number(task?.sourcing?.skuVerification?.purchaseCost);
-    const eligible = finalEligibility(task);
-    const stage = task?.sourcing?.status === "paused_risk_control" ? "风控暂停" : task.status;
-    row.innerHTML = `<td>${index + 1}</td><td></td><td class="name"></td><td class="money">${money(task?.enrichment?.maxPurchaseCostAt18Pct)}</td><td class="${task?.sourcing?.status === "paused_risk_control" || !ready.ready ? "bad" : "ok"}">${ready.ready ? stage : ready.reasons.join("、")}</td><td></td><td></td><td></td><td class="${eligible === true ? "ok" : eligible === false ? "bad" : "muted"}">${eligible === true ? "达到18%" : eligible === false ? "低于18%" : "待判断"}</td><td></td>`;
-    const imageCell = row.children[1];
-    if (task?.enrichment?.mainImageUrl) {
-      const image = document.createElement("img"); image.className = "thumb"; image.src = task.enrichment.mainImageUrl; image.alt = "主图"; imageCell.append(image);
-    } else imageCell.textContent = "-";
-    row.children[2].textContent = `${task?.ozon?.sku || "-"}\n${task?.ozon?.name || "-"}`;
-    const deviceCell = row.children[5];
-    const prepare = document.createElement("button"); prepare.textContent = candidateSearchComplete(task) ? "重新找同款" : "自动以图找同款"; prepare.disabled = !ready.ready || batch.running || aiBatch.running || skuBatch.running; prepare.addEventListener("click", async () => { try { await searchTask(task, prepare); } catch {} }); deviceCell.append(prepare);
-    if (task?.sourcing?.searchCandidates?.length) {
-      const list = document.createElement("small");
-      task.sourcing.searchCandidates.forEach((candidate, candidateIndex) => {
-        const line = document.createElement("div");
-        const detailStatus = candidate?.detail?.detailStatus;
-        const hasDetailPrice = Number(candidate?.detail?.displayedPrice) > 0;
-        const detailPrice = hasDetailPrice ? candidate.detail.displayedPrice : candidate.displayedPrice;
-        const shipping = candidate?.detail?.shippingFee === 0 ? "包邮" : "运费待核";
-        const priceSource = hasDetailPrice ? "详情价" : "搜索页价";
-        const missingLabels = (candidate?.detail?.missingFields || []).map((field) => ({ goods_id: "商品ID", title: "标题", price: "价格" }[field] || field));
-        const partialState = detailStatus === "detail_partial" ? `，链接已取得，详情缺${missingLabels.join("/") || "字段"}` : "";
-        const label = `候选${candidateIndex + 1}：${priceSource}${money(detailPrice)}元，${shipping}${partialState}`;
-        if (candidate.sourceUrl) {
-          const open = document.createElement("button"); open.className = "candidate-app-open"; open.textContent = `${label} · 在App打开`; open.disabled = batch.running || aiBatch.running || skuBatch.running; open.addEventListener("click", async () => { await openCandidateInApp(task, candidate, open); }); line.append(open);
-          if (detailStatus === "detail_partial" && candidate?.detail?.error) line.title = candidate.detail.error;
-        }
-        else {
-          const stateText = detailStatus === "detail_not_inspected" ? "未核验"
-            : detailStatus === "detail_failed" ? `详情读取失败（已重试${candidate?.detail?.attemptCount || 2}次${missingLabels.length ? `，缺${missingLabels.join("/")}` : ""}）`
-              : "链接解析失败";
-          line.textContent = `${label}（${stateText}）`;
-          if (candidate?.detail?.error) line.title = candidate.detail.error;
-        }
-        if (candidate?.evidence?.localRef) { const evidence = document.createElement("a"); evidence.href = candidate.evidence.localRef; evidence.target = "_blank"; evidence.rel = "noopener noreferrer"; evidence.textContent = " [证据图]"; line.append(evidence); }
-        list.append(line);
-      });
-      deviceCell.append(list);
-    }
-    const price = document.createElement("input"); price.className = "price"; price.type = "number"; price.min = "0.01"; price.step = "0.01"; price.placeholder = "目标规格常规价"; if (purchaseCost > 0) price.value = purchaseCost.toFixed(2); else if (verifiedCost > 0) price.value = verifiedCost.toFixed(2); row.children[6].append(price);
-    const link = document.createElement("input"); link.className = "link"; link.type = "url"; link.placeholder = "候选商品链接（可暂空）"; link.value = task?.pricing?.sourceUrl || suggestedCandidate?.sourceUrl || suggestedCandidate?.detail?.sourceUrl || ""; row.children[7].append(link);
-    const resultCell = row.children[8]; resultCell.className = "ai-result";
-    if (judgement) {
-      const safelyRecommended = aiRecommendsSameProduct(task);
-      const title = document.createElement("strong");
-      title.className = safelyRecommended ? "ok" : judgement.verdict === "no_match" ? "bad" : "muted";
-      title.textContent = `${safelyRecommended ? "推荐同款" : judgement.verdict === "no_match" ? "未找到同款" : "需要复核"} · ${judgement.confidence}%`;
-      const reason = document.createElement("small"); reason.textContent = judgement.reason || "无判断理由";
-      resultCell.replaceChildren(title, reason);
-      if (judgement.verdict === "same_product" && aiJudgementHasSafetyConflict(judgement)) {
-        const warning = document.createElement("small"); warning.className = "bad"; warning.textContent = "安全闸门：检测到关键规格冲突，已禁止自动收藏、规格核验和采购价写入。"; resultCell.append(warning);
-      }
-      if (aiRecommendsSameProduct(task)) {
-        const favorite = document.createElement("small");
-        const favoriteStatus = task?.sourcing?.favorite?.status;
-        favorite.className = favoriteStatus === "favorited" ? "ok" : favoriteStatus === "failed" || favoriteStatus === "paused_risk_control" ? "bad" : "muted";
-        favorite.textContent = favoriteStatus === "favorited" ? (task.sourcing.favorite.alreadyFavorited ? "已收藏（原已收藏）" : "已收藏")
-          : favoriteStatus === "favoriting" ? "收藏中……"
-            : favoriteStatus === "paused_risk_control" ? `收藏暂停：${task.sourcing.favorite.error || "触发风控"}`
-              : favoriteStatus === "failed" ? `收藏失败：${task.sourcing.favorite.error || "未知错误"}`
-                : "等待自动收藏";
-        resultCell.append(favorite);
-        const sku = document.createElement("small");
-        const verification = task?.sourcing?.skuVerification;
-        sku.className = verification?.status === "sku_price_verified" ? "ok" : verification?.status === "failed" || verification?.status === "pending_human_review" ? "bad" : "muted";
-        sku.textContent = verification?.status === "sku_price_verified"
-          ? `规格已核验：${verification.optionLabel}，${money(verification.purchaseCost)}元${verification.finalPricingError ? `；最终复价失败：${verification.finalPricingError}` : ""}`
-          : verification?.status === "pending_human_review" ? `规格需复核：${verification.reason || "证据不足"}`
-            : verification?.status === "failed" ? `规格核验失败：${verification.error || "未知错误"}`
-              : "等待规格实价核验";
-        resultCell.append(sku);
-        if (verification?.finalPricingError) sku.className = "bad";
-      }
-    } else if (task?.sourcing?.aiLastError) {
-      const title = document.createElement("strong"); title.className = "bad"; title.textContent = "AI判断失败";
-      const reason = document.createElement("small"); reason.textContent = task.sourcing.aiLastError;
-      resultCell.replaceChildren(title, reason);
-    } else resultCell.textContent = eligible === true ? "达到18%" : eligible === false ? "低于18%" : "待AI判断";
-    const actions = document.createElement("div"); actions.className = "row-actions";
-    const judge = document.createElement("button"); judge.textContent = aiJudgementComplete(task) ? "重新AI判断" : "AI判断"; judge.disabled = !aiReady(task).ready || batch.running || aiBatch.running || skuBatch.running; judge.addEventListener("click", async () => { try { await judgeTask(task, judge); } catch {} }); actions.append(judge);
-    if (aiRecommendsSameProduct(task) && !favoriteComplete(task)) {
-      const favorite = document.createElement("button"); favorite.textContent = task?.sourcing?.favorite?.status === "favoriting" ? "收藏中" : "重试收藏"; favorite.disabled = batch.running || aiBatch.running || skuBatch.running || task?.sourcing?.favorite?.status === "favoriting"; favorite.addEventListener("click", async () => { await favoriteRecommendedCandidate(task, favorite); }); actions.append(favorite);
-    }
-    if (aiRecommendsSameProduct(task) && !skuVerificationComplete(task)) {
-      const verifySku = document.createElement("button"); verifySku.textContent = "核验规格价"; verifySku.disabled = batch.running || aiBatch.running || skuBatch.running; verifySku.addEventListener("click", async () => { await verifyRecommendedSku(task, verifySku); }); actions.append(verifySku);
-    }
-    const save = document.createElement("button"); save.textContent = "手动确认并复价"; save.disabled = !ready.ready; save.addEventListener("click", async () => { await savePrice(task, price.value, link.value); }); actions.append(save); row.children[9].append(actions);
-    return row;
-  }));
+  tasks.forEach((task, index) => {
+    const row = document.createElement("tr"), final = task?.sourcing?.finalConfirmation, candidate = task?.sourcing?.activeCandidate || task?.sourcing?.confirmedCandidate;
+    const values = [String(index + 1), `${text(task?.ozon?.sku) || "—"}\n${text(task?.ozon?.name) || "未命名商品"}`, formatMoney(Number(task?.enrichment?.maxPurchaseCostAt18Pct)), stageLabel(task?.sourcing?.status), text(candidate?.title, "—"), final?.blockers?.join("、") || (final?.eligibleAt18Pct ? "18%通过" : "待试算"), task?.pricing?.purchaseCost === undefined ? "确认后写入" : formatMoney(Number(task.pricing.purchaseCost))];
+    values.forEach((value) => { const cell = document.createElement("td"); cell.textContent = value; row.append(cell); }); rows.append(row);
+  });
 }
+function renderTimingPanel() {
+  const rows = $("timingRows"), summary = $("timingSummary"); if (!rows) return;
+  const tasks = (queue?.tasks || []).filter((task) => task?.sourcing?.timing);
+  if (summary) summary.textContent = tasks.length ? `自动任务${tasks.length}件 · 平台暂停${tasks.filter((task) => task?.sourcing?.status === "paused_platform_verification").length}件` : "尚无自动找货源记录";
+  rows.replaceChildren();
+  if (!tasks.length) { const empty = document.createElement("p"); empty.className = "muted"; empty.textContent = "自动链路按每件最多150秒活动时间计算，平台验证等待不计入。"; rows.append(empty); return; }
+  tasks.slice(0, 12).forEach((task) => {
+    const card = document.createElement("div"); card.className = "timing-card";
+    card.append(fact(text(task?.ozon?.sku, taskIdOf(task)), stageLabel(task?.sourcing?.status)), fact("活动时间", `${Math.round(sourcingFlow.automaticElapsedMs(task.sourcing.timing) / 1000)} / 150 秒`), fact("当前策略", text(task?.sourcing?.searchStrategy, "等待"))); rows.append(card);
+  });
+}
+function renderConfirmationQueue() {
+  const rows = $("confirmationRows"), summary = $("confirmationSummary"); if (!rows) return;
+  const tasks = (queue?.tasks || []).filter((task) => object(task?.sourcing?.finalConfirmation));
+  if (summary) summary.textContent = `待确认${tasks.filter((task) => task.sourcing.finalConfirmation.status === "final_confirmation_pending").length}件`;
+  rows.replaceChildren();
+  if (!tasks.length) { const empty = document.createElement("p"); empty.className = "muted"; empty.textContent = "自动找货源完成后，需要人工确认的商品会显示在这里。"; rows.append(empty); return; }
+  tasks.forEach((task) => {
+    const final = task.sourcing.finalConfirmation, candidate = currentCardCandidate(task, final), judgement = task.sourcing.aiJudgement || final.judgementSnapshot || final.judgement || {}, quote = task.sourcing.quote || final.quoteSnapshot || final, preview = task.sourcing.finalPricingPreview || final.finalPricing;
+    const card = document.createElement("article"); card.className = `confirmation-card ${final.status === "final_confirmation_pending" ? "ready" : "blocked"}`;
+    const head = document.createElement("div"), title = document.createElement("div"), h3 = document.createElement("h3"), sub = document.createElement("p"), badge = document.createElement("strong");
+    head.className = "confirmation-card-head"; h3.textContent = text(task?.ozon?.name, "未命名Ozon商品"); sub.textContent = `SKU：${text(task?.ozon?.sku, "—")} · ${stageLabel(final.status)}`; badge.textContent = final.status === "final_confirmation_pending" ? "可确认" : "需人工复核"; title.append(h3, sub); head.append(title, badge); card.append(head);
+    const media = document.createElement("div"); media.className = "confirmation-media";
+    if (trustedOzonImage(task?.enrichment?.mainImageUrl || task?.ozon?.mainImageUrl)) { const image = document.createElement("img"); image.className = "thumb"; image.alt = "Ozon主图"; image.src = task.enrichment?.mainImageUrl || task.ozon?.mainImageUrl; media.append(image); }
+    if (trusted1688Image(candidate?.imageUrl)) { const image = document.createElement("img"); image.className = "thumb"; image.alt = "1688候选图"; image.src = candidate.imageUrl; media.append(image); }
+    if (media.children.length) card.append(media);
+    const facts = document.createElement("div"); facts.className = "confirmation-facts";
+    const selectedOption = candidate?.sku?.options?.find((option) => text(option?.id || option?.optionId) === text(candidate?.sku?.selectedOptionId));
+    facts.append(fact("候选商品", text(candidate?.title, "候选缺失")), fact("供应商", text(candidate?.supplierName, "未提供")), fact("同款置信度", Number.isFinite(Number(judgement?.confidence)) ? `${Number(judgement.confidence)}%` : "未判断"), fact("目标规格", text(selectedOption?.label, text(candidate?.sku?.selectedOptionId, "未核验"))), fact("商品价", formatMoney(Number(quote?.productPrice))), fact("国内运费", formatMoney(Number(quote?.domesticShipping))), fact("采购成本", formatMoney(Number(quote?.purchaseCost))), fact("最终18%", preview?.eligibleAt18Pct === true ? "通过" : preview ? "不通过 / 待复核" : "未取得")); card.append(facts);
+    const evidence = document.createElement("p"); evidence.className = "confirmation-evidence";
+    if (sourcingFlow.canonical1688OfferUrl(candidate?.sourceUrl)) { const link = document.createElement("a"); link.textContent = "打开1688候选"; link.href = candidate.sourceUrl; link.target = "_blank"; link.rel = "noreferrer"; evidence.append(link); }
+    if (candidate?.evidence?.localRef) { const link = document.createElement("a"); link.textContent = "查看本地证据"; link.href = candidate.evidence.localRef; link.target = "_blank"; link.rel = "noreferrer"; evidence.append(document.createTextNode(evidence.children.length ? " · " : ""), link); }
+    const differences = Array.isArray(judgement?.candidateAssessments) ? judgement.candidateAssessments.find((item) => text(item?.candidateId) === text(candidate?.candidateId))?.differences : [];
+    if (Array.isArray(differences) && differences.length) evidence.append(document.createTextNode(`${evidence.children.length ? " · " : ""}差异：${differences.join("；")}`));
+    if (evidence.children.length || evidence.textContent) card.append(evidence);
+    if (Array.isArray(final.blockers) && final.blockers.length) { const blockers = document.createElement("p"); blockers.className = "confirmation-blockers"; blockers.textContent = `需确认：${final.blockers.join("、")}`; card.append(blockers); }
+    const actions = document.createElement("div"); actions.className = "confirmation-actions"; const pending = final.status === "final_confirmation_pending";
+    actions.append(actionButton("确认采用", () => confirmFinalCandidate(taskIdOf(task)), { disabled: !pending }), actionButton("否决并尝试下一候选", () => rejectFinalCandidate(taskIdOf(task)), { secondary: true, disabled: !candidate }));
+    if (Number(candidate?.minimumOrderQuantity) === 2 && !candidate?.supportsOnePiece && !candidate?.supportsSample) { const input = document.createElement("input"); input.type = "number"; input.min = "0.01"; input.step = "0.01"; input.placeholder = "客服确认的一件价"; input.className = "price"; actions.append(input, actionButton("确认客服可一件采购", () => saveSingleUnitException(taskIdOf(task), input.value), { secondary: true })); }
+    actions.append(actionButton("单品拼多多深度补搜", () => startSinglePinduoduoDeepSearch(taskIdOf(task)), { secondary: true })); card.append(actions); rows.append(card);
+  });
+}
+function renderControls() {
+  if ($("batchState")) $("batchState").textContent = automaticBatch.running ? "运行中" : automaticBatch.status === "paused_platform_verification" ? "平台验证暂停" : automaticBatch.paused ? "已暂停" : "待运行";
+  if ($("download")) $("download").disabled = !queue;
+  if ($("batchStart")) $("batchStart").disabled = automaticBatch.running;
+  if ($("batchPause")) $("batchPause").disabled = !automaticBatch.running || automaticBatch.paused;
+  if ($("batchResume")) $("batchResume").disabled = automaticBatch.running || (!automaticBatch.paused && automaticBatch.status !== "paused_platform_verification");
+  if ($("batchStop")) $("batchStop").disabled = !automaticBatch.running && !automaticBatch.paused;
+}
+function render() { renderStats(); renderRows(); renderTimingPanel(); renderConfirmationQueue(); renderControls(); }
 
+function requestId(prefix) { requestSequence += 1; return `${prefix}-${Date.now().toString(36)}-${requestSequence.toString(36)}`; }
 async function api(path, options = {}) {
-  const response = await fetch(path, { ...options, headers: { "content-type": "application/json", "x-ozon-agent": "local-ui-v1", ...(options.headers || {}) } });
-  const payload = await response.json();
-  if (!response.ok || !payload.ok) {
-    const error = new Error(payload.error || "操作失败");
-    error.code = payload.code || "";
-    error.details = payload;
-    throw error;
-  }
-  return payload;
+  const headers = { "content-type": "application/json", "x-ozon-agent": "local-ui-v1", ...(options.headers || {}) };
+  const response = await fetch(path, { ...options, headers }); let body = null;
+  try { body = await response.json(); } catch { body = null; }
+  if (!response.ok || body?.ok === false) throw new Error(text(body?.error, "本地Agent未完成请求。"));
+  return body;
 }
-
-function pingFinalPricingBridge(timeoutMs = 2500) {
+async function apiWithTimeout(path, body, timeoutMs, label) {
+  const controller = typeof AbortController === "function" ? new AbortController() : null; let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; controller?.abort(); }, timeoutMs);
+  try { return await api(path, { method: "POST", body: JSON.stringify(body), signal: controller?.signal }); }
+  catch (error) { if (timedOut) throw new Error(`${label}超时，请转入人工确认。`); throw error; }
+  finally { clearTimeout(timer); }
+}
+async function sourcingExtensionRequest(action, payload = {}, timeoutMs = 15000) {
+  const allowed = new Set(["start_1688_job", "get_1688_job", "cancel_1688_job"]);
+  if (!allowed.has(action)) return Promise.reject(new Error("找品桥接动作不在允许列表中。"));
+  if (pageUnloading) return Promise.reject(new Error("页面正在关闭，已停止找品请求。"));
+  const id = requestId("sourcing");
   return new Promise((resolve, reject) => {
-    const requestId = `ping-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-    const timer = setTimeout(() => {
-      window.removeEventListener("message", onMessage);
-      reject(new Error("未检测到Ozon最终复价桥接；请在扩展管理页重新加载0.6.29后刷新本页。"));
-    }, timeoutMs);
-    function onMessage(event) {
-      if (event.source !== window || event.origin !== window.location.origin || event.data?.type !== "OZON_FINAL_REPRICE_READY_V1" || event.data?.requestId !== requestId) return;
-      clearTimeout(timer); window.removeEventListener("message", onMessage); resolve(event.data);
-    }
+    let settled = false;
+    const finish = (callback, value) => { if (settled) return; settled = true; clearTimeout(timer); window.removeEventListener("message", onMessage); window.removeEventListener("beforeunload", onUnload); callback(value); };
+    const onMessage = (event) => {
+      const data = event?.data;
+      if (event?.source !== window || event?.origin !== window.location.origin || data?.type !== "OZON_SOURCING_EXTENSION_RESPONSE_V1" || data?.requestId !== id) return;
+      if (data?.ok !== true) finish(reject, new Error(text(data?.error, "1688扩展没有完成请求。"))); else finish(resolve, data);
+    };
+    const timer = setTimeout(() => finish(reject, new Error("1688扩展响应超时，请转入人工确认。")), timeoutMs);
+    const onUnload = () => finish(reject, new Error("页面正在关闭，已停止找品请求。"));
     window.addEventListener("message", onMessage);
-    window.postMessage({ type: "OZON_FINAL_REPRICE_PING_V1", requestId }, window.location.origin);
+    window.addEventListener("beforeunload", onUnload);
+    try { window.postMessage({ type: "OZON_SOURCING_EXTENSION_REQUEST_V1", action, requestId: id, ...payload }, window.location.origin); }
+    catch (error) { finish(reject, error); }
   });
 }
-
-async function requestFinalOzonPricing(task, timeoutMs = 90000) {
-  await pingFinalPricingBridge();
+function requestFinalOzonPricing(task, timeoutMs = 90000) {
+  const id = requestId("final-price");
   return new Promise((resolve, reject) => {
-    const requestId = `ozon-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-    const timer = setTimeout(() => {
-      window.removeEventListener("message", onMessage);
-      reject(new Error("Ozon最终复价超时；请确认0.6.29扩展已重新加载，然后重试。"));
-    }, timeoutMs);
-    function onMessage(event) {
-      if (event.source !== window || event.origin !== window.location.origin || event.data?.type !== "OZON_FINAL_REPRICE_RESPONSE_V1" || event.data?.requestId !== requestId) return;
-      clearTimeout(timer);
-      window.removeEventListener("message", onMessage);
-      if (!event.data?.ok) reject(new Error(event.data?.error || "Ozon最终复价失败"));
-      else resolve(event.data);
-    }
+    let settled = false;
+    const finish = (callback, value) => { if (settled) return; settled = true; clearTimeout(timer); window.removeEventListener("message", onMessage); callback(value); };
+    const onMessage = (event) => {
+      const data = event?.data;
+      if (event?.source !== window || event?.origin !== window.location.origin || data?.type !== "OZON_FINAL_REPRICE_RESPONSE_V1" || data?.requestId !== id) return;
+      if (data?.ok !== true) finish(reject, new Error(text(data?.error, "Ozon最终复价失败。"))); else finish(resolve, data);
+    };
+    const timer = setTimeout(() => finish(reject, new Error("Ozon最终复价响应超时。")), timeoutMs);
     window.addEventListener("message", onMessage);
-    window.postMessage({ type: "OZON_FINAL_REPRICE_REQUEST_V1", requestId, task }, window.location.origin);
+    try { window.postMessage({ type: "OZON_FINAL_REPRICE_REQUEST_V1", requestId: id, task }, window.location.origin); }
+    catch (error) { finish(reject, error); }
   });
 }
-
-function finalPricingTaskIdentity(task) {
-  const taskId = typeof task?.taskId === "string" ? task.taskId : "";
-  return taskId ? `taskId:${taskId}` : task;
-}
-
-function currentQueuedTask(task) {
-  return Array.isArray(queue?.tasks) ? queue.tasks.find((entry) => entry === task) || null : null;
-}
-
-async function preview1688PurchaseCostWithFinalPricing(task, purchaseCost, { batchMode = false } = {}) {
-  const taskIdentity = finalPricingTaskIdentity(task);
-  const requestToken = finalPricingRequestGuard.start(task, taskIdentity);
-  const isCurrentRequest = () => finalPricingRequestGuard.isActive(task, requestToken, currentQueuedTask(task), finalPricingTaskIdentity(task));
-  if (!batchMode) setStatus(`SKU ${task?.ozon?.sku || "-"}：正在执行一次Ozon最终实时复价预览……`);
+function finalPricingTaskIdentity(task) { return `${taskIdOf(task)}:${text(task?.ozon?.productUrl || task?.ozon?.sku)}`; }
+async function preview1688PurchaseCostWithFinalPricing(task, purchaseCost, timeoutMs = 90000) {
+  const identity = finalPricingTaskIdentity(task), token = finalPricingRequestGuard.start(task, identity);
   try {
-    const response = await requestFinalOzonPricing(task);
-    if (!isCurrentRequest()) return { stale: true };
-    const preview = previewFinalOzonPricing(task, response, purchaseCost);
-    if (!batchMode) setStatus(`SKU ${task?.ozon?.sku || "-"}：最终成本上限${preview.maxPurchaseCostAt18Pct.toFixed(2)}元，采购价${preview.purchaseCost.toFixed(2)}元，${preview.eligibleAt18Pct ? "达到" : "未达到"}18%利润门槛；等待最终确认。`, preview.eligibleAt18Pct ? "ok" : "bad");
-    return preview;
-  } finally {
-    finalPricingRequestGuard.finish(task, requestToken);
-  }
+    const response = await requestFinalOzonPricing(task, timeoutMs), current = currentQueuedTask(task);
+    if (!finalPricingRequestGuard.isActive(task, token, current, finalPricingTaskIdentity(current))) return { stale: true };
+    return previewFinalOzonPricing(task, response, purchaseCost, new Date().toISOString());
+  } finally { finalPricingRequestGuard.finish(task, token); }
 }
-
 async function commitPurchaseCostWithFinalPricing(task, purchaseCost, sourceUrl, verification, { batchMode = false } = {}) {
-  if (task?.sourcing?.provider === "1688") {
-    // Task 7 passes this pure preview to Task 5's confirmation capability;
-    // no 1688 purchase cost or final pricing is written before confirmation.
-    return preview1688PurchaseCostWithFinalPricing(task, purchaseCost, { batchMode });
-  }
-  const cost = Number(Number(purchaseCost).toFixed(2));
-  task.sourcing = task.sourcing || {};
-  task.pricing = task.pricing || {};
-  task.audit = task.audit || {};
-  if (!(Number(task.pricing.preliminaryMaxPurchaseCostAt18Pct) >= 0)) task.pricing.preliminaryMaxPurchaseCostAt18Pct = Number(task?.enrichment?.maxPurchaseCostAt18Pct);
-  task.pricing.purchaseCost = cost;
-  task.pricing.sourceUrl = String(sourceUrl || "").trim() || null;
-  task.pricing.eligibleAt18Pct = null;
-  if (verification) task.sourcing.skuVerification = verification;
-  const decision = preliminaryPricingDecision(task, cost);
-  if (decision.status === "rejected_preliminary") {
-    task.pricing.eligibleAt18Pct = false;
-    task.pricing.finalOzonPricing = {
-      status: "rejected_preliminary",
-      checkedAt: new Date().toISOString(),
-      preliminaryMaxPurchaseCostAt18Pct: decision.preliminaryLimit,
-      purchaseCost: cost,
-      reason: "目标规格采购价已高于历史成本上限，按条件规则跳过Ozon实时复价。",
-    };
-    task.status = "pending_human_review";
-    task.audit.updatedAt = new Date().toISOString();
-    persistQueue(); render();
-    if (!batchMode) setStatus(`SKU ${task.ozon.sku}：目标规格价${cost.toFixed(2)}元高于历史上限${decision.preliminaryLimit.toFixed(2)}元，已淘汰并跳过Ozon实时复价。`, "bad");
-    return { eligibleAt18Pct: false, skippedFinalReprice: true };
-  }
-  if (decision.status !== "requires_final_reprice" && decision.cacheFresh) {
-    task.pricing.eligibleAt18Pct = decision.eligible;
-    persistQueue(); render();
-    return { eligibleAt18Pct: decision.eligible, cacheHit: true };
-  }
-  task.pricing.finalOzonPricing = { status: "running", startedAt: new Date().toISOString(), purchaseCost: cost };
-  persistQueue(); render();
-  if (!batchMode) setStatus(`SKU ${task.ozon.sku}：规格实价通过历史上限，正在执行一次Ozon最终实时复价……`);
-  const taskIdentity = finalPricingTaskIdentity(task);
-  const requestToken = finalPricingRequestGuard.start(task, taskIdentity);
-  const isCurrentRequest = () => finalPricingRequestGuard.isActive(task, requestToken, currentQueuedTask(task), finalPricingTaskIdentity(task));
-  try {
-    const response = await requestFinalOzonPricing(task);
-    if (!isCurrentRequest()) return { stale: true };
-    const final = applyFinalOzonPricing(task, response, cost);
-    task.status = "pending_human_review";
-    task.audit.updatedAt = new Date().toISOString();
-    persistQueue(); render();
-    if (!batchMode) setStatus(`SKU ${task.ozon.sku}：最终成本上限${final.finalLimit.toFixed(2)}元，采购价${cost.toFixed(2)}元，${final.eligibleAt18Pct ? "达到" : "未达到"}18%利润门槛。`, final.eligibleAt18Pct ? "ok" : "bad");
-    return final;
-  } catch (error) {
-    if (!isCurrentRequest()) return { stale: true };
-    task.pricing.finalOzonPricing = { status: "failed", failedAt: new Date().toISOString(), purchaseCost: cost, error: error.message || String(error) };
-    task.pricing.eligibleAt18Pct = null;
-    persistQueue(); render();
-    if (!batchMode) setStatus(`规格实价已保留，但Ozon最终复价失败：${error.message || error}`, "bad");
-    throw error;
-  } finally {
-    finalPricingRequestGuard.finish(task, requestToken);
-  }
+  if (task?.sourcing?.provider === "1688") return preview1688PurchaseCostWithFinalPricing(task, purchaseCost);
+  const preliminary = preliminaryPricingDecision(task, purchaseCost); if (preliminary.status === "rejected_preliminary") throw new Error("采购成本高于当前18%上限。");
+  const response = await requestFinalOzonPricing(task); if (currentQueuedTask(task) !== task) return { stale: true };
+  const result = applyFinalOzonPricing(task, response, purchaseCost, new Date().toISOString());
+  task.pricing.sourceUrl = text(sourceUrl) || null; sourcingState(task).verification = clone(verification, null);
+  if (!batchMode) setStatus(result.eligibleAt18Pct ? "最终复价通过。" : "最终复价未达到18%。", result.eligibleAt18Pct ? "ok" : "bad");
+  persistQueue(); render(); return result;
 }
 
-async function verifyRecommendedSku(task, button = null, { batchMode = false } = {}) {
-  if (!aiRecommendsSameProduct(task)) return { skipped: true };
-  const candidate = resolveRecommendedCandidate(task);
-  const sourceUrl = candidate?.sourceUrl || candidate?.detail?.sourceUrl || "";
-  if (!sourceUrl) throw new Error("AI推荐候选缺少商品链接。");
-  if (button) button.disabled = true;
-  task.sourcing = task.sourcing || {};
-  task.sourcing.skuVerification = { status: "reading_options", sourceUrl, startedAt: new Date().toISOString() };
-  persistQueue(); render();
-  if (!batchMode) setStatus(`SKU ${task.ozon.sku}：正在打开拼多多规格弹窗并读取规格实价……`);
-  try {
-    const captured = await api("/api/pinduoduo/sku-options", { method: "POST", body: JSON.stringify({ taskId: task.taskId, sourceUrl }) });
-    if (captured.skuSheet.multiDimension) {
-      task.sourcing.skuVerification = {
-        status: "pending_human_review",
-        sourceUrl,
-        options: captured.skuSheet.options,
-        reason: `检测到多规格维度（${captured.skuSheet.groups.join("、")}），当前安全版本不自动组合选择。`,
-        updatedAt: new Date().toISOString(),
-      };
-      persistQueue(); render();
-      if (!batchMode) setStatus(`SKU ${task.ozon.sku}：检测到多规格维度，已保留规格列表并转人工复核。`, "bad");
-      return { ok: false, needsHumanReview: true };
-    }
-    const ai = await api("/api/ai/select-sku", { method: "POST", body: JSON.stringify({ task, candidate, skuSheet: captured.skuSheet }) });
-    const selected = captured.skuSheet.options.find((option) => option.optionId === ai.selection.selectedOptionId) || null;
-    if (ai.selection.needsHumanReview || !selected) {
-      task.sourcing.skuVerification = {
-        status: "pending_human_review",
-        sourceUrl,
-        options: captured.skuSheet.options,
-        selection: ai.selection,
-        reason: ai.selection.reason || "AI无法确认完全一致的规格",
-        updatedAt: new Date().toISOString(),
-      };
-      persistQueue(); render();
-      if (!batchMode) setStatus(`SKU ${task.ozon.sku}：规格无法自动确认，已保留${captured.skuSheet.options.length}个规格供人工复核。`, "bad");
-      return { ok: false, needsHumanReview: true };
-    }
-    const confirmed = await api("/api/pinduoduo/select-sku", { method: "POST", body: JSON.stringify({ taskId: task.taskId, sourceUrl, optionId: selected.optionId, optionLabel: selected.label, optionPrice: selected.price }) });
-    if (candidate?.detail?.shippingFee !== 0) throw new Error("目标规格已确认，但商品运费不是明确包邮，暂不写入采购成本。");
-    const purchaseCost = Number(confirmed.stableUnitPrice);
-    const verification = {
-      status: "sku_price_verified",
-      sourceUrl: confirmed.sourceUrl || sourceUrl,
-      candidateId: candidate?.candidateId || null,
-      optionId: confirmed.selectedOption.optionId,
-      optionLabel: confirmed.selectedOption.label,
-      optionPrice: purchaseCost,
-      shippingFee: 0,
-      purchaseCost,
-      aiSelection: ai.selection,
-      accountSpecificDiscountIgnored: Boolean(confirmed.accountSpecificDiscountIgnored),
-      submitPriceIgnored: confirmed.submitPriceIgnored,
-      verifiedAt: confirmed.verifiedAt || new Date().toISOString(),
-    };
-    task.sourcing.skuVerification = verification;
-    persistQueue(); render();
-    const result = await commitPurchaseCostWithFinalPricing(task, purchaseCost, sourceUrl, verification, { batchMode });
-    return { ok: true, purchaseCost, ...result };
-  } catch (error) {
-    const priceAlreadyVerified = task?.sourcing?.skuVerification?.status === "sku_price_verified";
-    task.sourcing.skuVerification = priceAlreadyVerified
-      ? { ...task.sourcing.skuVerification, finalPricingError: error.message || String(error) }
-      : { ...task.sourcing.skuVerification, status: error.code === "PINDUODUO_RISK_CONTROL" ? "paused_risk_control" : "failed", error: error.message || String(error), failedAt: new Date().toISOString() };
-    persistQueue(); render();
-    if (!batchMode) setStatus(error.message || String(error), "bad");
-    return { ok: false, priceVerified: priceAlreadyVerified, riskControl: error.code === "PINDUODUO_RISK_CONTROL", error: error.message || String(error) };
-  } finally {
-    if (button) button.disabled = false;
-  }
+function contextIsCurrent(context) { return !pageUnloading && currentQueuedTask(context?.task) === context?.task && taskIdOf(context?.task) === context?.taskId; }
+function timeExceeded(task) { return sourcingFlow.automaticTimeBudgetExceeded(task?.sourcing?.timing || {}); }
+function remainingActiveMs(task) {
+  return Math.max(0, sourcingFlow.AUTOMATIC_1688_LIMITS.totalActiveMs - sourcingFlow.automaticElapsedMs(task?.sourcing?.timing || {}));
 }
-
-async function checkDevice() {
-  try {
-    setStatus("正在检查MuMu和拼多多……");
-    const result = await api("/api/status");
-    const status = result.status;
-    setStatus(`MuMu：${status.androidStarted || status.bootCompleted ? "安卓已启动" : "未启动"}；拼多多：${status.pinduoduoInstalled ? "已安装" : "未检测到或设备未启动"}`, status.bootCompleted && status.pinduoduoInstalled ? "ok" : "bad");
-  } catch (error) { setStatus(error.message, "bad"); }
+function activeRequestTimeout(task, requestedMs) {
+  return sourcingFlow.automaticRequestTimeoutMs(task?.sourcing?.timing || {}, requestedMs);
 }
-
-async function checkAiStatus() {
-  try {
-    const result = await api("/api/ai/status");
-    $("modelStatus").textContent = result.status.configured ? `${appVersion} · ${result.status.model}已配置` : `${appVersion} · ${result.status.model}待配置密钥`;
-    $("modelStatus").className = result.status.configured ? "ok" : "bad";
-    return result.status;
-  } catch {
-    $("modelStatus").textContent = `${appVersion} · AI状态检查失败`;
-    $("modelStatus").className = "bad";
-    return null;
-  }
+function automaticTimeoutResult() { return { status: "automatic_timeout", diagnostics: { code: "automatic_timeout" } }; }
+function recordAudit(task, action, details = {}) {
+  const sourcing = sourcingState(task), entries = Array.isArray(sourcing.confirmationAudit) ? sourcing.confirmationAudit : [];
+  entries.push({ taskIdentity: stableTaskIdentity(task), action, at: new Date().toISOString(), ...clone(details, {}) }); sourcing.confirmationAudit = entries.slice(-80);
 }
-
-async function searchTask(task, button = null, { batchMode = false } = {}) {
-  if (button) button.disabled = true;
-  try {
-    if (!batchMode) setStatus(`SKU ${task.ozon.sku}：正在下发主图并执行拼多多以图搜索……`);
-    const result = await api("/api/task/search", { method: "POST", body: JSON.stringify({ taskId: task.taskId, mainImageUrl: task.enrichment.mainImageUrl }) });
-    task.sourcing = task.sourcing || {};
-    task.sourcing.devicePreparation = { status: "completed", remoteImagePath: result.remotePath, completedAt: new Date().toISOString() };
-    task.sourcing.searchCandidates = result.candidates;
-    task.sourcing.searchTiming = result.timing || null;
-    task.sourcing.aiJudgement = null;
-    task.sourcing.judgeProvider = null;
-    task.sourcing.judgeResult = null;
-    const detailCandidates = result.candidates.filter((candidate) => candidate?.detail?.detailStatus === "detail_captured");
-    task.sourcing.suggestedCandidate = [...(detailCandidates.length ? detailCandidates : result.candidates)].sort((left, right) => Number(left?.detail?.displayedPrice ?? left.displayedPrice) - Number(right?.detail?.displayedPrice ?? right.displayedPrice))[0] || null;
-    task.sourcing.status = detailCandidates.length ? "candidate_details_captured_pending_verification" : "candidates_found_pending_verification";
-    task.sourcing.searchCompletedAt = detailCandidates.length ? new Date().toISOString() : null;
-    const linkedPartialCount = result.candidates.filter((candidate) => candidate?.detail?.detailStatus === "detail_partial" && candidate?.sourceUrl).length;
-    task.sourcing.searchLastError = detailCandidates.length ? null : linkedPartialCount ? `已保留${linkedPartialCount}个候选链接，详情字段待重试` : "未取得任何完整候选详情";
-    persistQueue();
-    if (!batchMode) setStatus(`${result.message}${linkedPartialCount ? ` 已先保留${linkedPartialCount}个候选链接。` : ""} 已记录候选详情价和链接；确认规格与优惠条件后再写入采购价。`, detailCandidates.length ? "ok" : "bad");
-    render();
-    if (!detailCandidates.length) throw new Error(linkedPartialCount
-      ? `已保留${linkedPartialCount}个可打开候选链接，但详情字段尚未完整，可直接查看或稍后重试。`
-      : "未取得任何完整候选详情，可稍后重试。");
-    return result;
-  } catch (error) {
-    task.sourcing = task.sourcing || {};
-    const riskControl = error.code === "PINDUODUO_RISK_CONTROL";
-    task.sourcing.status = riskControl ? "paused_risk_control" : "search_failed_retryable";
-    task.sourcing.searchLastError = error.message || String(error);
-    task.sourcing.searchFailedAt = new Date().toISOString();
-    if (error?.details?.timing) task.sourcing.searchTiming = error.details.timing;
-    task.sourcing.riskControl = riskControl ? { ...(error.details?.risk || {}), detectedAt: new Date().toISOString() } : null;
-    persistQueue();
-    if (!batchMode) setStatus(error.message, "bad");
-    if (button) button.disabled = false;
-    render();
-    throw error;
-  }
+function appendBlockers(final, blockers = []) { return [...new Set([...(Array.isArray(final?.blockers) ? final.blockers : []), ...blockers.filter(Boolean)])]; }
+function buildNoSourceFinal(task, blocker, status = "no_source_found") {
+  const sourcing = sourcingState(task); sourcing.status = status; sourcing.timing = sourcingFlow.pauseAutomaticTiming(sourcing.timing);
+  sourcing.finalConfirmation = { taskIdentity: stableTaskIdentity(task), status: "final_confirmation_blocked", blockers: [blocker], candidate: null, candidateSnapshot: null, judgement: null, judgementSnapshot: null, quoteSnapshot: null, finalPricing: null, generatedAt: new Date().toISOString() };
+  persistQueue(); render(); return sourcing.finalConfirmation;
 }
-
-async function openCandidateInApp(task, candidate, button = null) {
-  const sourceUrl = candidate?.sourceUrl || candidate?.detail?.sourceUrl || "";
-  if (!sourceUrl) return;
-  if (button) { button.disabled = true; button.textContent = "正在MuMu中打开……"; }
-  setStatus(`SKU ${task?.ozon?.sku || "-"}：正在MuMu拼多多App中打开候选商品……`);
-  try {
-    const result = await api("/api/pinduoduo/open", { method: "POST", body: JSON.stringify({ taskId: task.taskId, sourceUrl }) });
-    if (button) button.textContent = "App已打开";
-    setStatus(`SKU ${task?.ozon?.sku || "-"}：${result.message || "已在拼多多App中打开候选商品。"}`, "ok");
-  } catch (error) {
-    if (button) button.textContent = "打开失败，重试";
-    setStatus(error.message || String(error), "bad");
-  } finally {
-    if (button) button.disabled = batch.running || aiBatch.running;
+function queueCandidateFinal(task, candidate, judgement, quote, finalPricing, extraBlockers = []) {
+  const sourcing = sourcingState(task); let pending;
+  try { pending = sourcingCore.buildFinalConfirmation({ task, candidate, judgement, quote, finalPricing }); }
+  catch (error) {
+    pending = { taskIdentity: stableTaskIdentity(task), status: "final_confirmation_blocked", candidate: null, judgement: null, productPrice: quote?.productPrice ?? null, domesticShipping: quote?.domesticShipping ?? null, purchaseCost: quote?.purchaseCost ?? null, priceSource: quote?.priceSource || "unknown", sourceUrl: sourcingFlow.canonical1688OfferUrl(candidate?.sourceUrl) || null, eligibleAt18Pct: finalPricing?.eligibleAt18Pct === true, blockers: ["confirmation_task_identity_invalid", text(error?.message, "confirmation_build_failed")] };
   }
+  const blockers = appendBlockers(pending, extraBlockers);
+  sourcing.activeCandidate = clone(candidate, null); sourcing.aiJudgement = clone(judgement, null); sourcing.quote = clone(quote, null); sourcing.finalPricingPreview = clone(finalPricing, null); sourcing.timing = sourcingFlow.pauseAutomaticTiming(sourcing.timing);
+  sourcing.finalConfirmation = { ...pending, status: blockers.length ? "final_confirmation_blocked" : pending.status, blockers, candidateSnapshot: clone(candidate, null), judgementSnapshot: clone(judgement, null), quoteSnapshot: clone(quote, null), finalPricing: clone(finalPricing, null), generatedAt: new Date().toISOString() };
+  sourcing.status = sourcing.finalConfirmation.status; task.status = "pending_human_review"; persistQueue(); render(); return sourcing.finalConfirmation;
 }
-
-async function favoriteRecommendedCandidate(task, button = null, { batchMode = false } = {}) {
-  if (!aiRecommendsSameProduct(task)) return { skipped: true };
-  const candidate = resolveRecommendedCandidate(task);
-  const sourceUrl = candidate?.sourceUrl || candidate?.detail?.sourceUrl || "";
-  if (!sourceUrl) {
-    task.sourcing.favorite = { status: "failed", error: "AI推荐候选缺少商品链接。", attemptedAt: new Date().toISOString() };
-    persistQueue(); render();
-    if (!batchMode) setStatus(task.sourcing.favorite.error, "bad");
-    return { ok: false, error: task.sourcing.favorite.error };
+function mergeDetailedCandidates(existing, incoming) {
+  const result = [], seen = new Set();
+  for (const candidate of [...(Array.isArray(existing) ? existing : []), ...(Array.isArray(incoming) ? incoming : [])]) {
+    const sourceUrl = sourcingFlow.canonical1688OfferUrl(candidate?.sourceUrl); if (!sourceUrl || seen.has(sourceUrl)) continue;
+    seen.add(sourceUrl); result.push({ ...candidate, sourceUrl }); if (result.length >= sourcingFlow.AUTOMATIC_1688_LIMITS.maxLightweightCandidates) break;
   }
-  const current = task?.sourcing?.favorite;
-  if (current?.status === "favorited" && current?.sourceUrl === sourceUrl) return { ok: true, alreadyFavorited: current.alreadyFavorited };
-  if (button) button.disabled = true;
-  task.sourcing.favorite = {
-    status: "favoriting",
-    candidateId: candidate?.candidateId || null,
-    candidateIndex: Number(task?.sourcing?.aiJudgement?.bestCandidateIndex) || null,
-    sourceUrl,
-    attemptedAt: new Date().toISOString(),
+  return result;
+}
+function usableCandidates(task) {
+  const rejected = new Set((task?.sourcing?.rejectedCandidateIds || []).map(String));
+  return (task?.sourcing?.detailCandidates || []).filter((candidate) => !rejected.has(text(candidate?.candidateId)) && sourcingFlow.canonical1688OfferUrl(candidate?.sourceUrl) && text(candidate?.title) && candidate?.identityValid !== false).slice(0, sourcingFlow.AUTOMATIC_1688_LIMITS.maxLightweightCandidates);
+}
+function recordSearchAttempt(task, strategy, result) {
+  const sourcing = sourcingState(task), attempts = Array.isArray(sourcing.searchAttempts) ? sourcing.searchAttempts : [];
+  attempts.push({ strategy, status: result.status, usableCount: Number(result.usableCount) || 0, candidateCount: Number(result.candidateCount) || 0, diagnostics: clone(result.diagnostics, null), jobId: text(result.jobId) || null, completedAt: new Date().toISOString() }); sourcing.searchAttempts = attempts.slice(-20);
+}
+async function safeCancel1688Job(jobId) { if (!text(jobId)) return null; try { return await sourcingExtensionRequest("cancel_1688_job", { jobId }, 8000); } catch { return null; } }
+function pauseForPlatformVerification(context, job, strategy) {
+  const sourcing = sourcingState(context.task); sourcing.timing = sourcingFlow.pauseAutomaticTiming(sourcing.timing); sourcing.status = "paused_platform_verification"; sourcing.searchStrategy = strategy.type;
+  sourcing.activeJob = { jobId: text(job?.jobId), strategy: clone(strategy, null), status: "paused_platform_verification", diagnostics: clone(job?.diagnostics, null) };
+  automaticBatch.paused = true; automaticBatch.status = "paused_platform_verification"; automaticBatch.pauseReason = "1688平台要求人工验证"; persistQueue(); render(); setStatus("1688平台要求人工验证，整批已暂停；验证后点击恢复。", "bad");
+}
+async function poll1688Job(context, jobId, strategy) {
+  const task = context.task, startedAt = Date.now(); let detailStartedAt = null;
+  while (contextIsCurrent(context)) {
+    const sourcing = sourcingState(task);
+    if (automaticBatch.stopRequested) { await safeCancel1688Job(jobId); return { status: "cancelled", diagnostics: { code: "batch_cancelled" }, jobId }; }
+    if (automaticBatch.paused && automaticBatch.status !== "paused_platform_verification") { await safeCancel1688Job(jobId); sourcing.timing = sourcingFlow.pauseAutomaticTiming(sourcing.timing); sourcing.status = "paused_manual"; persistQueue(); render(); return { status: "paused_manual", diagnostics: { code: "batch_paused" }, jobId }; }
+    if (timeExceeded(task)) { await safeCancel1688Job(jobId); return { status: "automatic_timeout", diagnostics: { code: "automatic_timeout" }, jobId }; }
+    const now = Date.now(), activeStageAt = strategy.type === "verify_sku" ? startedAt : detailStartedAt || startedAt;
+    const budget = strategy.type === "verify_sku" || detailStartedAt ? sourcingFlow.AUTOMATIC_1688_LIMITS.detailSkuMs : sourcingFlow.AUTOMATIC_1688_LIMITS.searchPageMs;
+    if (now - activeStageAt >= budget) { await safeCancel1688Job(jobId); return { status: "stage_timeout", diagnostics: { code: "stage_timeout", stage: strategy.type === "verify_sku" || detailStartedAt ? "detail_or_sku" : "search_page" }, jobId }; }
+    const requestTimeout = activeRequestTimeout(task, Math.min(15000, budget - (now - activeStageAt)));
+    if (!requestTimeout) { await safeCancel1688Job(jobId); return automaticTimeoutResult(); }
+    let job;
+    try { job = await sourcingExtensionRequest("get_1688_job", { jobId }, requestTimeout); }
+    catch (error) { return timeExceeded(task) ? automaticTimeoutResult() : { status: "bridge_failed", diagnostics: { code: "bridge_failed", message: text(error?.message) }, jobId }; }
+    if (!contextIsCurrent(context)) return { status: "stale", jobId };
+    if (timeExceeded(task)) { await safeCancel1688Job(jobId); return automaticTimeoutResult(); }
+    sourcing.activeJob = { jobId, strategy: clone(strategy, null), status: text(job?.status), phase: text(job?.phase), diagnostics: clone(job?.diagnostics, null), updatedAt: new Date().toISOString() }; persistQueue(); render();
+    if (job?.status === "paused_platform_verification") { pauseForPlatformVerification(context, job, strategy); return { ...job, status: "paused_platform_verification", jobId }; }
+    if (["completed", "failed", "cancelled"].includes(job?.status)) { sourcing.activeJob = null; persistQueue(); return { ...job, jobId }; }
+    if (job?.phase === "inspect_details" && detailStartedAt === null) detailStartedAt = Date.now();
+    await delay(1000);
+  }
+  return { status: "stale", jobId };
+}
+async function run1688BridgeJob(context, strategy) {
+  const mainImageUrl = context.task?.enrichment?.mainImageUrl || context.task?.ozon?.mainImageUrl; let started;
+  const requestTimeout = activeRequestTimeout(context.task, 15000);
+  if (!requestTimeout) return automaticTimeoutResult();
+  try { started = await sourcingExtensionRequest("start_1688_job", { taskId: context.taskId, mainImageUrl, strategy }, requestTimeout); }
+  catch (error) { return timeExceeded(context.task) ? automaticTimeoutResult() : { status: "bridge_failed", diagnostics: { code: "bridge_start_failed", message: text(error?.message) } }; }
+  if (!contextIsCurrent(context)) return { status: "stale" };
+  const jobId = text(started?.jobId); if (timeExceeded(context.task)) { await safeCancel1688Job(jobId); return automaticTimeoutResult(); }
+  if (!jobId) return { status: "bridge_failed", diagnostics: { code: "missing_job_id" } };
+  const sourcing = sourcingState(context.task); sourcing.searchStrategy = strategy.type; sourcing.activeJob = { jobId, strategy: clone(strategy, null), status: text(started.status, "queued"), phase: text(started.phase, "queued"), updatedAt: new Date().toISOString() }; persistQueue(); render();
+  return poll1688Job(context, jobId, strategy);
+}
+async function runSearchStrategy(context, strategy) {
+  const result = await run1688BridgeJob(context, strategy); if (!contextIsCurrent(context) || result.status === "stale") return result;
+  if (["paused_platform_verification", "paused_manual", "cancelled"].includes(result.status)) return result;
+  const sourcing = sourcingState(context.task), light = Array.isArray(result?.candidates) ? result.candidates.slice(0, sourcingFlow.AUTOMATIC_1688_LIMITS.maxLightweightCandidates) : [], details = sourcingFlow.detailCandidatesForInspection(Array.isArray(result?.detailCandidates) ? result.detailCandidates : []).filter((candidate) => sourcingFlow.canonical1688OfferUrl(candidate?.sourceUrl));
+  sourcing.strategyCandidates = object(sourcing.strategyCandidates) || {}; sourcing.strategyCandidates[strategy.type] = { lightweightCandidates: clone(light, []), detailCandidates: clone(details, []), completedAt: new Date().toISOString() };
+  sourcing.lightweightCandidates = sourcingFlow.mergeAutomaticCandidates(sourcing.lightweightCandidates || [], light); sourcing.detailCandidates = mergeDetailedCandidates(sourcing.detailCandidates || [], details);
+  recordSearchAttempt(context.task, strategy.type, { status: result.status === "completed" ? "completed" : result.status || "failed", usableCount: details.length, candidateCount: light.length, diagnostics: result.diagnostics, jobId: result.jobId }); persistQueue(); render(); return { ...result, usableCount: details.length };
+}
+async function ensureKeywords(context) {
+  const sourcing = sourcingState(context.task); if (Array.isArray(sourcing.keywords) && sourcing.keywords.length) return sourcing.keywords;
+  const requestTimeout = activeRequestTimeout(context.task, sourcingFlow.AUTOMATIC_1688_LIMITS.qwenMs);
+  if (!requestTimeout) { buildNoSourceFinal(context.task, "automatic_timeout", "pending_human_review"); return null; }
+  try {
+    const result = await apiWithTimeout("/api/ai/1688-keywords", context.task, requestTimeout, "1688关键词判断"); if (!contextIsCurrent(context)) return null;
+    if (timeExceeded(context.task)) { buildNoSourceFinal(context.task, "automatic_timeout", "pending_human_review"); return null; }
+    const keywords = Array.isArray(result?.keywords) ? result.keywords.filter((value) => typeof value === "string" && value.trim()).slice(0, 3) : []; if (!keywords.length) throw new Error("未得到可验证关键词");
+    sourcing.keywords = keywords; sourcing.keywordModel = { provider: text(result.provider), model: text(result.model), judgedAt: text(result.judgedAt) || new Date().toISOString() }; persistQueue(); render(); return keywords;
+  } catch (error) { const blocker = timeExceeded(context.task) ? "automatic_timeout" : "keyword_generation_failed"; buildNoSourceFinal(context.task, blocker, "pending_human_review"); setStatus(`关键词生成失败：${text(error?.message, "请人工确认")}`, "bad"); return null; }
+}
+async function runKeywordSearches(context) {
+  const keywords = await ensureKeywords(context); if (!keywords || !contextIsCurrent(context)) return { status: "failed" };
+  let last = { status: "failed", usableCount: 0 };
+  for (const query of keywords.slice(0, 3)) { if (timeExceeded(context.task)) return { status: "automatic_timeout" }; last = await runSearchStrategy(context, { type: "keyword", query }); if (["paused_platform_verification", "paused_manual", "cancelled", "stale"].includes(last.status) || last.usableCount > 0) return last; }
+  return last;
+}
+function similarSupplierImage(task) { return [...(task?.sourcing?.lightweightCandidates || []), ...(task?.sourcing?.detailCandidates || [])].map((candidate) => ({ candidate, imageUrl: text(candidate?.imageUrl) })).find((entry) => trusted1688Image(entry.imageUrl)) || null; }
+function judgementCanContinue(judgement, candidate) {
+  const assessment = (judgement?.candidateAssessments || []).find((entry) => text(entry?.candidateId) === text(candidate?.candidateId));
+  return judgement?.verdict === "same_product" && judgement?.needsHumanReview === false && Number(judgement?.confidence) >= 85 && judgement?.bestCandidateId === candidate?.candidateId && assessment?.verdict === "same_product" && Number(assessment?.confidence) >= 85 && Array.isArray(assessment?.differences) && assessment.differences.length === 0;
+}
+function exactExceptionForCandidate(candidate) {
+  const url = sourcingFlow.canonical1688OfferUrl(candidate?.sourceUrl), productId = text(candidate?.productId) || /^https:\/\/detail\.1688\.com\/offer\/(\d+)\.html$/.exec(url)?.[1] || "";
+  return productId ? queueMeta().singleUnitExceptions[productId] || null : null;
+}
+async function previewCandidatePricing(context, quote) {
+  const preliminary = preliminaryPricingDecision(context.task, quote.purchaseCost);
+  if (preliminary.status === "rejected_preliminary") return { status: "rejected_preliminary", eligibleAt18Pct: false, purchaseCost: quote.purchaseCost, maxPurchaseCostAt18Pct: preliminary.preliminaryLimit };
+  const remaining = activeRequestTimeout(context.task, 90000);
+  if (remaining <= 0) throw new Error("automatic_timeout");
+  try {
+    const preview = await preview1688PurchaseCostWithFinalPricing(context.task, quote.purchaseCost, remaining); if (!contextIsCurrent(context) || preview?.stale) return { stale: true }; if (timeExceeded(context.task)) throw new Error("automatic_timeout"); return preview;
+  } catch (error) { if (timeExceeded(context.task)) throw new Error("automatic_timeout"); throw error; }
+}
+async function evaluateCandidates(context) {
+  const task = context.task, candidates = usableCandidates(task); if (!candidates.length) return buildNoSourceFinal(task, "no_complete_1688_candidate");
+  const judgementTimeout = activeRequestTimeout(task, sourcingFlow.AUTOMATIC_1688_LIMITS.qwenMs);
+  if (!judgementTimeout) return buildNoSourceFinal(task, "automatic_timeout", "pending_human_review");
+  let result; try { result = await apiWithTimeout("/api/ai/1688-judge", { task, candidates }, judgementTimeout, "1688同款判断"); }
+  catch { return buildNoSourceFinal(task, timeExceeded(task) ? "automatic_timeout" : "judgement_missing_or_failed", "pending_human_review"); }
+  if (!contextIsCurrent(context)) return { status: "stale" };
+  if (timeExceeded(task)) return buildNoSourceFinal(task, "automatic_timeout", "pending_human_review");
+  const judgement = result?.judgement, candidate = candidates.find((entry) => text(entry?.candidateId) === text(judgement?.bestCandidateId)) || candidates[0], sourcing = sourcingState(task);
+  sourcing.aiJudgement = clone(judgement, null); sourcing.judgementMetadata = { provider: text(result?.provider), model: text(result?.model), judgedAt: text(result?.judgedAt) || new Date().toISOString() }; persistQueue(); render();
+  if (!judgementCanContinue(judgement, candidate)) { const quote = sourcingFlow.quoteAutomaticSingleUnit(candidate, exactExceptionForCandidate(candidate)); return queueCandidateFinal(task, candidate, judgement, quote, { eligibleAt18Pct: false, status: "not_eligible" }, ["judgement_requires_human_confirmation"]); }
+  const options = Array.isArray(candidate?.sku?.options) ? candidate.sku.options : [];
+  if (!options.length) { const quote = sourcingFlow.quoteAutomaticSingleUnit(candidate, exactExceptionForCandidate(candidate)); return queueCandidateFinal(task, candidate, judgement, quote, { eligibleAt18Pct: false, status: "not_eligible" }, ["sku_options_missing"]); }
+  const selectionTimeout = activeRequestTimeout(task, sourcingFlow.AUTOMATIC_1688_LIMITS.qwenMs);
+  if (!selectionTimeout) return buildNoSourceFinal(task, "automatic_timeout", "pending_human_review");
+  let selectionResult; try { selectionResult = await apiWithTimeout("/api/ai/1688-select-sku", { task, candidate, skuOptions: options }, selectionTimeout, "1688规格判断"); }
+  catch { const quote = sourcingFlow.quoteAutomaticSingleUnit(candidate, exactExceptionForCandidate(candidate)); return timeExceeded(task) ? buildNoSourceFinal(task, "automatic_timeout", "pending_human_review") : queueCandidateFinal(task, candidate, judgement, quote, { eligibleAt18Pct: false, status: "not_eligible" }, ["sku_selection_missing_or_failed"]); }
+  if (!contextIsCurrent(context)) return { status: "stale" };
+  if (timeExceeded(task)) return buildNoSourceFinal(task, "automatic_timeout", "pending_human_review");
+  const selection = selectionResult?.selection, selected = options.find((option) => text(option?.id || option?.optionId) === text(selection?.selectedOptionId)), selectedCandidate = { ...candidate, sku: { ...candidate.sku, selectedOptionId: selected ? text(selected.id || selected.optionId) : null, selectionVerified: false } };
+  sourcing.skuSelection = clone(selection, null);
+  if (!selected || selection?.verdict !== "exact_match" || selection?.needsHumanReview !== false || Number(selection?.confidence) < 85) { const quote = sourcingFlow.quoteAutomaticSingleUnit(selectedCandidate, exactExceptionForCandidate(selectedCandidate)); return queueCandidateFinal(task, selectedCandidate, judgement, quote, { eligibleAt18Pct: false, status: "not_eligible" }, ["sku_selection_requires_human_confirmation"]); }
+  const verification = await run1688BridgeJob(context, { type: "verify_sku", sourceUrl: sourcingFlow.canonical1688OfferUrl(selectedCandidate.sourceUrl), optionId: text(selected.id || selected.optionId), optionLabel: text(selected.label), expectedPrice: Number(selectedCandidate?.pricing?.selectedSkuPrice) });
+  if (!contextIsCurrent(context) || verification.status === "stale") return verification;
+  const selectionVerified = verification.status === "completed" && verification?.diagnostics?.code === "sku_verified";
+  sourcing.skuVerification = {
+    status: text(verification.status, "failed"), jobId: text(verification.jobId) || null,
+    selectedOptionId: text(selected.id || selected.optionId), selectionVerified,
+    diagnostics: clone(verification.diagnostics, null), checkedAt: new Date().toISOString(),
   };
   persistQueue(); render();
-  if (!batchMode) setStatus(`SKU ${task?.ozon?.sku || "-"}：AI已推荐同款，正在加入拼多多收藏……`);
-  try {
-    const result = await api("/api/pinduoduo/favorite", { method: "POST", body: JSON.stringify({ taskId: task.taskId, sourceUrl }) });
-    task.sourcing.favorite = { ...task.sourcing.favorite, status: "favorited", goodsId: result.goodsId, sourceUrl: result.sourceUrl || sourceUrl, alreadyFavorited: Boolean(result.alreadyFavorited), error: null, favoritedAt: new Date().toISOString() };
-    persistQueue(); render();
-    if (!batchMode) setStatus(`SKU ${task?.ozon?.sku || "-"}：${result.message || "推荐同款已收藏。"}`, "ok");
-    return { ok: true, ...result };
-  } catch (error) {
-    const riskControl = error.code === "PINDUODUO_RISK_CONTROL";
-    task.sourcing.favorite = { ...task.sourcing.favorite, status: riskControl ? "paused_risk_control" : "failed", error: error.message || String(error), failedAt: new Date().toISOString() };
-    persistQueue(); render();
-    if (!batchMode) setStatus(task.sourcing.favorite.error, "bad");
-    return { ok: false, riskControl, error: task.sourcing.favorite.error };
-  } finally {
-    if (button) button.disabled = false;
-  }
+  if (["paused_platform_verification", "paused_manual", "cancelled"].includes(verification.status)) return verification;
+  if (verification.status === "automatic_timeout") return buildNoSourceFinal(task, "automatic_timeout", "pending_human_review");
+  const verifiedCandidate = { ...selectedCandidate, sku: { ...selectedCandidate.sku, selectionVerified } };
+  if (verification.status !== "completed" || !verifiedCandidate.sku.selectionVerified) { const quote = sourcingFlow.quoteAutomaticSingleUnit(verifiedCandidate, exactExceptionForCandidate(verifiedCandidate)); return queueCandidateFinal(task, verifiedCandidate, judgement, quote, { eligibleAt18Pct: false, status: "not_eligible" }, ["sku_verification_failed"]); }
+  const quote = sourcingFlow.quoteAutomaticSingleUnit(verifiedCandidate, exactExceptionForCandidate(verifiedCandidate)); if (!quote.confirmable) return queueCandidateFinal(task, verifiedCandidate, judgement, quote, { eligibleAt18Pct: false, status: "not_eligible" });
+  let finalPricing; try { finalPricing = await previewCandidatePricing(context, quote); }
+  catch (error) { return text(error?.message) === "automatic_timeout" || timeExceeded(task) ? buildNoSourceFinal(task, "automatic_timeout", "pending_human_review") : queueCandidateFinal(task, verifiedCandidate, judgement, quote, { eligibleAt18Pct: false, status: "preview_failed" }, ["final_pricing_preview_missing_or_failed"]); }
+  if (!contextIsCurrent(context) || finalPricing?.stale) return { status: "stale" }; return queueCandidateFinal(task, verifiedCandidate, judgement, quote, finalPricing);
 }
-
-async function judgeTask(task, button = null, { batchMode = false } = {}) {
-  if (button) button.disabled = true;
-  try {
-    if (!batchMode) setStatus(`SKU ${task?.ozon?.sku || "-"}：正在由千问判断前3个候选……`);
-    const result = await api("/api/ai/judge", { method: "POST", body: JSON.stringify(task) });
-    task.sourcing = task.sourcing || {};
-    task.sourcing.aiJudgement = { ...result.judgement, provider: result.provider, model: result.model, usage: result.usage, judgedAt: result.judgedAt };
-    task.sourcing.judgeProvider = result.provider;
-    task.sourcing.judgeResult = task.sourcing.aiJudgement;
-    delete task.sourcing.aiLastError;
-    delete task.sourcing.aiFailedAt;
-    task.sourcing.status = result.judgement.needsHumanReview ? "pending_human_review" : "ai_match_recommended_pending_confirmation";
-    task.status = "pending_human_review";
-    task.audit = task.audit || {};
-    task.audit.updatedAt = new Date().toISOString();
-    persistQueue(); render();
-    const favoriteResult = await favoriteRecommendedCandidate(task, null, { batchMode });
-    if (aiRecommendsSameProduct(task)) await verifyRecommendedSku(task, null, { batchMode });
-    else if (!batchMode && favoriteResult?.skipped) setStatus(`SKU ${task?.ozon?.sku || "-"}：AI判断完成，${result.judgement.confidence}%置信度；未达到自动规格核验条件。`, result.judgement.verdict === "same_product" ? "ok" : "bad");
-    return result;
-  } catch (error) {
-    task.sourcing = task.sourcing || {};
-    task.sourcing.aiLastError = error.message || String(error);
-    task.sourcing.aiFailedAt = new Date().toISOString();
-    persistQueue(); render();
-    if (!batchMode) setStatus(error.message, "bad");
-    throw error;
-  } finally {
-    if (button) button.disabled = false;
-  }
+async function resumePausedAutomaticTask(context) {
+  const sourcing = sourcingState(context.task), jobId = text(sourcing?.activeJob?.jobId); if (jobId) await safeCancel1688Job(jobId); if (!contextIsCurrent(context)) return false;
+  sourcing.activeJob = null; sourcing.status = "automatic_running"; sourcing.timing = sourcingFlow.resumeAutomaticTiming(sourcing.timing); persistQueue(); render(); return true;
 }
-
-async function runSkuBatch() {
-  if (!queue || batch.running || aiBatch.running || skuBatch.running) return;
-  skuBatch.running = true; skuBatch.completed = 0; skuBatch.failed = 0; render();
-  try {
-    const tasks = queue.tasks || [];
-    for (let index = 0; index < tasks.length; index += 1) {
-      const task = tasks[index];
-      if (!aiRecommendsSameProduct(task) || skuVerificationComplete(task)) continue;
-      setStatus(`批量规格核验与最终复价 ${index + 1}/${tasks.length}：SKU ${task?.ozon?.sku || "-"}`);
-      const result = await verifyRecommendedSku(task, null, { batchMode: true });
-      if (result?.ok) skuBatch.completed += 1;
-      else {
-        skuBatch.failed += 1;
-        if (result?.riskControl) break;
-      }
+async function runAutomatic1688Task(task) {
+  const taskId = taskIdOf(task); if (!taskId) throw new Error("任务ID缺失，无法启动自动找货源。"); if (automaticRuns.has(taskId)) return automaticRuns.get(taskId);
+  const run = (async () => {
+    const context = { task, taskId }; if (!contextIsCurrent(context)) return { stale: true };
+    const sourcing = sourcingState(task); if (sourcing.status === "confirmed_purchase_source" || sourcing.finalConfirmation?.status === "final_confirmation_pending") return sourcing.finalConfirmation || { status: sourcing.status };
+    const preflight = readiness(task); if (!preflight.ready) return buildNoSourceFinal(task, `automatic_preconditions_missing:${preflight.reasons.join("/")}`, "pending_human_review");
+    if (["paused_platform_verification", "paused_manual"].includes(sourcing.status)) { if (!await resumePausedAutomaticTask(context)) return { stale: true }; }
+    else { sourcing.status = "automatic_running"; sourcing.provider = "1688"; sourcing.timing = sourcingFlow.resumeAutomaticTiming(sourcing.timing); sourcing.searchAttempts = Array.isArray(sourcing.searchAttempts) ? sourcing.searchAttempts : []; sourcing.lightweightCandidates = Array.isArray(sourcing.lightweightCandidates) ? sourcing.lightweightCandidates : []; sourcing.detailCandidates = Array.isArray(sourcing.detailCandidates) ? sourcing.detailCandidates : []; sourcing.rejectedCandidateIds = Array.isArray(sourcing.rejectedCandidateIds) ? sourcing.rejectedCandidateIds : []; persistQueue(); render(); }
+    for (let transition = 0; transition < 12; transition += 1) {
+      if (!contextIsCurrent(context)) return { stale: true }; if (timeExceeded(task)) return buildNoSourceFinal(task, "automatic_timeout", "pending_human_review"); if (automaticBatch.stopRequested) return { status: "cancelled" }; if (automaticBatch.paused && automaticBatch.status !== "paused_platform_verification") return { status: "paused_manual" };
+      const action = sourcingFlow.nextAutomaticAction(sourcingState(task));
+      if (action.type === "start_image_search") { const result = await runSearchStrategy(context, { type: "image", sourceUrl: task.enrichment?.mainImageUrl || task.ozon?.mainImageUrl }); if (result.status === "automatic_timeout") return buildNoSourceFinal(task, "automatic_timeout", "pending_human_review"); if (["paused_platform_verification", "paused_manual", "cancelled", "stale"].includes(result.status)) return result; continue; }
+      if (action.type === "generate_keywords") { if (!await ensureKeywords(context)) return { status: "keyword_failed" }; continue; }
+      if (action.type === "start_keyword_search") { const result = await runKeywordSearches(context); if (result.status === "automatic_timeout") return buildNoSourceFinal(task, "automatic_timeout", "pending_human_review"); if (["paused_platform_verification", "paused_manual", "cancelled", "stale"].includes(result.status)) return result; continue; }
+      if (action.type === "start_similar_supplier_search") { const similar = similarSupplierImage(task); if (!similar) { recordSearchAttempt(task, "similar_supplier", { status: "completed", usableCount: 0, candidateCount: 0, diagnostics: { code: "no_trusted_supplier_image" } }); persistQueue(); render(); continue; } const result = await runSearchStrategy(context, { type: "similar_supplier", query: text(similar.candidate?.title), sourceUrl: similar.imageUrl }); if (result.status === "automatic_timeout") return buildNoSourceFinal(task, "automatic_timeout", "pending_human_review"); if (["paused_platform_verification", "paused_manual", "cancelled", "stale"].includes(result.status)) return result; continue; }
+      if (action.type === "judge_candidates") return evaluateCandidates(context);
+      if (action.type === "queue_no_source_confirmation") return buildNoSourceFinal(task, "no_usable_1688_source");
+      if (action.type === "pause_platform_verification") return { status: "paused_platform_verification" };
+      if (action.type === "complete") return sourcing.finalConfirmation || { status: sourcing.status };
+      return buildNoSourceFinal(task, "automatic_state_machine_invalid", "pending_human_review");
     }
-  } finally {
-    skuBatch.running = false; persistQueue(); render();
-    setStatus(`批量规格核验与最终复价完成：成功${skuBatch.completed}件，需复核或失败${skuBatch.failed}件。只有规格实价通过历史上限的商品才执行Ozon实时复价。`, skuBatch.failed ? "bad" : "ok");
-  }
+    return buildNoSourceFinal(task, "automatic_state_machine_exhausted", "pending_human_review");
+  })();
+  automaticRuns.set(taskId, run); try { return await run; } finally { if (automaticRuns.get(taskId) === run) automaticRuns.delete(taskId); }
 }
-
-async function runAiBatch() {
-  if (!queue || aiBatch.running || batch.running) return;
-  const tasks = queue.tasks || [];
-  aiBatch.running = true; aiBatch.completed = 0; aiBatch.failed = 0; aiBatch.riskPaused = false; aiBatch.pauseReason = ""; render();
+async function runAutomatic1688Batch() {
+  if (automaticBatch.running) return { status: "already_running" }; if (!queue?.tasks?.length) throw new Error("请先导入Ozon补全JSON。");
+  automaticBatch.running = true; automaticBatch.paused = false; automaticBatch.stopRequested = false; automaticBatch.status = "running"; automaticBatch.pauseReason = ""; persistQueue(); render();
   try {
-    for (let index = 0; index < tasks.length; index += 1) {
-      const task = tasks[index];
-      if (!aiReady(task).ready) continue;
-      const needsFavorite = aiRecommendsSameProduct(task) && !favoriteComplete(task);
-      if (aiJudgementComplete(task) && !needsFavorite) continue;
-      setStatus(`批量AI判断与收藏 ${index + 1}/${tasks.length}：SKU ${task?.ozon?.sku || "-"}`);
+    const tasks = queue.tasks;
+    for (; automaticBatch.cursor < tasks.length; automaticBatch.cursor += 1) {
+      if (automaticBatch.stopRequested || automaticBatch.paused) break; const task = tasks[automaticBatch.cursor]; automaticBatch.activeTaskId = taskIdOf(task); persistQueue(); render();
       try {
-        if (!aiJudgementComplete(task)) await judgeTask(task, null, { batchMode: true });
-        else await favoriteRecommendedCandidate(task, null, { batchMode: true });
-        if (task?.sourcing?.favorite?.status === "paused_risk_control") {
-          aiBatch.riskPaused = true; aiBatch.pauseReason = task.sourcing.favorite.error || "拼多多风控"; break;
-        }
-        aiBatch.completed += 1;
-      } catch { aiBatch.failed += 1; }
-    }
-  } finally {
-    aiBatch.running = false; persistQueue(); render();
-    if (aiBatch.riskPaused) setStatus(`批量AI判断与收藏已暂停：${aiBatch.pauseReason}。人工处理后再次点击批量按钮即可继续。`, "bad");
-    else setStatus(`批量AI判断与收藏完成：处理${aiBatch.completed}件，失败${aiBatch.failed}件；明确推荐同款已自动收藏，采购规格和实付价仍需确认。`, aiBatch.failed ? "bad" : "ok");
-  }
-}
-
-const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
-
-function randomBatchDelayMs() {
-  return Math.floor(Math.random() * (batchDelayRangeMs.max - batchDelayRangeMs.min + 1)) + batchDelayRangeMs.min;
-}
-
-async function waitForNextBatchTask(nextIndex, total) {
-  const endsAt = Date.now() + randomBatchDelayMs();
-  while (Date.now() < endsAt) {
-    if (batch.stopRequested) return false;
-    if (batch.paused) {
-      await wait(300);
-      continue;
-    }
-    const seconds = Math.max(1, Math.ceil((endsAt - Date.now()) / 1000));
-    setStatus(`随机间隔中：${seconds}秒后处理第${nextIndex + 1}/${total}件；可随时暂停或停止。`);
-    await wait(Math.min(1000, Math.max(1, endsAt - Date.now())));
-  }
-  return !batch.stopRequested;
-}
-
-async function runBatch() {
-  if (!queue || batch.running) return;
-  const tasks = queue.tasks || [];
-  if (batch.cursor >= tasks.length) batch.cursor = 0;
-  batch.running = true; batch.paused = false; batch.riskPaused = false; batch.pauseReason = ""; batch.stopRequested = false; batch.completed = 0; batch.failed = 0;
-  render(); persistQueue();
-  try {
-    for (let index = batch.cursor; index < tasks.length; index += 1) {
-      batch.cursor = index;
-      if (batch.paused) setStatus(`批量任务已暂停：下一件为第${index + 1}行。`, "");
-      while (batch.paused && !batch.stopRequested) await wait(300);
-      if (batch.stopRequested) break;
-      const task = tasks[index];
-      if (!readiness(task).ready || candidateSearchComplete(task)) { batch.cursor = index + 1; persistQueue(); continue; }
-      setStatus(`批量找同款 ${index + 1}/${tasks.length}：SKU ${task?.ozon?.sku || "-"}，当前商品完成后可暂停或停止。`);
-      let riskError = null;
-      try { await searchTask(task, null, { batchMode: true }); batch.completed += 1; }
-      catch (error) {
-        if (error.code === "PINDUODUO_RISK_CONTROL") riskError = error;
-        else batch.failed += 1;
-      }
-      if (riskError) {
-        batch.paused = true; batch.riskPaused = true; batch.pauseReason = riskError.message;
-        batch.cursor = index;
-        persistQueue(); render();
-        setStatus(`${riskError.message} 当前SKU ${task?.ozon?.sku || "-"}未跳过，解除限制后点击“继续”将重试本件。`, "bad");
-        while (batch.paused && !batch.stopRequested) await wait(300);
-        if (batch.stopRequested) break;
-        batch.riskPaused = false; batch.pauseReason = "";
-        index -= 1;
-        continue;
-      }
-      batch.cursor = index + 1;
+        const result = await runAutomatic1688Task(task);
+        if (result?.status === "paused_platform_verification" || task?.sourcing?.status === "paused_platform_verification") { automaticBatch.paused = true; automaticBatch.status = "paused_platform_verification"; automaticBatch.pauseReason = "1688平台要求人工验证"; break; }
+        if (["cancelled", "paused_manual"].includes(result?.status)) break; automaticBatch.completed += 1;
+      } catch { automaticBatch.failed += 1; buildNoSourceFinal(task, "automatic_task_failed", "pending_human_review"); }
       persistQueue(); render();
-      const nextPendingOffset = tasks.slice(index + 1).findIndex((entry) => readiness(entry).ready && !candidateSearchComplete(entry));
-      if (nextPendingOffset >= 0 && !(await waitForNextBatchTask(index + 1 + nextPendingOffset, tasks.length))) break;
     }
-  } finally {
-    const stopped = batch.stopRequested;
-    batch.running = false; batch.paused = false; batch.riskPaused = false; batch.pauseReason = ""; batch.stopRequested = false;
-    persistQueue(); render();
-    const remaining = tasks.filter((task) => readiness(task).ready && !candidateSearchComplete(task)).length;
-    setStatus(`${stopped ? "批量任务已停止" : "批量任务本轮完成"}：新增成功${batch.completed}件，失败${batch.failed}件，剩余${remaining}件；失败项可再次批量重试。`, batch.failed ? "bad" : "ok");
-  }
+    if (automaticBatch.cursor >= tasks.length && !automaticBatch.paused && !automaticBatch.stopRequested) automaticBatch.status = "completed"; if (automaticBatch.stopRequested) automaticBatch.status = "cancelled";
+    setStatus(automaticBatch.status === "completed" ? "批量自动找货源已完成，待确认商品在下方队列。" : `批量自动找货源已${automaticBatch.status === "paused_platform_verification" ? "因平台验证暂停" : "停止"}。`, automaticBatch.status === "completed" ? "ok" : "bad"); return { status: automaticBatch.status };
+  } finally { automaticBatch.running = false; automaticBatch.activeTaskId = ""; persistQueue(); render(); }
+}
+async function pauseAutomatic1688Batch() {
+  automaticBatch.paused = true; automaticBatch.status = "paused_manual"; automaticBatch.pauseReason = "用户暂停"; const task = currentQueuedTask(automaticBatch.activeTaskId), jobId = text(task?.sourcing?.activeJob?.jobId);
+  if (task) { sourcingState(task).timing = sourcingFlow.pauseAutomaticTiming(task.sourcing.timing); sourcingState(task).status = "paused_manual"; }
+  persistQueue(); render(); await safeCancel1688Job(jobId); setStatus("已暂停当前批量；恢复后会从安全阶段继续。", "ok");
+}
+async function resumeAutomatic1688Batch() { automaticBatch.paused = false; automaticBatch.stopRequested = false; automaticBatch.status = "idle"; automaticBatch.pauseReason = ""; persistQueue(); render(); return runAutomatic1688Batch(); }
+async function cancelAutomatic1688Batch() {
+  automaticBatch.stopRequested = true; automaticBatch.paused = false; automaticBatch.status = "cancelled"; const task = currentQueuedTask(automaticBatch.activeTaskId), jobId = text(task?.sourcing?.activeJob?.jobId);
+  if (task) { sourcingState(task).status = "automatic_cancelled"; recordAudit(task, "automatic_cancelled", { jobId: jobId || null }); }
+  persistQueue(); render(); await safeCancel1688Job(jobId); setStatus("已取消批量自动找货源；没有写入任何采购价。", "ok");
 }
 
-async function savePrice(task, value, sourceUrl) {
-  const purchaseCost = Number(value);
-  if (!(purchaseCost > 0)) return setStatus("采购价必须大于0。", "bad");
-  if (!(Number(task?.enrichment?.maxPurchaseCostAt18Pct) >= 0)) return setStatus("该任务缺少历史18%最高采购成本。", "bad");
-  const verification = {
-    status: "manual_price_confirmed",
-    sourceUrl: String(sourceUrl || "").trim() || null,
-    purchaseCost: Number(purchaseCost.toFixed(2)),
-    reason: "由人工确认目标规格常规价",
-    verifiedAt: new Date().toISOString(),
+function currentConfirmationFacts(task) {
+  const sourcing = sourcingState(task), final = sourcing.finalConfirmation, candidate = currentCardCandidate(task, final), judgement = sourcing.aiJudgement, quote = candidate ? sourcingFlow.quoteAutomaticSingleUnit(candidate, exactExceptionForCandidate(candidate)) : null;
+  return { final, candidate, judgement, quote, finalPricing: sourcing.finalPricingPreview };
+}
+function factsMatchFinal(final, facts) {
+  return Boolean(final && facts?.candidate && facts?.judgement && facts?.quote && facts?.finalPricing)
+    && JSON.stringify(final.candidateSnapshot) === JSON.stringify(facts.candidate)
+    && JSON.stringify(final.judgementSnapshot) === JSON.stringify(facts.judgement)
+    && JSON.stringify(final.quoteSnapshot) === JSON.stringify(facts.quote)
+    && JSON.stringify(final.finalPricing) === JSON.stringify(facts.finalPricing);
+}
+function clearStaleTask5Pending(task) {
+  const sourcing = sourcingState(task);
+  if (sourcing.pendingConfirmation?.status === "final_confirmation_pending") { recordAudit(task, "stale_pending_confirmation_discarded", { previousConfirmationId: text(sourcing.pendingConfirmation.confirmationId) || null }); delete sourcing.pendingConfirmation; }
+}
+function withTaskActionLock(taskId, action, operation) {
+  const key = `${taskId}:${action}`; if (taskActionLocks.has(key)) return taskActionLocks.get(key);
+  const run = Promise.resolve().then(operation).finally(() => { if (taskActionLocks.get(key) === run) taskActionLocks.delete(key); render(); }); taskActionLocks.set(key, run); render(); return run;
+}
+async function confirmFinalCandidate(taskId) {
+  return withTaskActionLock(taskId, "confirm", async () => {
+    const task = currentQueuedTask(taskId); if (!task) throw new Error("任务已变更或不存在，拒绝写入采购价。"); const facts = currentConfirmationFacts(task);
+    if (facts.final?.status !== "final_confirmation_pending" || !factsMatchFinal(facts.final, facts)) { if (facts.final) { facts.final.status = "final_confirmation_blocked"; facts.final.blockers = appendBlockers(facts.final, ["confirmation_data_changed"]); } recordAudit(task, "confirmation_blocked", { reason: "confirmation_data_changed" }); persistQueue(); throw new Error("候选、判断、报价或最终试算已变化/缺失，已保留在人工确认队列且未写入采购价。"); }
+    clearStaleTask5Pending(task); const pending = sourcingCore.buildFinalConfirmation({ task, candidate: facts.candidate, judgement: facts.judgement, quote: facts.quote, finalPricing: facts.finalPricing });
+    if (pending.status !== "final_confirmation_pending") { facts.final.status = "final_confirmation_blocked"; facts.final.blockers = appendBlockers(facts.final, ["confirmation_current_revalidation_failed"]); persistQueue(); throw new Error("当前安全复验未通过，未写入采购价。"); }
+    const result = sourcingCore.confirmRecommendation(task, pending, { task, candidate: facts.candidate, judgement: facts.judgement, quote: facts.quote, finalPricing: facts.finalPricing }, new Date().toISOString());
+    const sourcing = sourcingState(task); sourcing.confirmedCandidate = clone(facts.candidate, null); sourcing.finalConfirmation = { ...pending, status: "final_confirmation_confirmed", candidateSnapshot: clone(facts.candidate, null), judgementSnapshot: clone(facts.judgement, null), quoteSnapshot: clone(facts.quote, null), finalPricing: clone(facts.finalPricing, null), confirmedAt: new Date().toISOString() }; pricingState(task).finalOzonPricing = clone(facts.finalPricing, null); recordAudit(task, "confirmed_purchase_source", { candidateId: text(facts.candidate.candidateId), confirmationId: pending.confirmationId }); persistQueue(); render(); setStatus("已确认采用，采购成本现已写入该任务。", "ok"); return result;
+  });
+}
+async function rejectFinalCandidate(taskId) {
+  return withTaskActionLock(taskId, "reject", async () => {
+    const task = currentQueuedTask(taskId); if (!task) throw new Error("任务已变更或不存在。"); const facts = currentConfirmationFacts(task), sourcing = sourcingState(task), candidateId = text(facts.candidate?.candidateId || facts.final?.candidate?.candidateId); if (!candidateId) throw new Error("当前确认卡片缺少候选身份，不能否决。");
+    if (facts.final?.status === "final_confirmation_pending" && factsMatchFinal(facts.final, facts)) { clearStaleTask5Pending(task); const pending = sourcingCore.buildFinalConfirmation({ task, candidate: facts.candidate, judgement: facts.judgement, quote: facts.quote, finalPricing: facts.finalPricing }); if (pending.status === "final_confirmation_pending") { sourcingCore.rejectRecommendation(task, pending, new Date().toISOString()); delete sourcingState(task).pendingConfirmation; } }
+    sourcing.rejectedCandidateIds = [...new Set([...(Array.isArray(sourcing.rejectedCandidateIds) ? sourcing.rejectedCandidateIds : []), candidateId])]; recordAudit(task, "candidate_rejected", { candidateId, finalStatus: facts.final?.status || "missing" });
+    const next = sourcingFlow.promoteNextCandidate(sourcing.detailCandidates || [], sourcing.rejectedCandidateIds);
+    if (!next) { buildNoSourceFinal(task, "no_acceptable_next_candidate", "pending_human_review"); setStatus("已否决当前候选，暂无可继续尝试的1688候选。", "bad"); return { status: "no_next_candidate" }; }
+    delete sourcing.finalConfirmation; delete sourcing.activeCandidate; delete sourcing.aiJudgement; delete sourcing.quote; delete sourcing.finalPricingPreview; sourcing.status = "automatic_running"; task.status = "pending_human_review"; persistQueue(); render(); setStatus("已否决当前候选，正在按安全规则尝试下一候选。", "ok"); return runAutomatic1688Task(task);
+  });
+}
+function strictSingleUnitPrice(value) { const raw = typeof value === "number" ? value.toFixed(2) : text(value); if (!/^\d+(?:\.\d{1,2})?$/.test(raw)) return null; const money = Number(raw); return Number.isFinite(money) && money > 0 && money <= 1_000_000_000 ? Number(money.toFixed(2)) : null; }
+async function saveSingleUnitException(taskId, price) {
+  return withTaskActionLock(taskId, "single-unit-exception", async () => {
+    const task = currentQueuedTask(taskId); if (!task) throw new Error("任务已变更或不存在，不能保存例外。"); const final = task?.sourcing?.finalConfirmation, candidate = currentCardCandidate(task, final), onePiecePrice = strictSingleUnitPrice(price), sourceUrl = sourcingFlow.canonical1688OfferUrl(candidate?.sourceUrl), productId = text(candidate?.productId) || /^https:\/\/detail\.1688\.com\/offer\/(\d+)\.html$/.exec(sourceUrl)?.[1] || "";
+    if (Number(candidate?.minimumOrderQuantity) !== 2 || !sourceUrl || !productId || onePiecePrice === null) throw new Error("仅能为当前1688页面已核验的MOQ 2候选保存正数、两位小数以内的一件采购价。");
+    const exceptions = queueMeta().singleUnitExceptions, existing = exceptions[productId]; if (existing && (text(existing.productId) !== productId || sourcingFlow.canonical1688OfferUrl(existing.sourceUrl) !== sourceUrl)) throw new Error("同一产品ID已有不同页面的例外记录，拒绝跨商品复用。");
+    const exception = { productId, sourceUrl, onePiecePrice, confirmedAt: new Date().toISOString() }; exceptions[productId] = exception; recordAudit(task, "manual_exact_product_exception_saved", { productId, sourceUrl, onePiecePrice });
+    const judgement = task?.sourcing?.aiJudgement || final?.judgementSnapshot || final?.judgement, quote = sourcingFlow.quoteAutomaticSingleUnit(candidate, exception);
+    if (!quote.confirmable) { queueCandidateFinal(task, candidate, judgement, quote, { eligibleAt18Pct: false, status: "not_eligible" }); throw new Error("例外价格未能通过当前商品、MOQ、规格或运费复验。"); }
+    const context = { task, taskId: taskIdOf(task) }; let finalPricing;
+    try { finalPricing = await previewCandidatePricing(context, quote); } catch { queueCandidateFinal(task, candidate, judgement, quote, { eligibleAt18Pct: false, status: "preview_failed" }, ["final_pricing_preview_missing_or_failed"]); throw new Error("一件价已任务绑定保存，但最终利润试算未完成，仍不能确认采用。"); }
+    if (!contextIsCurrent(context) || finalPricing?.stale) throw new Error("任务已变更，例外未用于写入采购价。"); queueCandidateFinal(task, candidate, judgement, quote, finalPricing); setStatus("一件采购价已按当前产品绑定保存；请重新查看试算后单独确认采用。", "ok"); return exception;
+  });
+}
+async function startSinglePinduoduoDeepSearch(taskId) {
+  return withTaskActionLock(taskId, "manual-pinduoduo-deep-search", async () => {
+    const task = currentQueuedTask(taskId); if (!task) throw new Error("任务已变更或不存在。"); if (!window.confirm("将仅为这一件打开 MuMu 和拼多多进行深度补搜；不会自动下单、购买或联系商家。是否继续？")) return { cancelled: true };
+    const result = await api("/api/task/search", { method: "POST", body: JSON.stringify(task) }); sourcingState(task).manualPinduoduoDeepSearch = { requestedAt: new Date().toISOString(), result: clone(result, null) }; recordAudit(task, "manual_pinduoduo_deep_search_requested", { taskId: taskIdOf(task) }); persistQueue(); render(); setStatus("已仅为当前单品启动拼多多深度补搜；采购价仍需人工确认。", "ok"); return result;
+  });
+}
+
+function importQueueFile(file) {
+  if (!file) return; const reader = new FileReader();
+  reader.onload = () => {
+    try { const parsed = JSON.parse(String(reader.result || "")), imported = object(parsed?.queue) || object(parsed); if (!Array.isArray(imported?.tasks)) throw new Error("JSON中没有任务数组。"); queue = imported; sourceName = file.name || sourceName; queueMeta(); automaticBatch.cursor = 0; automaticBatch.completed = 0; automaticBatch.failed = 0; automaticBatch.status = "idle"; persistQueue(); render(); setStatus(`已导入${queue.tasks.length}个任务；可开始批量自动找货源。`, "ok"); }
+    catch (error) { setStatus(`导入失败：${error?.message || "JSON格式无效"}`, "bad"); }
   };
-  try { await commitPurchaseCostWithFinalPricing(task, verification.purchaseCost, verification.sourceUrl, verification); }
-  catch { /* 规格价和复价失败状态已分别持久化并显示。 */ }
+  reader.readAsText(file);
+}
+function downloadQueue() { if (!queue) return; const blob = new Blob([JSON.stringify({ queue, sourceName }, null, 2)], { type: "application/json" }), url = URL.createObjectURL(blob), link = document.createElement("a"); link.href = url; link.download = sourceName.replace(/\.json$/i, "") + "-sourcing-mvp6.json"; link.click(); URL.revokeObjectURL(url); }
+function bindUi() {
+  $("queueFile")?.addEventListener("change", (event) => importQueueFile(event?.target?.files?.[0])); $("download")?.addEventListener("click", downloadQueue);
+  $("batchStart")?.addEventListener("click", () => runAutomatic1688Batch().catch((error) => setStatus(error?.message || "批量启动失败。", "bad")));
+  $("batchPause")?.addEventListener("click", () => pauseAutomatic1688Batch().catch((error) => setStatus(error?.message || "暂停失败。", "bad")));
+  $("batchResume")?.addEventListener("click", () => resumeAutomatic1688Batch().catch((error) => setStatus(error?.message || "恢复失败。", "bad")));
+  $("batchStop")?.addEventListener("click", () => cancelAutomatic1688Batch().catch((error) => setStatus(error?.message || "取消失败。", "bad")));
 }
 
-$("queueFile").addEventListener("change", async (event) => {
-  const file = event.target.files?.[0]; if (!file) return;
-  try {
-    const parsed = JSON.parse(await file.text());
-    if (!Array.isArray(parsed.tasks)) throw new Error("JSON中缺少tasks数组。");
-    queue = parsed; sourceName = file.name; batch.cursor = 0; batch.completed = 0; batch.failed = 0; persistQueue(); render(); setStatus(`已导入${parsed.tasks.length}件，其中${stats().ready}件可进入拼多多找品。`, "ok");
-  } catch (error) { queue = null; render(); setStatus(`导入失败：${error.message}`, "bad"); }
-});
-
-$("checkDevice").addEventListener("click", checkDevice);
-$("startDevice").addEventListener("click", async () => { try { setStatus("正在请求启动MuMu……"); const result = await api("/api/device/launch", { method: "POST", body: "{}" }); setStatus(`${result.message}请等待安卓桌面出现后再次检查。`, "ok"); } catch (error) { setStatus(error.message, "bad"); } });
-$("openPdd").addEventListener("click", async () => { try { const result = await api("/api/pinduoduo/launch", { method: "POST", body: "{}" }); setStatus(result.message, "ok"); } catch (error) { setStatus(error.message, "bad"); } });
-$("batchStart").addEventListener("click", () => { void runBatch(); });
-$("aiBatchStart").addEventListener("click", () => { void runAiBatch(); });
-$("skuBatchStart").addEventListener("click", () => { void runSkuBatch(); });
-$("batchPause").addEventListener("click", () => { if (!batch.running) return; batch.paused = true; batch.riskPaused = false; batch.pauseReason = "人工暂停"; persistQueue(); render(); setStatus("已请求暂停；当前商品核验完成后暂停。", ""); });
-$("batchResume").addEventListener("click", () => { if (!batch.running) return; batch.paused = false; batch.riskPaused = false; batch.pauseReason = ""; persistQueue(); render(); setStatus("批量任务已继续。", "ok"); });
-$("batchStop").addEventListener("click", () => { if (!batch.running) return; batch.stopRequested = true; batch.paused = false; persistQueue(); render(); setStatus("已请求停止；当前商品核验完成后停止并保存进度。", ""); });
-$("download").addEventListener("click", () => { if (!queue) return; const blob = new Blob([`${JSON.stringify(queue, null, 2)}\n`], { type: "application/json" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = sourceName.replace(/\.json$/i, "") + "-pinduoduo-pricing.json"; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); });
-
-const restored = restoreQueue();
+restoreQueue();
+bindUi();
 render();
-const restoredRiskPause = restored && queue?.meta?.pinduoduoBatch?.status === "paused_risk_control";
-if (restoredRiskPause) setStatus(`已恢复风控暂停进度：${queue.meta.pinduoduoBatch.pauseReason || "检测到拼多多验证页面"}。人工处理后可重新开始批量任务并重试当前SKU。`, "bad");
-else {
-  if (restored) setStatus(`已恢复本地任务：${queue.tasks.length}件，已完成找同款${stats().sourced}件，可继续批量处理。`, "ok");
-  void checkDevice();
-}
-void checkAiStatus();
