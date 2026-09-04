@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import vm from "node:vm";
 import { aiJudgementReadiness, applySelectedCandidate, candidateInspectionOrder, detectPinduoduoRiskPage, extractPinduoduoCandidates, extractPinduoduoDetail, extractPinduoduoSkuSheet, findUiNode, isTrustedOzonImageUrl, normalizeAiJudgement, normalizeSkuSelection, parseMumuInfo, parsePinduoduoRoute, parseUiNodes, pinduoduoFavoriteState, pinduoduoProductGoodsId, queueStats, reconcilePinduoduoDisplayedPrice, resolveAiRecommendedCandidate, safeTaskFileName, taskReadiness } from "../pinduoduo-agent/core.mjs";
-import { applyFinalOzonPricing, createFinalPricingRequestGuard, preliminaryPricingDecision, previewFinalOzonPricing } from "../pinduoduo-agent/public/pricing-flow.js";
+import { applyFinalOzonPricing, createFinalPricingRequestGuard, MAX_OZON_PREVIEW_MONEY, preliminaryPricingDecision, previewFinalOzonPricing } from "../pinduoduo-agent/public/pricing-flow.js";
 import { isTrustedPinduoduoImageUrl } from "../pinduoduo-agent/qwen-client.mjs";
 
 assert.equal(isTrustedOzonImageUrl("https://ir.ozone.ru/s3/multimedia-test/wc1000/1.jpg"), true);
@@ -140,6 +141,20 @@ assert.equal(preliminaryPricingDecision(refreshedTask, 20, Date.parse("2026-08-2
 const appliedTask = { ozon: {}, enrichment: { maxPurchaseCostAt18Pct: 50.93 }, pricing: {} };
 assert.equal(applyFinalOzonPricing(appliedTask, { ok: true, effectiveGreenPrice: 121.18, originalBlackPrice: 128.95, internationalFreight: 52.52, selectedCommission: 20, maxPurchaseCostAt18Pct: 36.17, calculation: {} }, 51, "2026-08-29T00:00:00Z").eligibleAt18Pct, false);
 assert.equal(appliedTask.pricing.preliminaryMaxPurchaseCostAt18Pct, 50.93);
+const legacyResponse = { ok: true, maxPurchaseCostAt18Pct: 36.166, calculation: { legacy: true } };
+const legacyTask = { ozon: {}, enrichment: { maxPurchaseCostAt18Pct: 50.93 }, pricing: {} };
+const legacyFinal = applyFinalOzonPricing(legacyTask, legacyResponse, 36.174, "not-an-iso-time");
+assert.deepEqual(legacyFinal, { finalLimit: 36.166, eligibleAt18Pct: false },
+  "legacy pricing must compare the rounded purchase cost to the original final limit");
+assert.equal(legacyTask.enrichment.maxPurchaseCostAt18Pct, 36.166, "legacy pricing must retain the source limit exactly");
+assert.equal(legacyTask.pricing.purchaseCost, 36.17, "legacy purchase cost keeps its historical two-decimal write");
+assert.equal(legacyTask.pricing.eligibleAt18Pct, false);
+assert.equal(legacyTask.pricing.finalOzonPricing.fetchedAt, "not-an-iso-time", "legacy writes must not impose preview ISO rules");
+assert.equal(legacyTask.pricing.finalOzonPricing.effectiveGreenPrice, null, "legacy missing optional values remain null");
+assert.equal(legacyTask.pricing.finalOzonPricing.originalBlackPrice, null, "legacy missing optional values remain null");
+assert.equal(legacyTask.pricing.finalOzonPricing.internationalFreight, null, "legacy missing optional values remain null");
+assert.equal(legacyTask.pricing.finalOzonPricing.selectedCommission, null, "legacy missing optional values remain null");
+assert.strictEqual(legacyTask.enrichment.pricingCalculation, legacyResponse.calculation, "legacy calculation write preserves its original reference behavior");
 const previewTask = { enrichment: { maxPurchaseCostAt18Pct: 50 }, pricing: { preserved: true }, audit: { preserved: true } };
 const previewResponse = {
   ok: true,
@@ -187,6 +202,25 @@ assert.equal(zeroPreview.effectiveGreenPrice, 0, "zero pricing fields must not b
 assert.equal(zeroPreview.eligibleAt18Pct, true, "rounded equal zero values must be eligible");
 assert.equal(previewFinalOzonPricing({}, previewResponse, 23, "2026-08-31T08:00:00+08:00").fetchedAt, "2026-08-31T08:00:00+08:00",
   "a calendar-valid ISO timestamp with an explicit offset must remain valid");
+const boundaryPreview = previewFinalOzonPricing({}, {
+  ok: true,
+  maxPurchaseCostAt18Pct: MAX_OZON_PREVIEW_MONEY,
+  effectiveGreenPrice: MAX_OZON_PREVIEW_MONEY,
+  originalBlackPrice: MAX_OZON_PREVIEW_MONEY,
+  internationalFreight: MAX_OZON_PREVIEW_MONEY,
+  selectedCommission: MAX_OZON_PREVIEW_MONEY,
+  calculation: {},
+}, MAX_OZON_PREVIEW_MONEY, "2026-08-31T00:00:00.000Z");
+assert.equal(boundaryPreview.purchaseCost, MAX_OZON_PREVIEW_MONEY, "preview accepts the documented money ceiling");
+const previewMoneyFields = ["maxPurchaseCostAt18Pct", "effectiveGreenPrice", "originalBlackPrice", "internationalFreight", "selectedCommission"];
+for (const unsafeMoney of [-0, -0.01, null, "", NaN, Infinity, -Infinity, "23", MAX_OZON_PREVIEW_MONEY + 0.01, Number.MAX_VALUE]) {
+  assert.throws(() => previewFinalOzonPricing({}, previewResponse, unsafeMoney, "2026-08-31T00:00:00.000Z"), /Ozon最终复价响应不完整/,
+    "preview purchase cost rejects every invalid money representation");
+  for (const field of previewMoneyFields) {
+    assert.throws(() => previewFinalOzonPricing({}, { ...previewResponse, [field]: unsafeMoney }, 23, "2026-08-31T00:00:00.000Z"), /Ozon最终复价响应不完整/,
+      `preview ${field} rejects every invalid money representation`);
+  }
+}
 for (const invalidMoney of [null, "", NaN, Infinity, "23", -1]) {
   const invalidTask = { pricing: { untouched: true } };
   const invalidResponse = { ...previewResponse, effectiveGreenPrice: invalidMoney };
@@ -254,6 +288,100 @@ const indexSource = fs.readFileSync(new URL("../pinduoduo-agent/public/index.htm
 const qwenSource = fs.readFileSync(new URL("../pinduoduo-agent/qwen-client.mjs", import.meta.url), "utf8");
 const bridgeSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/pinduoduo-bridge.js", import.meta.url), "utf8");
 const extensionManifest = JSON.parse(fs.readFileSync(new URL("../ozon-erp-collector-extension/manifest.json", import.meta.url), "utf8"));
+
+function createAppHarness() {
+  const listeners = new Set();
+  const requests = [];
+  const elements = new Map();
+  const element = () => ({
+    style: {}, children: [], value: "", textContent: "", className: "", innerHTML: "", disabled: false,
+    addEventListener() {}, append(...children) { this.children.push(...children); }, replaceChildren(...children) { this.children = children; },
+  });
+  const fakeWindow = {
+    location: { origin: "http://127.0.0.1:17628" },
+    addEventListener(type, listener) { if (type === "message") listeners.add(listener); },
+    removeEventListener(type, listener) { if (type === "message") listeners.delete(listener); },
+    postMessage(data) {
+      if (data?.type === "OZON_FINAL_REPRICE_PING_V1") {
+        Promise.resolve().then(() => {
+          for (const listener of listeners) listener({ source: fakeWindow, origin: fakeWindow.location.origin, data: { type: "OZON_FINAL_REPRICE_READY_V1", requestId: data.requestId } });
+        });
+      } else if (data?.type === "OZON_FINAL_REPRICE_REQUEST_V1") requests.push(data);
+    },
+  };
+  const savedQueue = JSON.stringify({ queue: { tasks: [], meta: { pinduoduoBatch: {} } }, sourceName: "test.json" });
+  const context = {
+    __pricingDeps: { applyFinalOzonPricing, createFinalPricingRequestGuard, preliminaryPricingDecision, previewFinalOzonPricing },
+    window: fakeWindow,
+    document: { getElementById(id) { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); }, createElement: element },
+    localStorage: { getItem() { return savedQueue; }, setItem() {} },
+    URL, Blob, console, setTimeout, clearTimeout,
+  };
+  const appForVm = appSource.replace(/^import .* from "\.\/pricing-flow\.js";\r?$/m,
+    "const { applyFinalOzonPricing, createFinalPricingRequestGuard, preliminaryPricingDecision, previewFinalOzonPricing } = globalThis.__pricingDeps;")
+    + "\nglobalThis.__appTest = { commitPurchaseCostWithFinalPricing, setQueue: (value) => { queue = value; } };";
+  vm.runInNewContext(appForVm, context, { filename: "app.js" });
+  return {
+    commit: context.__appTest.commitPurchaseCostWithFinalPricing,
+    setQueue: context.__appTest.setQueue,
+    nextRequest() { return requests.at(-1); },
+    reply(request, response) {
+      for (const listener of listeners) listener({ source: fakeWindow, origin: fakeWindow.location.origin, data: { type: "OZON_FINAL_REPRICE_RESPONSE_V1", requestId: request.requestId, ...response } });
+    },
+    replyAfter(request, response, delayMs) {
+      return new Promise((resolve) => setTimeout(() => {
+        this.reply(request, response);
+        resolve();
+      }, delayMs));
+    },
+  };
+}
+
+async function waitForFinalPricingRequest(harness, previousRequest = null) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const request = harness.nextRequest();
+    if (request && request !== previousRequest) return request;
+    await Promise.resolve();
+  }
+  assert.fail("expected the app to send a final Ozon pricing request");
+}
+
+const appHarness = createAppHarness();
+const appPreviewTask = {
+  taskId: "ozon-preview-1",
+  status: "pending_human_review",
+  ozon: { sku: "preview-1", name: "unchanged" },
+  enrichment: { maxPurchaseCostAt18Pct: 50, originalBlackPrice: 90 },
+  pricing: { purchaseCost: 19, sourceUrl: "https://existing.example/item", finalOzonPricing: { status: "old" } },
+  audit: { updatedAt: "2026-08-30T00:00:00.000Z" },
+  sourcing: { provider: "1688", marker: "unchanged" },
+};
+appHarness.setQueue({ tasks: [appPreviewTask] });
+const appBefore = JSON.stringify(appPreviewTask);
+const bridgeRejected = appHarness.commit(appPreviewTask, 23, "https://detail.1688.com/offer/1.html");
+const rejectedRequest = await waitForFinalPricingRequest(appHarness);
+appHarness.reply(rejectedRequest, { ok: false, error: "bridge rejected" });
+await assert.rejects(bridgeRejected, /bridge rejected/, "a bridge rejection must reach the caller");
+assert.equal(JSON.stringify(appPreviewTask), appBefore, "a bridge rejection must not mutate any 1688 task field");
+const invalidPreview = appHarness.commit(appPreviewTask, 23, "https://detail.1688.com/offer/1.html");
+const invalidPreviewRequest = await waitForFinalPricingRequest(appHarness, rejectedRequest);
+appHarness.reply(invalidPreviewRequest, { ok: true, maxPurchaseCostAt18Pct: 23 });
+await assert.rejects(invalidPreview, /Ozon最终复价响应不完整/, "a rejected 1688 preview must reach the caller");
+assert.equal(JSON.stringify(appPreviewTask), appBefore, "a failed 1688 preview must not mutate pricing, Ozon, enrichment, or audit");
+const delayedFirst = appHarness.commit(appPreviewTask, 23, "https://detail.1688.com/offer/1.html");
+const delayedFirstRequest = await waitForFinalPricingRequest(appHarness, invalidPreviewRequest);
+const delayedSecond = appHarness.commit(appPreviewTask, 23, "https://detail.1688.com/offer/1.html");
+const delayedSecondRequest = await waitForFinalPricingRequest(appHarness, delayedFirstRequest);
+const delayedOldReply = appHarness.replyAfter(delayedFirstRequest, { ...previewResponse }, 10);
+appHarness.reply(delayedSecondRequest, { ...previewResponse });
+const appPreview = await delayedSecond;
+assert.equal(appPreview.status, "completed", "the current 1688 response returns a preview");
+assert.equal(appPreview.purchaseCost, 23, "the current 1688 response preserves its preview cost");
+assert.equal(JSON.stringify(appPreviewTask), appBefore, "a successful 1688 preview must not prewrite the task before confirmation");
+await delayedOldReply;
+assert.equal((await delayedFirst).stale, true, "a delayed old bridge response must be ignored after the newer preview completes");
+assert.equal(JSON.stringify(appPreviewTask), appBefore, "an ignored old response must not mutate any 1688 task field");
+
 assert.match(serverSource, /127\.0\.0\.1/);
 assert.match(serverSource, /MuMuManager\.exe/);
 assert.match(serverSource, /adb\(\["shell", "getprop", "sys\.boot_completed"\]/);

@@ -1,4 +1,5 @@
 export const FINAL_OZON_PRICE_CACHE_MS = 30 * 60 * 1000;
+export const MAX_OZON_PREVIEW_MONEY = 1_000_000_000;
 
 function finite(value) {
   const number = Number(value);
@@ -6,7 +7,7 @@ function finite(value) {
 }
 
 function strictMoney(value) {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return null;
+  if (typeof value !== "number" || !Number.isFinite(value) || Object.is(value, -0) || value < 0 || value > MAX_OZON_PREVIEW_MONEY) return null;
   const rounded = Number(value.toFixed(2));
   return Number.isFinite(rounded) ? rounded : null;
 }
@@ -139,8 +140,8 @@ export function previewFinalOzonPricing(task, response, purchaseCost, fetchedAt 
 
 export function applyFinalOzonPricing(task, response, purchaseCost, fetchedAt = new Date().toISOString()) {
   if (!response?.ok || response?.partial || response?.disqualified) throw new Error(response?.partialError || response?.disqualificationReason || response?.error || "Ozon最终复价未返回完整结果");
-  const preview = previewFinalOzonPricing(task, response, purchaseCost, fetchedAt);
-  const finalLimit = preview.maxPurchaseCostAt18Pct;
+  const finalLimit = finite(response.maxPurchaseCostAt18Pct);
+  if (finalLimit === null || finalLimit < 0) throw new Error("Ozon最终复价缺少18%最高采购成本");
   task.ozon = task.ozon && typeof task.ozon === "object" ? task.ozon : {};
   task.enrichment = task.enrichment && typeof task.enrichment === "object" ? task.enrichment : {};
   task.pricing = task.pricing && typeof task.pricing === "object" ? task.pricing : {};
@@ -159,27 +160,27 @@ export function applyFinalOzonPricing(task, response, purchaseCost, fetchedAt = 
   });
   Object.assign(task.enrichment, {
     ozonPricingStatus: "completed",
-    originalBlackPrice: preview.originalBlackPrice,
+    originalBlackPrice: response.originalBlackPrice,
     blackPriceSource: response.blackPriceSource,
     blackPriceSourceUrl: response.blackPriceSourceUrl,
-    internationalFreight: preview.internationalFreight,
+    internationalFreight: response.internationalFreight,
     freightRoute: response.freightRoute,
     maxPurchaseCostAt18Pct: finalLimit,
-    pricingCalculation: preview.calculation,
+    pricingCalculation: response.calculation,
     ozonPricingElapsedMs: Number(response.elapsedMs || 0),
-    ozonPricingFetchedAt: preview.fetchedAt,
+    ozonPricingFetchedAt: fetchedAt,
   });
   task.pricing.finalOzonPricing = {
-    status: preview.status,
-    fetchedAt: preview.fetchedAt,
-    maxPurchaseCostAt18Pct: preview.maxPurchaseCostAt18Pct,
-    effectiveGreenPrice: preview.effectiveGreenPrice,
-    originalBlackPrice: preview.originalBlackPrice,
-    internationalFreight: preview.internationalFreight,
-    selectedCommission: preview.selectedCommission,
+    status: "completed",
+    fetchedAt,
+    maxPurchaseCostAt18Pct: finalLimit,
+    effectiveGreenPrice: finite(response.effectiveGreenPrice),
+    originalBlackPrice: finite(response.originalBlackPrice),
+    internationalFreight: finite(response.internationalFreight),
+    selectedCommission: finite(response.selectedCommission),
     sourceProductUrl: response.sourceProductUrl || response.blackPriceSourceUrl || null,
   };
-  task.pricing.purchaseCost = preview.purchaseCost;
-  task.pricing.eligibleAt18Pct = preview.eligibleAt18Pct;
+  task.pricing.purchaseCost = Number(Number(purchaseCost).toFixed(2));
+  task.pricing.eligibleAt18Pct = task.pricing.purchaseCost <= finalLimit;
   return { finalLimit, eligibleAt18Pct: task.pricing.eligibleAt18Pct };
 }
