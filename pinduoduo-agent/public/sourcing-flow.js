@@ -89,16 +89,170 @@ export function canonical1688OfferUrl(rawUrl) {
   }
 }
 
+function offerIdFromCanonicalUrl(sourceUrl) {
+  return /^https:\/\/detail\.1688\.com\/offer\/(\d+)\.html$/.exec(sourceUrl)?.[1] || "";
+}
+
+function safeTaskId(value) {
+  return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(value.trim())
+    ? value.trim()
+    : "";
+}
+
+function ordinaryObject(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function taskIdentity(task) {
+  if (!ordinaryObject(task)) return "";
+  const taskId = Object.hasOwn(task, "taskId") ? safeTaskId(task.taskId) : "";
+  const id = Object.hasOwn(task, "id") ? safeTaskId(task.id) : "";
+  if ((Object.hasOwn(task, "taskId") && !taskId) || (Object.hasOwn(task, "id") && !id)) return "";
+  if (taskId && id && taskId !== id) return "";
+  return taskId || id;
+}
+
+function candidateIdentity(rawCandidate) {
+  if (!ordinaryObject(rawCandidate)) return null;
+  const sourceUrl = canonical1688OfferUrl(rawCandidate.sourceUrl);
+  const offerId = offerIdFromCanonicalUrl(sourceUrl);
+  const candidateId = typeof rawCandidate.candidateId === "string" ? rawCandidate.candidateId.trim() : "";
+  if (!sourceUrl || !offerId || candidateId !== `1688-${offerId}`) return null;
+  if (Object.hasOwn(rawCandidate, "productId") && String(rawCandidate.productId).trim() !== offerId) return null;
+  return { sourceUrl, offerId, candidateId };
+}
+
+function boundedText(value, maximum) {
+  return typeof value === "string" ? value.trim().slice(0, maximum) : "";
+}
+
+function boundedNumber(value, { minimum = -1_000_000_000, maximum = 1_000_000_000 } = {}) {
+  return typeof value === "number" && Number.isFinite(value) && value >= minimum && value <= maximum ? value : null;
+}
+
+function boundedEvidence(value) {
+  if (!ordinaryObject(value)) return null;
+  const evidence = {};
+  const localRef = boundedText(value.localRef, 100);
+  if (/^\/api\/evidence\/1688\/[a-f0-9]{32}$/i.test(localRef)) evidence.localRef = localRef;
+  const text = boundedText(value.text, 2_000);
+  const capturedAt = boundedText(value.capturedAt, 80);
+  const imageUrl = boundedText(value.imageUrl, 1_200);
+  const sourceUrl = canonical1688OfferUrl(value.sourceUrl);
+  const screenshotStatus = boundedText(value.screenshotStatus, 40);
+  if (text) evidence.text = text;
+  if (capturedAt) evidence.capturedAt = capturedAt;
+  if (imageUrl) evidence.imageUrl = imageUrl;
+  if (sourceUrl) evidence.sourceUrl = sourceUrl;
+  if (screenshotStatus) evidence.screenshotStatus = screenshotStatus;
+  if (typeof value.rank === "number" && Number.isFinite(value.rank) && value.rank >= 0 && value.rank <= 1_000) evidence.rank = value.rank;
+  return Object.keys(evidence).length ? evidence : null;
+}
+
+function boundedCandidate(rawCandidate, identity) {
+  const pricing = ordinaryObject(rawCandidate.pricing) ? rawCandidate.pricing : {};
+  const rawShipping = ordinaryObject(rawCandidate.shipping) ? rawCandidate.shipping : {};
+  const rawSku = ordinaryObject(rawCandidate.sku) ? rawCandidate.sku : {};
+  const skuOptions = Array.isArray(rawSku.options) ? rawSku.options.slice(0, 40).map((option) => ({
+    id: boundedText(option?.id ?? option?.optionId, 100),
+    label: boundedText(option?.label, 200),
+  })).filter((option) => option.id && option.label) : [];
+  const shippingStatus = boundedText(rawShipping.status, 20).toLowerCase();
+  const shipping = shippingStatus === "free"
+    ? { status: "free", fee: 0 }
+    : shippingStatus === "known" && boundedNumber(rawShipping.fee, { minimum: 0 }) !== null
+      ? { status: "known", fee: boundedNumber(rawShipping.fee, { minimum: 0 }) }
+      : { status: "unknown", fee: null };
+  const priceSources = new Set(["unknown", "displayed", "tier", "selected_sku", "one_piece", "sample", "manual_exact_product_exception"]);
+  const priceSource = boundedText(pricing.priceSource, 40);
+  const detailStatus = boundedText(rawCandidate.detailStatus, 30);
+  const optionCount = Number.isInteger(rawSku.optionCount) && rawSku.optionCount > 0 && rawSku.optionCount <= 40 ? rawSku.optionCount : null;
+  return {
+    provider: "1688",
+    candidateId: identity.candidateId,
+    productId: identity.offerId,
+    sourceUrl: identity.sourceUrl,
+    identityValid: rawCandidate.identityValid !== false,
+    title: boundedText(rawCandidate.title, 500),
+    imageUrl: boundedText(rawCandidate.imageUrl, 1_200),
+    supplierName: boundedText(rawCandidate.supplierName, 500),
+    minimumOrderQuantity: Number.isInteger(rawCandidate.minimumOrderQuantity) && rawCandidate.minimumOrderQuantity > 0 && rawCandidate.minimumOrderQuantity <= 1_000_000 ? rawCandidate.minimumOrderQuantity : null,
+    supportsOnePiece: rawCandidate.supportsOnePiece === true,
+    supportsSample: rawCandidate.supportsSample === true,
+    pricing: {
+      displayedPrice: boundedNumber(pricing.displayedPrice, { minimum: 0 }),
+      onePiecePrice: boundedNumber(pricing.onePiecePrice, { minimum: 0 }),
+      samplePrice: boundedNumber(pricing.samplePrice, { minimum: 0 }),
+      selectedSkuPrice: boundedNumber(pricing.selectedSkuPrice, { minimum: 0 }),
+      priceSource: priceSources.has(priceSource) ? priceSource : "unknown",
+      tiers: Array.isArray(pricing.tiers) ? pricing.tiers.slice(0, 12).map((tier) => ({
+        min: boundedNumber(tier?.min, { minimum: 0 }),
+        max: boundedNumber(tier?.max, { minimum: 0 }),
+        price: boundedNumber(tier?.price, { minimum: 0 }),
+      })).filter((tier) => tier.min !== null && tier.price !== null) : [],
+    },
+    shipping,
+    sku: {
+      dimensions: Array.isArray(rawSku.dimensions) ? rawSku.dimensions.slice(0, 8).map((value) => boundedText(value, 200)).filter(Boolean) : [],
+      options: skuOptions,
+      optionCount,
+      optionsComplete: rawSku.optionsComplete === true,
+      singleSpec: rawSku.singleSpec === true,
+      requiresSelection: rawSku.requiresSelection === true,
+      selectedOptionId: boundedText(rawSku.selectedOptionId, 100) || null,
+      selectionVerified: rawSku.selectionVerified === true,
+    },
+    detailStatus: ["search_only", "partial", "complete", "failed"].includes(detailStatus) ? detailStatus : "search_only",
+    evidence: boundedEvidence(rawCandidate.evidence),
+  };
+}
+
+function knownShipping(candidate) {
+  const shipping = ordinaryObject(candidate?.shipping) ? candidate.shipping : null;
+  if (!shipping) return false;
+  if (shipping.status === "free") return true;
+  return shipping.status === "known" && typeof shipping.fee === "number" && Number.isFinite(shipping.fee) && shipping.fee >= 0;
+}
+
+function completeSkuBase(candidate) {
+  const sku = ordinaryObject(candidate?.sku) ? candidate.sku : null;
+  const options = Array.isArray(sku?.options) ? sku.options : [];
+  if (!options.length) return false;
+  const ids = new Set();
+  return options.every((option) => {
+    if (!ordinaryObject(option)) return false;
+    const id = typeof (option.id ?? option.optionId) === "string" ? String(option.id ?? option.optionId).trim() : "";
+    const label = typeof option.label === "string" ? option.label.trim() : "";
+    if (!id || !label || ids.has(id)) return false;
+    ids.add(id);
+    return true;
+  });
+}
+
+/** A detail can influence strategy progress only when its identity and base commercial facts are complete. */
+export function isUsableAutomaticCandidate(candidate) {
+  return Boolean(candidateIdentity(candidate))
+    && candidate?.identityValid !== false
+    && candidate?.detailStatus === "complete"
+    && typeof candidate.title === "string" && candidate.title.trim().length > 0
+    && Number.isInteger(candidate.minimumOrderQuantity) && candidate.minimumOrderQuantity > 0
+    && knownShipping(candidate)
+    && completeSkuBase(candidate);
+}
+
 /** Merges strategy output by canonical offer URL and enforces the global light-candidate ceiling. */
 export function mergeAutomaticCandidates(existing = [], incoming = []) {
   const result = [];
-  const seen = new Set();
+  const seenUrls = new Set();
+  const seenIds = new Set();
   for (const candidate of [...(Array.isArray(existing) ? existing : []), ...(Array.isArray(incoming) ? incoming : [])]) {
-    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) continue;
-    const sourceUrl = canonical1688OfferUrl(candidate.sourceUrl);
-    if (!sourceUrl || seen.has(sourceUrl)) continue;
-    seen.add(sourceUrl);
-    result.push({ ...candidate, sourceUrl });
+    const identity = candidateIdentity(candidate);
+    if (!identity || seenUrls.has(identity.sourceUrl) || seenIds.has(identity.candidateId)) continue;
+    seenUrls.add(identity.sourceUrl);
+    seenIds.add(identity.candidateId);
+    result.push(boundedCandidate(candidate, identity));
     if (result.length === AUTOMATIC_1688_LIMITS.maxLightweightCandidates) break;
   }
   return result;
@@ -106,7 +260,9 @@ export function mergeAutomaticCandidates(existing = [], incoming = []) {
 
 /** Keeps the extension's five-detail limit defensively true at the page boundary. */
 export function detailCandidatesForInspection(candidates = []) {
-  return (Array.isArray(candidates) ? candidates : []).slice(0, AUTOMATIC_1688_LIMITS.maxDetailCandidates);
+  return mergeAutomaticCandidates([], candidates)
+    .filter((candidate) => isUsableAutomaticCandidate(candidate))
+    .slice(0, AUTOMATIC_1688_LIMITS.maxDetailCandidates);
 }
 
 function plainObject(value) {
@@ -125,7 +281,20 @@ function validSavedQueue(value) {
 }
 
 function jsonClone(value) {
-  return JSON.parse(JSON.stringify(value));
+  try { return JSON.parse(JSON.stringify(value)); } catch { return null; }
+}
+
+function safeSavedQueue(value) {
+  if (!validSavedQueue(value)) return { saved: null, invalid: false };
+  const copied = jsonClone(value);
+  if (!copied || !ordinaryObject(copied.queue) || !Array.isArray(copied.queue.tasks)) return { saved: null, invalid: true };
+  const identities = new Set();
+  for (const task of copied.queue.tasks) {
+    const identity = taskIdentity(task);
+    if (!identity || identities.has(identity)) return { saved: null, invalid: true };
+    identities.add(identity);
+  }
+  return { saved: copied, invalid: false };
 }
 
 /**
@@ -135,19 +304,22 @@ function jsonClone(value) {
 export function migrateMvp6StoredQueue(primaryValue, legacyValues = []) {
   let selected = parseStoredValue(primaryValue);
   let migratedFromLegacy = false;
-  if (!validSavedQueue(selected)) {
+  const primary = safeSavedQueue(selected);
+  if (primary.invalid) return { saved: null, migratedFromLegacy: false };
+  if (!primary.saved) {
     selected = null;
     for (const legacyValue of Array.isArray(legacyValues) ? legacyValues : []) {
       const candidate = parseStoredValue(legacyValue);
-      if (!validSavedQueue(candidate)) continue;
-      selected = candidate;
+      const checked = safeSavedQueue(candidate);
+      if (!checked.saved) continue;
+      selected = checked.saved;
       migratedFromLegacy = true;
       break;
     }
-  }
+  } else selected = primary.saved;
   if (!selected) return { saved: null, migratedFromLegacy: false };
 
-  const saved = jsonClone(selected);
+  const saved = selected;
   const previousMeta = saved.queue.meta;
   const meta = plainObject(previousMeta) ? previousMeta : { legacyMeta: previousMeta };
   meta.sourcingSchema = "mvp6";
@@ -220,10 +392,6 @@ function finiteNonNegativeMoney(value) {
 function positiveMoney(value) {
   const money = finiteNonNegativeMoney(value);
   return money !== null && money > 0 ? money : null;
-}
-
-function offerIdFromCanonicalUrl(sourceUrl) {
-  return /^https:\/\/detail\.1688\.com\/offer\/(\d+)\.html$/.exec(sourceUrl)?.[1] || "";
 }
 
 function strictIsoInstant(value) {

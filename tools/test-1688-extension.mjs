@@ -230,7 +230,7 @@ function createDriver({ probe = searchFixture, search = searchFixture, detail = 
   const fetch = async (url, options = {}) => {
     fetchCalls.push({ url, options });
     if (fetchDelay) await new Promise((resolve) => setTimeout(resolve, fetchDelay));
-    if (String(url).startsWith("http://127.0.0.1:17628/api/evidence/1688?")) return response({ json: { localRef: "/api/evidence/1688/test.jpg" } });
+    if (String(url).startsWith("http://127.0.0.1:17628/api/evidence/1688?")) return response({ json: { localRef: "/api/evidence/1688/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } });
     return imageResponse || response();
   };
   const context = vm.createContext({ chrome, console, URL, fetch, Uint8Array, atob, btoa, setTimeout, AbortController, crypto: webcrypto });
@@ -249,6 +249,15 @@ async function waitForJobStatus(api, jobId, status) {
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   throw new Error(`Timed out waiting for ${jobId} to reach ${status}`);
+}
+
+async function waitForJobPhase(api, jobId, phase) {
+  for (let attempt = 0; attempt < 80; attempt += 1) {
+    const job = await api.getJob(jobId);
+    if (job?.phase === phase) return job;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`Timed out waiting for ${jobId} to reach phase ${phase}`);
 }
 
 function persistedJob({ requestId, status = "paused_platform_verification", ownerToken, tabId = null, revision = 7 } = {}) {
@@ -294,6 +303,16 @@ assert.ok(evidencePost.options.body.byteLength <= 1024 * 1024);
 assert.match(completed.detailCandidates[0].evidence.localRef, /^\/api\/evidence\//);
 assert.doesNotMatch(JSON.stringify(successful.storageData), /data:image\/jpeg;base64/i);
 assert.equal((await successful.api.cancelJob(queued.jobId)).status, "completed");
+
+const detailClockDriver = createDriver({ commandDelay: (command) => command === "read_product_detail" ? 120 : 0 });
+const detailClockQueued = await detailClockDriver.api.startJob({ ...validImageRequest, requestId: "detail-phase-clock" });
+const inspectingDetail = await waitForJobPhase(detailClockDriver.api, detailClockQueued.jobId, "inspect_details");
+assert.match(inspectingDetail.phaseStartedAt, /^\d{4}-\d{2}-\d{2}T/, "each detail phase exposes a durable wall-clock start");
+assert.equal(inspectingDetail.currentDetailIndex, 0, "the first inspected detail has a durable zero-based index");
+const detailClockCompleted = await waitForJobStatus(detailClockDriver.api, detailClockQueued.jobId, "completed");
+assert.match(detailClockCompleted.phaseStartedAt, /^\d{4}-\d{2}-\d{2}T/, "terminal job state retains its latest detail phase start for a page refresh");
+assert.ok(Number.isInteger(detailClockCompleted.currentDetailIndex) && detailClockCompleted.currentDetailIndex >= 0,
+  "terminal job state retains the last inspected detail index");
 
 const captureFailedDriver = createDriver({ captureDataUrl: null });
 const captureFailedQueued = await captureFailedDriver.api.startJob({ ...validImageRequest, requestId: "capture-failed" });

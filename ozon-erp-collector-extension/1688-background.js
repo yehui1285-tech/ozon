@@ -386,10 +386,10 @@
     throw lastError || Error("页面命令超时");
   }
 
-  async function waitForTabComplete(generationRef, requiredUrl = "") {
+  async function waitForTabComplete(generationRef, requiredUrl = "", phase = "waiting_tab") {
     const deadline = Date.now() + 20000;
     while (Date.now() < deadline) {
-      const claim = await ownedForUse(generationRef, "waiting_tab");
+      const claim = await ownedForUse(generationRef, phase);
       const tab = claim.tab;
       if ((!tab.status || tab.status === "complete") && (!requiredUrl || s(tab.url).startsWith(requiredUrl))) return tab;
       if (chrome.tabs.onUpdated?.addListener) {
@@ -431,7 +431,7 @@
 
   async function evidence(generationRef, candidate, page, signal) {
     try {
-      const claim = await ownedForUse(generationRef, "evidence");
+      const claim = await ownedForUse(generationRef);
       if (!claim.tab.active) return fallback(candidate, page);
       const dataUrl = await chrome.tabs.captureVisibleTab(claim.tab.windowId, { format: "jpeg", quality: 60 });
       await live(generationRef);
@@ -452,7 +452,7 @@
       );
       await live(generationRef);
       const localRef = s(response.ok ? (await response.json())?.localRef : "");
-      return /^\/api\/evidence\/[A-Za-z0-9._/-]+$/.test(localRef) && !localRef.includes("..")
+      return /^\/api\/evidence\/1688\/[a-f0-9]{32}$/i.test(localRef)
         ? { capturedAt: new Date().toISOString(), localRef }
         : fallback(candidate, page);
     } catch (error) {
@@ -532,13 +532,27 @@
       if (verify(page)) return transition(generationRef, "paused_platform_verification");
       const candidates = root.Ozon1688Core.parseSearchSnapshot(page).filter((candidate) => !X.test(candidate.title)).slice(0, 12);
       if (!candidates.length) return transition(generationRef, "failed", { diagnostics: { code: "search_parser_failed" } });
-      await mutate(generationRef, (current) => ({ ...current, candidates, phase: "inspect_details" }));
+      await mutate(generationRef, (current) => ({
+        ...current,
+        candidates,
+        phase: "inspect_details",
+        phaseStartedAt: new Date().toISOString(),
+        currentDetailIndex: 0,
+      }));
 
       const details = [];
-      for (const candidate of candidates.slice(0, 5)) {
-        await live(generationRef, "detail_navigation");
+      const detailCandidates = candidates.slice(0, 5);
+      for (let detailIndex = 0; detailIndex < detailCandidates.length; detailIndex += 1) {
+        const candidate = detailCandidates[detailIndex];
+        await mutate(generationRef, (current) => ({
+          ...current,
+          phase: "inspect_details",
+          phaseStartedAt: new Date().toISOString(),
+          currentDetailIndex: detailIndex,
+        }));
+        await live(generationRef);
         await updateOwnedTab(generationRef, { url: candidate.sourceUrl });
-        await waitForTabComplete(generationRef, candidate.sourceUrl);
+        await waitForTabComplete(generationRef, candidate.sourceUrl, "");
         const detail = snap(await command(generationRef, "read_product_detail"));
         const capturedEvidence = await evidence(generationRef, candidate, detail, entry.controller?.signal);
         const parsed = root.Ozon1688Core.parseDetailSnapshot(detail);
@@ -617,6 +631,8 @@
         ownedTabId: null,
         candidates: [],
         detailCandidates: [],
+        phaseStartedAt: null,
+        currentDetailIndex: null,
         error: "",
         diagnostics: null,
         startedAt: new Date().toISOString(),

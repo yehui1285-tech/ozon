@@ -35,9 +35,15 @@ assert.equal(nextAutomaticAction({ status: "paused_platform_verification", searc
 assert.equal(promoteNextCandidate([{ candidateId: "a" }, { candidateId: "b" }], ["a"]).candidateId, "b");
 
 const automaticCandidateFixture = (id) => ({
+  provider: "1688",
   candidateId: `1688-${id}`,
+  productId: String(id),
   sourceUrl: `https://detail.1688.com/offer/${id}.html?from=search`,
   title: `候选${id}`,
+  detailStatus: "complete",
+  minimumOrderQuantity: 1,
+  shipping: { status: "known", fee: 3 },
+  sku: { options: [{ id: `sku-${id}`, label: "标准款" }], selectedOptionId: null, selectionVerified: false },
 });
 assert.equal(canonical1688OfferUrl("https://detail.1688.com/offer/42.html?trace=1"), "https://detail.1688.com/offer/42.html");
 assert.equal(canonical1688OfferUrl("https://supplier.example/offer/42.html"), "");
@@ -69,6 +75,66 @@ assert.deepEqual(migratedMvp6Saved.saved.queue.meta.pinduoduoBatch, { cursor: 2 
 assert.equal(migratedMvp6Saved.saved.queue.tasks[0].history[0].result, "kept", "migration must retain MVP 5.3 history");
 assert.equal(migratedMvp6Saved.saved.queue.tasks[0].sourcing.legacyResult.selected, true, "migration must retain historical candidates and manual decisions");
 assert.deepEqual(migratedMvp6Saved.saved.queue.meta.singleUnitExceptions, {});
+
+// A persisted queue is an authority boundary: an invalid task object or a
+// duplicate/ambiguous task identity must fail the whole restore rather than
+// letting a later button target whichever duplicate appears first.
+for (const invalidTasks of [
+  [{ taskId: "duplicate-task" }, { taskId: "duplicate-task" }],
+  [{ taskId: "unsafe task id" }],
+  [{ taskId: "left" , id: "right" }],
+  [[]],
+]) {
+  const invalidSaved = migrateMvp6StoredQueue(JSON.stringify({ queue: { tasks: invalidTasks } }));
+  assert.equal(invalidSaved.saved, null,
+    "duplicate, unsafe, conflicting, or non-JSON task records must never enter the restored queue");
+}
+
+const completeAutomaticCandidate = (id) => ({
+  provider: "1688",
+  candidateId: `1688-${id}`,
+  productId: String(id),
+  sourceUrl: `https://detail.1688.com/offer/${id}.html`,
+  title: `完整候选${id}`,
+  detailStatus: "complete",
+  minimumOrderQuantity: 1,
+  shipping: { status: "known", fee: 3 },
+  sku: { options: [{ id: `sku-${id}`, label: "标准款" }], selectedOptionId: null, selectionVerified: false },
+});
+const automaticIdentityCandidates = [
+  completeAutomaticCandidate(101),
+  { ...completeAutomaticCandidate(102), candidateId: "1688-101" },
+  { ...completeAutomaticCandidate(103), productId: "999" },
+  { ...completeAutomaticCandidate(104), detailStatus: "partial" },
+];
+assert.deepEqual(
+  mergeAutomaticCandidates([], automaticIdentityCandidates).map((entry) => entry.candidateId),
+  ["1688-101", "1688-104"],
+  "candidate IDs must bind to their canonical offer URL; duplicate or inconsistent identities are discarded before storage",
+);
+assert.deepEqual(
+  detailCandidatesForInspection(automaticIdentityCandidates).map((entry) => entry.candidateId),
+  ["1688-101"],
+  "only a canonical, identity-bound, complete detail with MOQ, shipping, and base SKU evidence counts as usable",
+);
+
+const boundedCandidate = mergeAutomaticCandidates([], [{
+  ...completeAutomaticCandidate(105),
+  title: "长标题".repeat(800),
+  supplierName: "长供应商".repeat(800),
+  imageUrl: `https://cbu01.alicdn.com/${"image".repeat(500)}.jpg`,
+  sku: { options: Array.from({ length: 80 }, (_, index) => ({ id: `sku-${index}`, label: "规格".repeat(200) })) },
+  evidence: { localRef: "/api/evidence/1688/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", text: "证据".repeat(3000), rawPayload: "must-not-persist" },
+  unexpectedPayload: "must-not-persist",
+}])[0];
+assert.ok(boundedCandidate.title.length <= 500 && boundedCandidate.supplierName.length <= 500,
+  "persisted candidate text must be bounded before a bridge payload reaches local storage");
+assert.ok(boundedCandidate.imageUrl.length <= 1200 && boundedCandidate.sku.options.length <= 40,
+  "persisted candidate URL and SKU arrays must have explicit structural ceilings");
+assert.ok(boundedCandidate.sku.options.every((option) => option.label.length <= 200),
+  "persisted SKU labels must be bounded");
+assert.ok(boundedCandidate.evidence.text.length <= 2000 && boundedCandidate.evidence.rawPayload === undefined && boundedCandidate.unexpectedPayload === undefined,
+  "only an allowlisted, bounded evidence shape may be persisted");
 
 let automaticTiming = resumeAutomaticTiming({}, 0);
 automaticTiming = pauseAutomaticTiming(automaticTiming, 20_000);
