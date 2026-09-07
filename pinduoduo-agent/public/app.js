@@ -616,18 +616,40 @@ async function poll1688Job(context, jobId, strategy) {
     }
     const sourcing = sourcingState(task);
     if (timeExceeded(task)) { await safeCancel1688Job(jobId, context); return { status: "automatic_timeout", diagnostics: { code: "automatic_timeout" }, jobId }; }
+    const activeJob = object(sourcing.activeJob);
+    const persistedDetailPhase = text(activeJob?.jobId) === jobId && text(activeJob?.phase) === "inspect_details";
+    let detailDeadlineMs = null, detailIndex = null;
+    if (persistedDetailPhase) {
+      const phaseStartedAt = Date.parse(text(activeJob?.phaseStartedAt));
+      detailIndex = activeJob?.currentDetailIndex;
+      if (!Number.isInteger(detailIndex) || detailIndex < 0 || !Number.isFinite(phaseStartedAt) || phaseStartedAt > Date.now() + 1_000) {
+        await safeCancel1688Job(jobId, context);
+        return { status: "stage_timeout", diagnostics: { code: "detail_phase_clock_missing", stage: "detail_or_sku" }, jobId };
+      }
+      detailDeadlineMs = phaseStartedAt + sourcingFlow.AUTOMATIC_1688_LIMITS.detailSkuMs;
+      if (Date.now() >= detailDeadlineMs) {
+        await safeCancel1688Job(jobId, context);
+        return { status: "stage_timeout", diagnostics: { code: "stage_timeout", stage: "detail_or_sku", currentDetailIndex: detailIndex }, jobId };
+      }
+    }
     const verifySkuRemainingMs = verifySkuStartedAt === null
-      ? 15_000
+      ? Infinity
       : sourcingFlow.AUTOMATIC_1688_LIMITS.detailSkuMs - (Date.now() - verifySkuStartedAt);
-    if (verifySkuRemainingMs <= 0) { await safeCancel1688Job(jobId, context); return { status: "stage_timeout", diagnostics: { code: "stage_timeout", stage: "detail_or_sku" }, jobId }; }
-    const requestTimeout = activeRequestTimeout(task, Math.min(15_000, verifySkuRemainingMs));
+    const detailRemainingMs = detailDeadlineMs === null ? Infinity : detailDeadlineMs - Date.now();
+    const stageRemainingMs = Math.min(15_000, verifySkuRemainingMs, detailRemainingMs);
+    if (stageRemainingMs <= 0) { await safeCancel1688Job(jobId, context); return { status: "stage_timeout", diagnostics: { code: "stage_timeout", stage: "detail_or_sku", ...(detailIndex === null ? {} : { currentDetailIndex: detailIndex }) }, jobId }; }
+    const requestTimeout = activeRequestTimeout(task, stageRemainingMs);
     if (!requestTimeout) { await safeCancel1688Job(jobId, context); return automaticTimeoutResult(); }
     let job;
     try { job = await sourcingExtensionRequest("get_1688_job", { jobId }, requestTimeout, context.controller?.signal); }
     catch (error) {
       await safeCancel1688Job(jobId, context);
       if (!automaticContextCanAdvance(context)) return automaticContextStopResult(context, jobId);
-      return timeExceeded(task) ? automaticTimeoutResult() : { status: "bridge_failed", diagnostics: { code: "bridge_failed", message: text(error?.message) }, jobId };
+      if (timeExceeded(task)) return automaticTimeoutResult();
+      if (detailDeadlineMs !== null && Date.now() >= detailDeadlineMs) {
+        return { status: "stage_timeout", diagnostics: { code: "stage_timeout", stage: "detail_or_sku", currentDetailIndex: detailIndex }, jobId };
+      }
+      return { status: "bridge_failed", diagnostics: { code: "bridge_failed", message: text(error?.message) }, jobId };
     }
     if (!automaticContextCanAdvance(context)) {
       await safeCancel1688Job(jobId, context);
@@ -1069,7 +1091,7 @@ function withManualTaskLock(task, operation) {
 }
 function refreshedPendingForBinding(binding, facts) {
   if (!factsMatchFinal(binding.final, facts)) return null;
-  const rebuilt = sourcingCore.buildFinalConfirmation({ task: binding.task, candidate: facts.candidate, judgement: facts.judgement, quote: facts.quote, finalPricing: facts.finalPricing });
+  const rebuilt = freshFinalConfirmation(binding.task, facts.candidate, facts.judgement, facts.quote, facts.finalPricing);
   if (rebuilt.status !== "final_confirmation_pending") return null;
   Object.assign(rebuilt, {
     candidateSnapshot: clone(facts.candidate, null),

@@ -9,6 +9,8 @@ import { isTrustedPinduoduoImageUrl } from "../pinduoduo-agent/qwen-client.mjs";
 
 const refreshSessionCoreA = await import(new URL("../pinduoduo-agent/sourcing-core.mjs?task7-round2-session-a", import.meta.url));
 const refreshSessionCoreB = await import(new URL("../pinduoduo-agent/sourcing-core.mjs?task7-round2-session-b", import.meta.url));
+const refreshFallbackCoreA = await import(new URL("../pinduoduo-agent/sourcing-core.mjs?task7-round3-fallback-a", import.meta.url));
+const refreshFallbackCoreB = await import(new URL("../pinduoduo-agent/sourcing-core.mjs?task7-round3-fallback-b", import.meta.url));
 
 assert.equal(isTrustedOzonImageUrl("https://ir.ozone.ru/s3/multimedia-test/wc1000/1.jpg"), true);
 assert.equal(isTrustedOzonImageUrl("http://ir.ozone.ru/s3/multimedia-test/1.jpg"), false);
@@ -729,6 +731,42 @@ assert.equal(refreshSessionBTask.sourcing.status, "confirmed_purchase_source",
 assert.equal(refreshSessionBTask.pricing.purchaseCost, 23,
   "the new post-refresh confirmation must still be allowed to write its independently revalidated purchase cost");
 
+const preservedFallbackTerminal = {
+  confirmationId: "sourcing-confirmation-1",
+  action: "confirm",
+  status: "confirmed",
+  finalStatus: "final_confirmation_confirmed",
+  completedAt: "2026-09-07T00:00:00.000Z",
+};
+const fallbackSourceTask = {
+  ...automaticLifecycleTask("ozon-confirmation-fallback"),
+  sourcing: { finalActionTerminals: { "sourcing-confirmation-1": preservedFallbackTerminal } },
+};
+const fallbackSourceHarness = automaticConfirmationHarness(refreshFallbackCoreA);
+fallbackSourceHarness.setQueue({ tasks: [fallbackSourceTask], meta: {} });
+await fallbackSourceHarness.runAutomatic(fallbackSourceTask);
+const fallbackCardId = fallbackSourceTask.sourcing.finalConfirmation.confirmationId;
+assert.equal(fallbackCardId, "sourcing-confirmation-2",
+  "a new card must already avoid the persisted terminal key before the simulated refresh");
+const fallbackRefreshTask = JSON.parse(JSON.stringify(fallbackSourceTask));
+const fallbackOldTerminalBefore = JSON.stringify(fallbackRefreshTask.sourcing.finalActionTerminals["sourcing-confirmation-1"]);
+const fallbackRefreshHarness = automaticConfirmationHarness(refreshFallbackCoreB);
+fallbackRefreshHarness.setQueue({ tasks: [fallbackRefreshTask], meta: {} });
+const fallbackFirstConfirm = await fallbackRefreshHarness.confirmFinal("ozon-confirmation-fallback");
+assert.equal(fallbackRefreshTask.sourcing.finalConfirmation.confirmationId, fallbackCardId,
+  "fallback rebuilding after refresh must preserve the currently rendered confirmation capability");
+assert.equal(JSON.stringify(fallbackRefreshTask.sourcing.finalActionTerminals["sourcing-confirmation-1"]), fallbackOldTerminalBefore,
+  "fallback rebuilding must never overwrite an old terminal record with a colliding module-local confirmation ID");
+assert.equal(fallbackRefreshTask.sourcing.finalActionTerminals[fallbackCardId]?.action, "confirm",
+  "the refreshed card must write its own terminal action under its preserved capability");
+const fallbackSecondConfirm = await fallbackRefreshHarness.confirmFinal("ozon-confirmation-fallback");
+assert.equal(fallbackFirstConfirm.idempotent, false,
+  "the refreshed card's first confirmation must execute normally");
+assert.equal(fallbackSecondConfirm.idempotent, true,
+  "the refreshed card's repeated confirmation must be idempotent rather than execute twice");
+assert.equal(fallbackRefreshTask.sourcing.confirmationAudit.filter((entry) => entry.action === "confirmed_purchase_source").length, 1,
+  "fallback rebuilding after refresh must produce exactly one confirmation write");
+
 function delayedJudgeLifecycleHarness(gate) {
   const jobs = new Map();
   let sequence = 0;
@@ -1140,6 +1178,56 @@ assert.equal(perDetailResult.status, "completed",
   "a job older than 45 seconds may keep polling when its persisted current detail is still within its own 15-second budget");
 assert.equal(perDetailClockHarness.extensionRequests.filter((request) => request.action === "cancel_1688_job").length, 0,
   "a fresh persisted detail phase must not be cancelled by the removed whole-job 45-second cutoff");
+
+const nearDetailDeadlineClock = createControlledClock(14_900);
+const nearDetailDeadlineTimers = createManualTimers();
+let releaseNearDetailPoll;
+const nearDetailPollGate = new Promise((resolve) => { releaseNearDetailPoll = resolve; });
+const nearDetailDeadlineHarness = createAppHarness({
+  clock: nearDetailDeadlineClock,
+  timers: nearDetailDeadlineTimers,
+  sourcingFlowDeps: sourcingFlowWithClock(nearDetailDeadlineClock),
+  extensionHandler: async (request) => {
+    if (request.action === "get_1688_job") {
+      await nearDetailPollGate;
+      return { ok: true, jobId: request.jobId, status: "running", phase: "inspect_details", candidates: [], detailCandidates: [] };
+    }
+    if (request.action === "cancel_1688_job") return { ok: true, jobId: request.jobId, status: "cancelled" };
+    return { ok: false, error: "unexpected bridge action" };
+  },
+});
+const nearDetailDeadlineTask = automaticLifecycleTask("ozon-near-detail-deadline");
+nearDetailDeadlineTask.sourcing = {
+  status: "automatic_running",
+  timing: { elapsedMs: 0, activeStartedAtMs: 0 },
+  activeJob: {
+    jobId: "1688-near-detail-deadline",
+    strategy: { type: "image", sourceUrl: nearDetailDeadlineTask.enrichment.mainImageUrl },
+    status: "running",
+    phase: "inspect_details",
+    phaseStartedAt: new Date(0).toISOString(),
+    currentDetailIndex: 0,
+  },
+};
+nearDetailDeadlineHarness.setQueue({ tasks: [nearDetailDeadlineTask], meta: {} });
+const nearDetailDeadlineContext = nearDetailDeadlineHarness.beginAutomatic(nearDetailDeadlineTask, "single");
+const nearDetailDeadlinePoll = nearDetailDeadlineHarness.pollJob(nearDetailDeadlineContext, "1688-near-detail-deadline", { type: "image", sourceUrl: nearDetailDeadlineTask.enrichment.mainImageUrl });
+await waitForCondition(() => nearDetailDeadlineHarness.extensionRequests.some((request) => request.action === "get_1688_job"), "near-deadline detail poll request");
+nearDetailDeadlineClock.set(15_000);
+nearDetailDeadlineTimers.fire(100);
+const nearDetailDeadlineResult = await nearDetailDeadlinePoll;
+releaseNearDetailPoll();
+await nearDetailDeadlineHarness.finishAutomatic(nearDetailDeadlineContext);
+assert.equal(nearDetailDeadlineResult.status, "stage_timeout",
+  "a poll that crosses a persisted detail deadline must stop at that detail boundary");
+assert.equal(nearDetailDeadlineHarness.extensionRequests.filter((request) => request.action === "cancel_1688_job" && request.jobId === "1688-near-detail-deadline").length, 1,
+  "a near-deadline detail poll must issue exactly one cancellation cleanup");
+assert.equal(nearDetailDeadlineHarness.extensionRequests.filter((request) => request.action === "get_1688_job").length, 1,
+  "a detail timeout must not issue another poll after cancellation");
+assert.equal(nearDetailDeadlineHarness.apiRequests.length, 0,
+  "a detail timeout must not continue to Qwen");
+assert.equal(nearDetailDeadlineHarness.finalPricingRequests.length, 0,
+  "a detail timeout must not continue to final repricing");
 
 const activeBudgetClock = createControlledClock(0);
 const activeBudgetHarness = createAppHarness({
