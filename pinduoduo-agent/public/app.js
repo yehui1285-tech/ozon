@@ -656,6 +656,12 @@ async function poll1688Job(context, jobId, strategy) {
       return automaticContextStopResult(context, jobId);
     }
     if (timeExceeded(task)) { await safeCancel1688Job(jobId, context); return automaticTimeoutResult(); }
+    // A successful response can win the event loop race with its due timer.
+    // Recheck the captured detail deadline before accepting any returned state.
+    if (detailDeadlineMs !== null && Date.now() >= detailDeadlineMs) {
+      await safeCancel1688Job(jobId, context);
+      return { status: "stage_timeout", diagnostics: { code: "stage_timeout", stage: "detail_or_sku", currentDetailIndex: detailIndex }, jobId };
+    }
     const progress = mergeJobCandidates(task, strategy, job);
     sourcing.activeJob = {
       jobId,

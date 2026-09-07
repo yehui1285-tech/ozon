@@ -469,6 +469,8 @@ function sourcingFlowWithClock(clock) {
   };
   return {
     ...sourcingFlow,
+    resumeAutomaticTiming(timing) { return sourcingFlow.resumeAutomaticTiming(timing, clock.now()); },
+    pauseAutomaticTiming(timing) { return sourcingFlow.pauseAutomaticTiming(timing, clock.now()); },
     automaticElapsedMs: elapsed,
     automaticTimeBudgetExceeded(timing) { return elapsed(timing) >= sourcingFlow.AUTOMATIC_1688_LIMITS.totalActiveMs; },
     automaticRequestTimeoutMs(timing, requestedMs) {
@@ -585,11 +587,14 @@ const automaticCandidate = {
   evidence: { localRef: "/api/evidence/test/77.jpg" },
 };
 
-function automaticConfirmationHarness(sourcingCoreModule) {
-  const jobs = new Map();
+function automaticConfirmationHarness(sourcingCoreModule, { clock = null, timers = null, resumedJob = null, beforePoll = null } = {}) {
+  const jobs = new Map(resumedJob ? [[resumedJob.jobId, resumedJob]] : []);
   let sequence = 0;
   return createAppHarness({
     sourcingCoreModule,
+    clock,
+    timers,
+    sourcingFlowDeps: clock ? sourcingFlowWithClock(clock) : sourcingFlow,
     finalPricingResponse: previewResponse,
     apiHandler: async (path) => {
       if (path === "/api/ai/1688-judge") return {
@@ -613,6 +618,7 @@ function automaticConfirmationHarness(sourcingCoreModule) {
       }
       if (request.action === "get_1688_job") {
         const job = jobs.get(request.jobId);
+        if (beforePoll) await beforePoll(job);
         return {
           ok: true, ...job, status: "completed", phase: "completed",
           diagnostics: job.strategy.type === "verify_sku" ? { code: "sku_verified" } : null,
@@ -1162,6 +1168,15 @@ const perDetailClockHarness = createAppHarness({
           candidates: [], detailCandidates: [], diagnostics: null,
         };
       }
+      if (perDetailPollCount === 2) {
+        perDetailClock.set(60_000);
+        return {
+          ok: true, jobId: request.jobId, status: "running", phase: "inspect_details",
+          phaseStartedAt: new Date(59_500).toISOString(), currentDetailIndex: 1,
+          candidates: [], detailCandidates: [], diagnostics: null,
+        };
+      }
+      perDetailClock.set(70_000);
       return { ok: true, jobId: request.jobId, status: "completed", phase: "completed", candidates: [], detailCandidates: [], diagnostics: null };
     }
     if (request.action === "cancel_1688_job") return { ok: true, jobId: request.jobId, status: "cancelled" };
@@ -1178,6 +1193,8 @@ assert.equal(perDetailResult.status, "completed",
   "a job older than 45 seconds may keep polling when its persisted current detail is still within its own 15-second budget");
 assert.equal(perDetailClockHarness.extensionRequests.filter((request) => request.action === "cancel_1688_job").length, 0,
   "a fresh persisted detail phase must not be cancelled by the removed whole-job 45-second cutoff");
+assert.equal(perDetailPollCount, 3,
+  "advancing the detail index within its deadline must give the next detail its own 15-second budget");
 
 const nearDetailDeadlineClock = createControlledClock(14_900);
 const nearDetailDeadlineTimers = createManualTimers();
@@ -1228,6 +1245,76 @@ assert.equal(nearDetailDeadlineHarness.apiRequests.length, 0,
   "a detail timeout must not continue to Qwen");
 assert.equal(nearDetailDeadlineHarness.finalPricingRequests.length, 0,
   "a detail timeout must not continue to final repricing");
+
+for (const responseAt of [14_999, 15_001, 15_000]) {
+  const responseFirstClock = createControlledClock(14_900);
+  const responseFirstTimers = createManualTimers();
+  let queuedDeadlineCallback;
+  let releaseCompletedPoll;
+  const completedPollGate = new Promise((resolve) => { releaseCompletedPoll = resolve; });
+  const jobId = `1688-response-first-${responseAt}`;
+  const strategy = { type: "similar_supplier", sourceUrl: automaticCandidate.imageUrl };
+  const responseFirstHarness = automaticConfirmationHarness(undefined, {
+    clock: responseFirstClock,
+    timers: {
+      ...responseFirstTimers,
+      setTimeout(callback, delayMs) {
+        if (delayMs === 100) queuedDeadlineCallback = callback;
+        return responseFirstTimers.setTimeout(callback, delayMs);
+      },
+    },
+    // The returned terminal snapshot may describe a newer detail. It cannot
+    // replace the deadline captured from the persistent state before this poll.
+    resumedJob: { jobId, strategy, phaseStartedAt: new Date(14_990).toISOString(), currentDetailIndex: 1 },
+    beforePoll: async (job) => { if (job.jobId === jobId) await completedPollGate; },
+  });
+  const responseFirstTask = automaticLifecycleTask(`ozon-response-first-${responseAt}`);
+  responseFirstTask.sourcing = {
+    status: "automatic_running",
+    timing: { elapsedMs: 0, activeStartedAtMs: 0 },
+    // Resume the last strategy so a timeout has no remaining search fallback.
+    searchAttempts: [
+      { strategy: "image", status: "completed", usableCount: 0 },
+      { strategy: "keyword", status: "completed", usableCount: 0 },
+    ],
+    activeJob: {
+      jobId, strategy, status: "running", phase: "inspect_details",
+      phaseStartedAt: new Date(0).toISOString(), currentDetailIndex: 0,
+    },
+  };
+  responseFirstHarness.setQueue({ tasks: [responseFirstTask], meta: {} });
+  const responseFirstRun = responseFirstHarness.runAutomatic(responseFirstTask);
+  await waitForCondition(() => responseFirstHarness.extensionRequests.some((request) => request.action === "get_1688_job"), "response-first detail poll");
+  assert.equal(typeof queuedDeadlineCallback, "function", "the persisted detail deadline must arm a 100ms timer");
+  responseFirstClock.set(responseAt);
+  // For an expired response, both handlers are ready but the response runs
+  // first. Dispatch the queued deadline callback only after that response.
+  releaseCompletedPoll();
+  const responseFirstResult = await responseFirstRun;
+  const searchAttempt = responseFirstTask.sourcing.searchAttempts.at(-1);
+  const expired = responseAt >= 15_000;
+  responseFirstClock.set(Math.max(responseAt, 15_000));
+  queuedDeadlineCallback();
+  await Promise.resolve();
+  assert.deepEqual({
+    attemptStatus: searchAttempt.status,
+    finalStatus: responseFirstResult.status,
+    cancelCalls: responseFirstHarness.extensionRequests.filter((request) => request.action === "cancel_1688_job" && request.jobId === jobId).length,
+    detailPolls: responseFirstHarness.extensionRequests.filter((request) => request.action === "get_1688_job" && request.jobId === jobId).length,
+    persistedCandidates: responseFirstTask.sourcing.detailCandidates.length,
+    qwenCalls: responseFirstHarness.apiRequests.length,
+    nextJobs: responseFirstHarness.extensionRequests.filter((request) => request.action === "start_1688_job").length,
+    repricingCalls: responseFirstHarness.finalPricingRequests.length,
+  }, expired ? {
+    attemptStatus: "stage_timeout", finalStatus: "final_confirmation_blocked", cancelCalls: 1,
+    detailPolls: 1, persistedCandidates: 0, qwenCalls: 0, nextJobs: 0, repricingCalls: 0,
+  } : {
+    attemptStatus: "completed", finalStatus: "final_confirmation_pending", cancelCalls: 0,
+    detailPolls: 1, persistedCandidates: 1, qwenCalls: 2, nextJobs: 1, repricingCalls: 1,
+  }, `a completed response processed at ${responseAt}ms must honor the captured 15000ms detail deadline even when it wins the timer`);
+  if (expired) assert.equal(searchAttempt.diagnostics.currentDetailIndex, 0,
+    "timeout diagnostics must identify the captured detail, not the newer terminal snapshot's detail");
+}
 
 const activeBudgetClock = createControlledClock(0);
 const activeBudgetHarness = createAppHarness({
