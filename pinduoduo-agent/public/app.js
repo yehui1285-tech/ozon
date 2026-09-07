@@ -37,7 +37,7 @@ window.addEventListener("beforeunload", () => {
 function object(value) { return value && typeof value === "object" && !Array.isArray(value) ? value : null; }
 function text(value, fallback = "") { return typeof value === "string" ? value.trim() : fallback; }
 function clone(value, fallback = null) { try { return JSON.parse(JSON.stringify(value)); } catch { return fallback; } }
-function safeTaskId(value) { const id = text(value); return /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(id) ? id : ""; }
+function safeTaskId(value) { return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(value) ? value : ""; }
 function taskIdOf(task) {
   const hasTaskId = object(task) && Object.hasOwn(task, "taskId"), hasId = object(task) && Object.hasOwn(task, "id");
   const taskId = hasTaskId ? safeTaskId(task.taskId) : "", id = hasId ? safeTaskId(task.id) : "";
@@ -337,7 +337,7 @@ async function apiWithTimeout(path, body, timeoutMs, label, signal = null) {
   catch (error) { if (timedOut) throw new Error(`${label}超时，请转入人工确认。`); throw error; }
   finally { clearTimeout(timer); signal?.removeEventListener?.("abort", abort); }
 }
-async function sourcingExtensionRequest(action, payload = {}, timeoutMs = 15000, signal = null) {
+async function sourcingExtensionRequest(action, payload = {}, timeoutMs = 15000, signal = null, lateResponseHandler = null) {
   const allowed = new Set(["start_1688_job", "get_1688_job", "cancel_1688_job"]);
   if (!allowed.has(action)) return Promise.reject(new Error("找品桥接动作不在允许列表中。"));
   if (pageUnloading) return Promise.reject(new Error("页面正在关闭，已停止找品请求。"));
@@ -346,14 +346,34 @@ async function sourcingExtensionRequest(action, payload = {}, timeoutMs = 15000,
   return new Promise((resolve, reject) => {
     let settled = false;
     const finish = (callback, value) => { if (settled) return; settled = true; clearTimeout(timer); window.removeEventListener("message", onMessage); window.removeEventListener("beforeunload", onUnload); signal?.removeEventListener?.("abort", onAbort); callback(value); };
+    const awaitLateResponse = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      window.removeEventListener("beforeunload", onUnload);
+      signal?.removeEventListener?.("abort", onAbort);
+      reject(error);
+    };
     const onMessage = (event) => {
       const data = event?.data;
       if (event?.source !== window || event?.origin !== window.location.origin || data?.type !== "OZON_SOURCING_EXTENSION_RESPONSE_V1" || data?.requestId !== id) return;
+      if (settled) {
+        window.removeEventListener("message", onMessage);
+        Promise.resolve(lateResponseHandler?.(data)).catch(() => null);
+        return;
+      }
       if (data?.ok !== true) finish(reject, new Error(text(data?.error, "1688扩展没有完成请求。"))); else finish(resolve, data);
     };
-    const timer = setTimeout(() => finish(reject, new Error("1688扩展响应超时，请转入人工确认。")), timeoutMs);
-    const onUnload = () => finish(reject, new Error("页面正在关闭，已停止找品请求。"));
-    const onAbort = () => finish(reject, abortedError());
+    const lateResponseError = (message) => { const error = new Error(message); error.code = "sourcing_late_response_pending"; return error; };
+    const timer = setTimeout(() => lateResponseHandler
+      ? awaitLateResponse(lateResponseError("1688扩展响应超时，正在等待迟到响应以取消后台任务。"))
+      : finish(reject, new Error("1688扩展响应超时，请转入人工确认。")), timeoutMs);
+    const onUnload = () => lateResponseHandler
+      ? awaitLateResponse(lateResponseError("页面正在关闭，正在等待迟到响应以取消后台任务。"))
+      : finish(reject, new Error("页面正在关闭，已停止找品请求。"));
+    const onAbort = () => lateResponseHandler
+      ? awaitLateResponse(lateResponseError("找品请求已停止，正在等待迟到响应以取消后台任务。"))
+      : finish(reject, abortedError());
     window.addEventListener("message", onMessage);
     window.addEventListener("beforeunload", onUnload);
     signal?.addEventListener?.("abort", onAbort, { once: true });
@@ -434,6 +454,7 @@ function beginAutomaticRun(task, mode) {
     controller: typeof AbortController === "function" ? new AbortController() : null,
     invalidated: false,
     cleanupJobIds: new Set(),
+    cleanupPromises: new Set(),
     promise: null,
   };
   automaticRuns.set(task, context);
@@ -445,24 +466,39 @@ function invalidateAutomaticRun(task, reason = "stopped") {
   if (context) {
     context.invalidated = true;
     try { context.controller?.abort(reason); } catch { context.controller?.abort(); }
-    if (automaticProvider.task === task && automaticProvider.generation === context.generation) {
-      automaticProvider.task = null; automaticProvider.mode = ""; automaticProvider.generation = 0;
-    }
   }
   const sourcing = object(task?.sourcing);
   if (sourcing) sourcing.automaticGeneration = (Number.isInteger(sourcing.automaticGeneration) ? sourcing.automaticGeneration : 0) + 1;
   return context || null;
 }
-function finishAutomaticRun(context) {
+function trackAutomaticCleanup(context, operation) {
+  const settled = Promise.resolve(operation).catch(() => null);
+  if (!context?.cleanupPromises) return settled;
+  context.cleanupPromises.add(settled);
+  settled.finally(() => context.cleanupPromises.delete(settled));
+  return settled;
+}
+async function waitForAutomaticCleanup(context) {
+  while (context?.cleanupPromises?.size) await Promise.all([...context.cleanupPromises]);
+}
+async function finishAutomaticRun(context) {
+  await waitForAutomaticCleanup(context);
   activeAutomaticRuns.delete(context);
   if (automaticRuns.get(context?.task) === context) automaticRuns.delete(context.task);
   if (automaticProvider.task === context?.task && automaticProvider.generation === context?.generation) {
     automaticProvider.task = null; automaticProvider.mode = ""; automaticProvider.generation = 0;
   }
 }
+function automaticProviderBusyResult(context) {
+  if (context?.mode === "single" && automaticBatch.running) return { status: "provider_busy_batch" };
+  if (automaticProvider.task && (automaticProvider.task !== context?.task
+    || !Number.isInteger(context?.generation)
+    || automaticProvider.generation !== context.generation)) return { status: "provider_busy" };
+  return null;
+}
 function acquireAutomaticProvider(context) {
-  if (context.mode === "single" && automaticBatch.running) return { status: "provider_busy_batch" };
-  if (automaticProvider.task && automaticProvider.task !== context.task) return { status: "provider_busy" };
+  const busy = automaticProviderBusyResult(context);
+  if (busy) return busy;
   automaticProvider.task = context.task; automaticProvider.mode = context.mode; automaticProvider.generation = context.generation;
   return null;
 }
@@ -485,10 +521,20 @@ function buildNoSourceFinal(task, blocker, status = "no_source_found", context =
   sourcing.finalConfirmation = { taskIdentity: stableTaskIdentity(task), status: "final_confirmation_blocked", blockers: [blocker], candidate: null, candidateSnapshot: null, judgement: null, judgementSnapshot: null, quoteSnapshot: null, finalPricing: null, generatedAt: new Date().toISOString() };
   persistQueue(); render(); return sourcing.finalConfirmation;
 }
+function freshFinalConfirmation(task, candidate, judgement, quote, finalPricing) {
+  const terminals = object(task?.sourcing?.finalActionTerminals) || {};
+  const maximumAttempts = Math.max(2, Object.keys(terminals).length + 2);
+  for (let attempt = 0; attempt < maximumAttempts; attempt += 1) {
+    const pending = sourcingCore.buildFinalConfirmation({ task, candidate, judgement, quote, finalPricing });
+    const confirmationId = text(pending?.confirmationId);
+    if (confirmationId && !Object.hasOwn(terminals, confirmationId)) return pending;
+  }
+  throw new Error("无法分配未与已持久化终态冲突的确认能力。");
+}
 function queueCandidateFinal(task, candidate, judgement, quote, finalPricing, extraBlockers = [], context = null) {
   if (context && !automaticContextCanAdvance(context)) return automaticContextStopResult(context);
   const sourcing = sourcingState(task); let pending;
-  try { pending = sourcingCore.buildFinalConfirmation({ task, candidate, judgement, quote, finalPricing }); }
+  try { pending = freshFinalConfirmation(task, candidate, judgement, quote, finalPricing); }
   catch (error) {
     pending = { taskIdentity: stableTaskIdentity(task), status: "final_confirmation_blocked", candidate: null, judgement: null, productPrice: quote?.productPrice ?? null, domesticShipping: quote?.domesticShipping ?? null, purchaseCost: quote?.purchaseCost ?? null, priceSource: quote?.priceSource || "unknown", sourceUrl: sourcingFlow.canonical1688OfferUrl(candidate?.sourceUrl) || null, eligibleAt18Pct: finalPricing?.eligibleAt18Pct === true, blockers: ["confirmation_task_identity_invalid", text(error?.message, "confirmation_build_failed")] };
   }
@@ -551,7 +597,7 @@ async function safeCancel1688Job(jobId, context = null) {
   if (!safeJobId) return null;
   if (context?.cleanupJobIds?.has(safeJobId)) return null;
   context?.cleanupJobIds?.add(safeJobId);
-  try { return await sourcingExtensionRequest("cancel_1688_job", { jobId: safeJobId }, 8000); } catch { return null; }
+  return trackAutomaticCleanup(context, sourcingExtensionRequest("cancel_1688_job", { jobId: safeJobId }, 8000));
 }
 function pauseForPlatformVerification(context, job, strategy) {
   if (!automaticContextCanAdvance(context)) return automaticContextStopResult(context, text(job?.jobId));
@@ -562,23 +608,31 @@ function pauseForPlatformVerification(context, job, strategy) {
   return { status: "paused_platform_verification", jobId: text(job?.jobId) };
 }
 async function poll1688Job(context, jobId, strategy) {
-  const task = context.task, startedAt = Date.now();
+  const task = context.task, verifySkuStartedAt = strategy.type === "verify_sku" ? Date.now() : null;
   while (true) {
-    if (!automaticContextCanAdvance(context)) return automaticContextStopResult(context, jobId);
+    if (!automaticContextCanAdvance(context)) {
+      await safeCancel1688Job(jobId, context);
+      return automaticContextStopResult(context, jobId);
+    }
     const sourcing = sourcingState(task);
     if (timeExceeded(task)) { await safeCancel1688Job(jobId, context); return { status: "automatic_timeout", diagnostics: { code: "automatic_timeout" }, jobId }; }
-    const now = Date.now(), activeStageAt = startedAt;
-    const budget = strategy.type === "verify_sku" ? sourcingFlow.AUTOMATIC_1688_LIMITS.detailSkuMs : sourcingFlow.AUTOMATIC_1688_LIMITS.searchPageMs;
-    if (now - activeStageAt >= budget) { await safeCancel1688Job(jobId, context); return { status: "stage_timeout", diagnostics: { code: "stage_timeout", stage: strategy.type === "verify_sku" ? "detail_or_sku" : "search_page" }, jobId }; }
-    const requestTimeout = activeRequestTimeout(task, Math.min(15000, budget - (now - activeStageAt)));
+    const verifySkuRemainingMs = verifySkuStartedAt === null
+      ? 15_000
+      : sourcingFlow.AUTOMATIC_1688_LIMITS.detailSkuMs - (Date.now() - verifySkuStartedAt);
+    if (verifySkuRemainingMs <= 0) { await safeCancel1688Job(jobId, context); return { status: "stage_timeout", diagnostics: { code: "stage_timeout", stage: "detail_or_sku" }, jobId }; }
+    const requestTimeout = activeRequestTimeout(task, Math.min(15_000, verifySkuRemainingMs));
     if (!requestTimeout) { await safeCancel1688Job(jobId, context); return automaticTimeoutResult(); }
     let job;
     try { job = await sourcingExtensionRequest("get_1688_job", { jobId }, requestTimeout, context.controller?.signal); }
     catch (error) {
+      await safeCancel1688Job(jobId, context);
       if (!automaticContextCanAdvance(context)) return automaticContextStopResult(context, jobId);
       return timeExceeded(task) ? automaticTimeoutResult() : { status: "bridge_failed", diagnostics: { code: "bridge_failed", message: text(error?.message) }, jobId };
     }
-    if (!automaticContextCanAdvance(context)) return automaticContextStopResult(context, jobId);
+    if (!automaticContextCanAdvance(context)) {
+      await safeCancel1688Job(jobId, context);
+      return automaticContextStopResult(context, jobId);
+    }
     if (timeExceeded(task)) { await safeCancel1688Job(jobId, context); return automaticTimeoutResult(); }
     const progress = mergeJobCandidates(task, strategy, job);
     sourcing.activeJob = {
@@ -632,12 +686,44 @@ async function run1688BridgeJob(context, strategy) {
   const mainImageUrl = context.task?.enrichment?.mainImageUrl || context.task?.ozon?.mainImageUrl; let started;
   const requestTimeout = activeRequestTimeout(context.task, 15000);
   if (!requestTimeout) return automaticTimeoutResult();
-  try { started = await sourcingExtensionRequest("start_1688_job", { taskId: context.taskId, mainImageUrl, strategy }, requestTimeout, context.controller?.signal); }
+  // A start may create an extension job before the page sees its jobId. The
+  // late-response barrier keeps the provider lock until that job is cancelled.
+  let resolveLateStart = null, lateStartSettled = false;
+  const lateStartResponse = new Promise((resolve) => { resolveLateStart = resolve; });
+  const settleLateStart = () => {
+    if (lateStartSettled) return;
+    lateStartSettled = true;
+    resolveLateStart();
+  };
+  const cancelLateStart = async (response) => {
+    try { await safeCancel1688Job(text(response?.jobId), context); }
+    finally { settleLateStart(); }
+  };
+  try {
+    started = await sourcingExtensionRequest(
+      "start_1688_job",
+      { taskId: context.taskId, mainImageUrl, strategy },
+      requestTimeout,
+      context.controller?.signal,
+      cancelLateStart,
+    );
+    settleLateStart();
+  }
   catch (error) {
+    if (error?.code === "sourcing_late_response_pending") {
+      trackAutomaticCleanup(context, lateStartResponse);
+      if (!automaticContextCanAdvance(context)) return automaticContextStopResult(context);
+      return buildNoSourceFinal(context.task, "bridge_start_response_pending_cancel", "pending_human_review", context);
+    }
+    settleLateStart();
     if (!automaticContextCanAdvance(context)) return automaticContextStopResult(context);
     return timeExceeded(context.task) ? automaticTimeoutResult() : { status: "bridge_failed", diagnostics: { code: "bridge_start_failed", message: text(error?.message) } };
   }
-  if (!automaticContextCanAdvance(context)) return automaticContextStopResult(context, text(started?.jobId));
+  if (!automaticContextCanAdvance(context)) {
+    const jobId = text(started?.jobId);
+    await safeCancel1688Job(jobId, context);
+    return automaticContextStopResult(context, jobId);
+  }
   const jobId = text(started?.jobId); if (timeExceeded(context.task)) { await safeCancel1688Job(jobId, context); return automaticTimeoutResult(); }
   if (!jobId) return { status: "bridge_failed", diagnostics: { code: "missing_job_id" } };
   const sourcing = sourcingState(context.task); sourcing.searchStrategy = strategy.type; sourcing.activeJob = { jobId, strategy: clone(strategy, null), status: text(started.status, "queued"), phase: text(started.phase, "queued"), updatedAt: new Date().toISOString() }; persistQueue(); render();
@@ -775,10 +861,12 @@ async function runAutomatic1688Task(task, { mode = "single" } = {}) {
   if (!taskId || currentQueuedTask(task) !== task) throw new Error("任务ID无效、重复或已变更，无法启动自动找货源。");
   const existing = automaticRuns.get(task);
   if (existing?.promise && !existing.invalidated) return existing.promise;
+  const providerBusy = automaticProviderBusyResult({ task, mode });
+  if (providerBusy) return providerBusy;
   const context = beginAutomaticRun(task, mode);
   const run = (async () => {
-    const providerBusy = acquireAutomaticProvider(context);
-    if (providerBusy) return providerBusy;
+    const providerBusyAfterBegin = acquireAutomaticProvider(context);
+    if (providerBusyAfterBegin) return providerBusyAfterBegin;
     if (!contextIsCurrent(context)) return automaticContextStopResult(context);
     const sourcing = sourcingState(task);
     if (sourcing.status === "confirmed_purchase_source" || sourcing.finalConfirmation?.status === "final_confirmation_pending") return sourcing.finalConfirmation || { status: sourcing.status };
@@ -849,7 +937,7 @@ async function runAutomatic1688Task(task, { mode = "single" } = {}) {
     return buildNoSourceFinal(task, "automatic_state_machine_exhausted", "pending_human_review", context);
   })();
   context.promise = run;
-  try { return await run; } finally { finishAutomaticRun(context); }
+  try { return await run; } finally { await finishAutomaticRun(context); }
 }
 async function runAutomatic1688Batch() {
   if (automaticBatch.running) return { status: "already_running" }; if (!queue?.tasks?.length) throw new Error("请先导入Ozon补全JSON。");
@@ -1054,8 +1142,12 @@ async function continueRejectedCandidate(target) {
   const binding = finalActionBinding(target);
   const terminal = terminalResult(binding.task, binding.confirmationId);
   if (!terminal || terminal.action !== "reject" || !bindingStillCurrent(binding) || binding.final.status !== "final_confirmation_rejected") return terminal ? { ...terminal, idempotent: true } : Promise.reject(new Error("仅能继续当前已否决的确认卡片。"));
+  const providerBusy = automaticProviderBusyResult({ task: binding.task, mode: "single" });
+  if (providerBusy) return providerBusy;
   return withManualTaskLock(binding.task, async () => {
     if (!bindingStillCurrent(binding) || binding.final.status !== "final_confirmation_rejected") throw new Error("当前已否决卡片已变更，不能继续。");
+    const providerBusyAfterLock = automaticProviderBusyResult({ task: binding.task, mode: "single" });
+    if (providerBusyAfterLock) return providerBusyAfterLock;
     const sourcing = sourcingState(binding.task), rejected = new Set((sourcing.rejectedCandidateIds || []).map(String));
     const next = sourcingFlow.detailCandidatesForInspection(sourcing.detailCandidates || [])
       .find((candidate) => !rejected.has(text(candidate?.candidateId))) || null;

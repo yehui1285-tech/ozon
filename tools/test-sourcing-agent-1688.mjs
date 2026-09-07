@@ -90,6 +90,15 @@ for (const invalidTasks of [
     "duplicate, unsafe, conflicting, or non-JSON task records must never enter the restored queue");
 }
 
+for (const unsafeRawTaskId of [" leading", "trailing ", "tab\tinside", "line\ninside", "control\u0001inside"]) {
+  const unsafeSaved = migrateMvp6StoredQueue(JSON.stringify({ queue: { tasks: [{ taskId: unsafeRawTaskId }] } }));
+  assert.equal(unsafeSaved.saved, null,
+    "storage restore must reject the original taskId bytes instead of trimming whitespace or controls into a valid identity");
+  const unsafeFallback = migrateMvp6StoredQueue(JSON.stringify({ queue: { tasks: [{ id: unsafeRawTaskId }] } }));
+  assert.equal(unsafeFallback.saved, null,
+    "the id fallback must reject the same raw whitespace and control characters");
+}
+
 const completeAutomaticCandidate = (id) => ({
   provider: "1688",
   candidateId: `1688-${id}`,
@@ -101,6 +110,30 @@ const completeAutomaticCandidate = (id) => ({
   shipping: { status: "known", fee: 3 },
   sku: { options: [{ id: `sku-${id}`, label: "标准款" }], selectedOptionId: null, selectionVerified: false },
 });
+const partialThenCompleteOffer = completeAutomaticCandidate(201);
+const upgradedAutomaticCandidates = mergeAutomaticCandidates(
+  [{ ...partialThenCompleteOffer, detailStatus: "partial", shipping: { status: "unknown", fee: null }, sku: { options: [] } }],
+  [partialThenCompleteOffer],
+);
+assert.equal(upgradedAutomaticCandidates.length, 1,
+  "one canonical offer must stay deduplicated when a later detail poll supplies richer facts");
+assert.equal(upgradedAutomaticCandidates[0].detailStatus, "complete",
+  "a later complete detail must replace an earlier partial record for the same canonical offer");
+assert.deepEqual(detailCandidatesForInspection(upgradedAutomaticCandidates).map((entry) => entry.candidateId), ["1688-201"],
+  "the upgraded canonical offer must become eligible for safe inspection");
+
+const oldIncompleteDetails = Array.from({ length: 5 }, (_, index) => ({
+  ...completeAutomaticCandidate(210 + index),
+  detailStatus: "partial",
+  shipping: { status: "unknown", fee: null },
+  sku: { options: [] },
+}));
+const laterCompleteDetail = completeAutomaticCandidate(299);
+const detailPriorityCandidates = mergeAutomaticCandidates([], [...oldIncompleteDetails, laterCompleteDetail]);
+assert.equal(detailPriorityCandidates[0].candidateId, "1688-299",
+  "a later usable detail must outrank earlier incomplete details before the five-detail retention boundary");
+assert.deepEqual(detailCandidatesForInspection(detailPriorityCandidates).map((entry) => entry.candidateId), ["1688-299"],
+  "five old incomplete details must not consume the inspection opportunity of a later complete candidate");
 const automaticIdentityCandidates = [
   completeAutomaticCandidate(101),
   { ...completeAutomaticCandidate(102), candidateId: "1688-101" },

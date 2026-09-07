@@ -7,6 +7,9 @@ import * as sourcingFlow from "../pinduoduo-agent/public/sourcing-flow.js";
 import { buildFinalConfirmation, confirmRecommendation, rejectRecommendation } from "../pinduoduo-agent/sourcing-core.mjs";
 import { isTrustedPinduoduoImageUrl } from "../pinduoduo-agent/qwen-client.mjs";
 
+const refreshSessionCoreA = await import(new URL("../pinduoduo-agent/sourcing-core.mjs?task7-round2-session-a", import.meta.url));
+const refreshSessionCoreB = await import(new URL("../pinduoduo-agent/sourcing-core.mjs?task7-round2-session-b", import.meta.url));
+
 assert.equal(isTrustedOzonImageUrl("https://ir.ozone.ru/s3/multimedia-test/wc1000/1.jpg"), true);
 assert.equal(isTrustedOzonImageUrl("http://ir.ozone.ru/s3/multimedia-test/1.jpg"), false);
 assert.equal(isTrustedOzonImageUrl("https://example.com/s3/multimedia-test/1.jpg"), false);
@@ -291,7 +294,31 @@ const qwenSource = fs.readFileSync(new URL("../pinduoduo-agent/qwen-client.mjs",
 const bridgeSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/pinduoduo-bridge.js", import.meta.url), "utf8");
 const extensionManifest = JSON.parse(fs.readFileSync(new URL("../ozon-erp-collector-extension/manifest.json", import.meta.url), "utf8"));
 
-function createAppHarness({ apiHandler = null, extensionHandler = null, finalPricingResponse = null, storedValues = {}, sourcingFlowDeps = sourcingFlow } = {}) {
+function createSourcingCoreBridge(coreModule) {
+  return {
+    buildFinalConfirmation(input) {
+      return coreModule.buildFinalConfirmation({
+        task: input.task,
+        candidate: JSON.parse(JSON.stringify(input.candidate)),
+        judgement: JSON.parse(JSON.stringify(input.judgement)),
+        quote: JSON.parse(JSON.stringify(input.quote)),
+        finalPricing: JSON.parse(JSON.stringify(input.finalPricing)),
+      });
+    },
+    confirmRecommendation(task, pending, current, confirmedAt) {
+      return coreModule.confirmRecommendation(task, pending, {
+        task: current.task,
+        candidate: JSON.parse(JSON.stringify(current.candidate)),
+        judgement: JSON.parse(JSON.stringify(current.judgement)),
+        quote: JSON.parse(JSON.stringify(current.quote)),
+        finalPricing: JSON.parse(JSON.stringify(current.finalPricing)),
+      }, confirmedAt);
+    },
+    rejectRecommendation: coreModule.rejectRecommendation,
+  };
+}
+
+function createAppHarness({ apiHandler = null, extensionHandler = null, finalPricingResponse = null, storedValues = {}, sourcingFlowDeps = sourcingFlow, sourcingCoreModule = { buildFinalConfirmation, confirmRecommendation, rejectRecommendation }, clock = null, timers = null } = {}) {
   const listeners = new Set();
   const unloadListeners = new Set();
   const requests = [];
@@ -334,27 +361,7 @@ function createAppHarness({ apiHandler = null, extensionHandler = null, finalPri
     // is evaluated in this test realm. Keep the task reference intact for
     // Task 5's capability check, while copying only untrusted serial facts
     // across that artificial realm boundary.
-    __sourcingCoreDeps: {
-      buildFinalConfirmation(input) {
-        return buildFinalConfirmation({
-          task: input.task,
-          candidate: JSON.parse(JSON.stringify(input.candidate)),
-          judgement: JSON.parse(JSON.stringify(input.judgement)),
-          quote: JSON.parse(JSON.stringify(input.quote)),
-          finalPricing: JSON.parse(JSON.stringify(input.finalPricing)),
-        });
-      },
-      confirmRecommendation(task, pending, current, confirmedAt) {
-        return confirmRecommendation(task, pending, {
-          task: current.task,
-          candidate: JSON.parse(JSON.stringify(current.candidate)),
-          judgement: JSON.parse(JSON.stringify(current.judgement)),
-          quote: JSON.parse(JSON.stringify(current.quote)),
-          finalPricing: JSON.parse(JSON.stringify(current.finalPricing)),
-        }, confirmedAt);
-      },
-      rejectRecommendation,
-    },
+    __sourcingCoreDeps: createSourcingCoreBridge(sourcingCoreModule),
     window: fakeWindow,
     document: {
       getElementById(id) { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); },
@@ -373,14 +380,14 @@ function createAppHarness({ apiHandler = null, extensionHandler = null, finalPri
       const payload = apiHandler ? await apiHandler(String(path), options) : { ok: true, status: { configured: false, model: "test" } };
       return { ok: payload?.httpOk !== false, async json() { return payload; } };
     },
-    URL, Blob, console, setTimeout, clearTimeout, AbortController,
+    URL, Blob, console, setTimeout: timers?.setTimeout || setTimeout, clearTimeout: timers?.clearTimeout || clearTimeout, AbortController, Date: clock?.Date || Date,
   };
   const appForVm = appSource
     .replace(/^import .* from "\.\/pricing-flow\.js";\r?$/m,
       "const { applyFinalOzonPricing, createFinalPricingRequestGuard, preliminaryPricingDecision, previewFinalOzonPricing } = globalThis.__pricingDeps;")
     .replace(/^import \* as sourcingFlow from "\.\/sourcing-flow\.js";\r?$/m, "const sourcingFlow = globalThis.__sourcingFlowDeps;")
     .replace(/^import \* as sourcingCore from "\/sourcing-core\.mjs";\r?$/m, "const sourcingCore = globalThis.__sourcingCoreDeps;")
-    + "\nglobalThis.__appTest = { commitPurchaseCostWithFinalPricing, runAutomatic1688Task, runAutomatic1688Batch, pauseAutomatic1688Batch, cancelAutomatic1688Batch, confirmFinalCandidate, rejectFinalCandidate, saveSingleUnitException, startSinglePinduoduoDeepSearch, renderConfirmationQueue, setQueue: (value) => { queue = value; }, getQueue: () => queue };";
+    + "\nglobalThis.__appTest = { commitPurchaseCostWithFinalPricing, runAutomatic1688Task, runAutomatic1688Batch, pauseAutomatic1688Batch, cancelAutomatic1688Batch, confirmFinalCandidate, rejectFinalCandidate, continueRejectedCandidate, saveSingleUnitException, startSinglePinduoduoDeepSearch, renderConfirmationQueue, beginAutomaticRun, finishAutomaticRun, invalidateAutomaticRun, poll1688Job, setQueue: (value) => { queue = value; }, getQueue: () => queue };";
   vm.runInNewContext(appForVm, context, { filename: "app.js" });
   return {
     commit: context.__appTest.commitPurchaseCostWithFinalPricing,
@@ -390,8 +397,13 @@ function createAppHarness({ apiHandler = null, extensionHandler = null, finalPri
     cancelBatch: context.__appTest.cancelAutomatic1688Batch,
     confirmFinal: context.__appTest.confirmFinalCandidate,
     rejectFinal: context.__appTest.rejectFinalCandidate,
+    continueRejected: context.__appTest.continueRejectedCandidate,
     saveException: context.__appTest.saveSingleUnitException,
     startSinglePinduoduo: context.__appTest.startSinglePinduoduoDeepSearch,
+    beginAutomatic: context.__appTest.beginAutomaticRun,
+    finishAutomatic: context.__appTest.finishAutomaticRun,
+    invalidateAutomatic: context.__appTest.invalidateAutomaticRun,
+    pollJob: context.__appTest.poll1688Job,
     setQueue: context.__appTest.setQueue,
     getQueue: context.__appTest.getQueue,
     renderConfirmation: context.__appTest.renderConfirmationQueue,
@@ -410,6 +422,56 @@ function createAppHarness({ apiHandler = null, extensionHandler = null, finalPri
         this.reply(request, response);
         resolve();
       }, delayMs));
+    },
+  };
+}
+
+function createControlledClock(initialMs = 0) {
+  let currentMs = initialMs;
+  class ControlledDate extends Date {
+    constructor(...args) { super(...(args.length ? args : [currentMs])); }
+    static now() { return currentMs; }
+  }
+  return {
+    Date: ControlledDate,
+    now() { return currentMs; },
+    set(value) { currentMs = value; },
+  };
+}
+
+function createManualTimers() {
+  const timers = [];
+  return {
+    setTimeout(callback, delayMs) {
+      const timer = { callback, delayMs, active: true };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimeout(timer) { if (timer) timer.active = false; },
+    fire(delayMs) {
+      const timer = timers.find((entry) => entry.active && entry.delayMs === delayMs);
+      assert.ok(timer, `expected active ${delayMs}ms timer`);
+      timer.active = false;
+      timer.callback();
+    },
+  };
+}
+
+function sourcingFlowWithClock(clock) {
+  const elapsed = (timing = {}) => {
+    const saved = Number.isFinite(timing.elapsedMs) && timing.elapsedMs >= 0 ? timing.elapsedMs : 0;
+    const activeStarted = Number.isFinite(timing.activeStartedAtMs) && timing.activeStartedAtMs <= clock.now()
+      ? timing.activeStartedAtMs
+      : null;
+    return saved + (activeStarted === null ? 0 : clock.now() - activeStarted);
+  };
+  return {
+    ...sourcingFlow,
+    automaticElapsedMs: elapsed,
+    automaticTimeBudgetExceeded(timing) { return elapsed(timing) >= sourcingFlow.AUTOMATIC_1688_LIMITS.totalActiveMs; },
+    automaticRequestTimeoutMs(timing, requestedMs) {
+      const requested = Number.isFinite(requestedMs) && requestedMs > 0 ? Math.floor(requestedMs) : 0;
+      return Math.max(0, Math.min(requested, sourcingFlow.AUTOMATIC_1688_LIMITS.totalActiveMs - elapsed(timing)));
     },
   };
 }
@@ -520,6 +582,47 @@ const automaticCandidate = {
   detailStatus: "complete",
   evidence: { localRef: "/api/evidence/test/77.jpg" },
 };
+
+function automaticConfirmationHarness(sourcingCoreModule) {
+  const jobs = new Map();
+  let sequence = 0;
+  return createAppHarness({
+    sourcingCoreModule,
+    finalPricingResponse: previewResponse,
+    apiHandler: async (path) => {
+      if (path === "/api/ai/1688-judge") return {
+        ok: true,
+        judgement: {
+          verdict: "same_product", confidence: 92, bestCandidateId: "1688-77", needsHumanReview: false,
+          candidateAssessments: [{ candidateId: "1688-77", verdict: "same_product", confidence: 92, differences: [] }],
+        },
+      };
+      if (path === "/api/ai/1688-select-sku") return {
+        ok: true,
+        selection: { verdict: "exact_match", selectedOptionId: "sku-77", confidence: 92, reason: "规格一致", needsHumanReview: false },
+      };
+      return { ok: false, error: `unexpected API ${path}` };
+    },
+    extensionHandler: async (request) => {
+      if (request.action === "start_1688_job") {
+        const jobId = `1688-refresh-${++sequence}`;
+        jobs.set(jobId, { jobId, strategy: request.strategy });
+        return { ok: true, jobId, status: "queued", phase: "queued" };
+      }
+      if (request.action === "get_1688_job") {
+        const job = jobs.get(request.jobId);
+        return {
+          ok: true, ...job, status: "completed", phase: "completed",
+          diagnostics: job.strategy.type === "verify_sku" ? { code: "sku_verified" } : null,
+          candidates: job.strategy.type === "verify_sku" ? [] : [automaticCandidate],
+          detailCandidates: job.strategy.type === "verify_sku" ? [] : [automaticCandidate],
+        };
+      }
+      if (request.action === "cancel_1688_job") return { ok: true, jobId: request.jobId, status: "cancelled" };
+      return { ok: false, error: "unexpected bridge action" };
+    },
+  });
+}
 const automaticJobs = new Map();
 let automaticJobSequence = 0;
 const automaticHarness = createAppHarness({
@@ -600,6 +703,31 @@ function automaticLifecycleTask(taskId) {
     pricing: {},
   };
 }
+
+const refreshSessionATask = automaticLifecycleTask("ozon-confirmation-refresh");
+const refreshSessionAHarness = automaticConfirmationHarness(refreshSessionCoreA);
+refreshSessionAHarness.setQueue({ tasks: [refreshSessionATask], meta: {} });
+await refreshSessionAHarness.runAutomatic(refreshSessionATask);
+const previousConfirmationId = refreshSessionATask.sourcing.finalConfirmation.confirmationId;
+await refreshSessionAHarness.confirmFinal("ozon-confirmation-refresh");
+const persistedTerminalActions = JSON.parse(JSON.stringify(refreshSessionATask.sourcing.finalActionTerminals));
+assert.equal(persistedTerminalActions[previousConfirmationId].action, "confirm",
+  "the first module session must persist its terminal action under the original confirmation capability");
+
+const refreshSessionBTask = {
+  ...automaticLifecycleTask("ozon-confirmation-refresh"),
+  sourcing: { finalActionTerminals: persistedTerminalActions },
+};
+const refreshSessionBHarness = automaticConfirmationHarness(refreshSessionCoreB);
+refreshSessionBHarness.setQueue({ tasks: [refreshSessionBTask], meta: {} });
+await refreshSessionBHarness.runAutomatic(refreshSessionBTask);
+assert.notEqual(refreshSessionBTask.sourcing.finalConfirmation.confirmationId, previousConfirmationId,
+  "a fresh module session must not reuse a persisted terminal confirmationId for a new card");
+await refreshSessionBHarness.confirmFinal("ozon-confirmation-refresh");
+assert.equal(refreshSessionBTask.sourcing.status, "confirmed_purchase_source",
+  "the fresh confirmation capability must execute instead of being mistaken for the old terminal action");
+assert.equal(refreshSessionBTask.pricing.purchaseCost, 23,
+  "the new post-refresh confirmation must still be allowed to write its independently revalidated purchase cost");
 
 function delayedJudgeLifecycleHarness(gate) {
   const jobs = new Map();
@@ -683,6 +811,162 @@ assert.equal(pausedLifecycleHarness.extensionRequests.filter((request) => reques
   "a paused automatic run must not start a SKU verification bridge job");
 assert.equal(pausedLifecycleHarness.finalPricingRequests.length, 0,
   "a paused automatic run must not ask Ozon for a final repricing preview");
+
+function delayedStartStopHarness(startGate, harnessOptions = {}) {
+  const jobs = new Map();
+  return createAppHarness({
+    ...harnessOptions,
+    extensionHandler: async (request) => {
+      if (request.action === "start_1688_job") {
+        const started = await startGate;
+        jobs.set(started.jobId, { ...started, strategy: request.strategy });
+        return { ok: true, ...started };
+      }
+      if (request.action === "cancel_1688_job") {
+        const job = jobs.get(request.jobId);
+        if (job) job.status = "cancelled";
+        return { ok: true, jobId: request.jobId, status: "cancelled" };
+      }
+      if (request.action === "get_1688_job") {
+        const job = jobs.get(request.jobId);
+        return { ok: true, ...job, status: job?.status || "completed", phase: job?.phase || "completed", candidates: [], detailCandidates: [] };
+      }
+      return { ok: false, error: "unexpected bridge action" };
+    },
+  });
+}
+
+let releaseCancelledStart;
+const cancelledStartGate = new Promise((resolve) => { releaseCancelledStart = resolve; });
+const cancelledStartHarness = delayedStartStopHarness(cancelledStartGate);
+const cancelledStartTask = automaticLifecycleTask("ozon-start-inflight-cancel");
+cancelledStartHarness.setQueue({ tasks: [cancelledStartTask], meta: {} });
+const cancelledStartBatch = cancelledStartHarness.runAutomaticBatch();
+await waitForCondition(() => cancelledStartHarness.extensionRequests.some((request) => request.action === "start_1688_job"), "in-flight start request before cancellation");
+await cancelledStartHarness.cancelBatch();
+releaseCancelledStart({ jobId: "1688-late-cancel", status: "queued", phase: "queued" });
+await waitForCondition(() => cancelledStartHarness.extensionRequests.filter((request) => request.action === "cancel_1688_job" && request.jobId === "1688-late-cancel").length === 1,
+  "late-start cancellation cleanup");
+await cancelledStartBatch;
+assert.equal(cancelledStartTask.sourcing.status, "automatic_cancelled",
+  "a late start response must not overwrite the cancelled task state");
+assert.equal(cancelledStartHarness.extensionRequests.filter((request) => request.action === "cancel_1688_job" && request.jobId === "1688-late-cancel").length, 1,
+  "a late-created job must receive exactly one idempotent cancellation cleanup");
+
+let releasePausedStart;
+const pausedStartGate = new Promise((resolve) => { releasePausedStart = resolve; });
+const pausedStartHarness = delayedStartStopHarness(pausedStartGate);
+const pausedStartTask = automaticLifecycleTask("ozon-start-inflight-pause");
+pausedStartHarness.setQueue({ tasks: [pausedStartTask], meta: {} });
+const pausedStartBatch = pausedStartHarness.runAutomaticBatch();
+await waitForCondition(() => pausedStartHarness.extensionRequests.some((request) => request.action === "start_1688_job"), "in-flight start request before pause");
+await pausedStartHarness.pauseBatch();
+releasePausedStart({ jobId: "1688-late-pause", status: "queued", phase: "queued" });
+await waitForCondition(() => pausedStartHarness.extensionRequests.filter((request) => request.action === "cancel_1688_job" && request.jobId === "1688-late-pause").length === 1,
+  "late-start pause cleanup");
+await pausedStartBatch;
+assert.equal(pausedStartTask.sourcing.status, "paused_manual",
+  "a late start response must not overwrite the manually paused task state");
+assert.equal(pausedStartHarness.extensionRequests.filter((request) => request.action === "cancel_1688_job" && request.jobId === "1688-late-pause").length, 1,
+  "a paused in-flight start must receive exactly one idempotent cancellation cleanup");
+
+let releaseSameTaskReentryStart;
+const sameTaskReentryGate = new Promise((resolve) => { releaseSameTaskReentryStart = resolve; });
+let sameTaskReentryStarts = 0;
+const sameTaskReentryHarness = createAppHarness({
+  extensionHandler: async (request) => {
+    if (request.action === "start_1688_job") {
+      sameTaskReentryStarts += 1;
+      if (sameTaskReentryStarts === 1) return { ok: true, ...(await sameTaskReentryGate) };
+      return { ok: false, error: "a new generation must not start before the old one cleans up" };
+    }
+    if (request.action === "cancel_1688_job") return { ok: true, jobId: request.jobId, status: "cancelled" };
+    return { ok: false, error: "unexpected bridge action" };
+  },
+});
+const sameTaskReentryTask = automaticLifecycleTask("ozon-same-task-reentry");
+sameTaskReentryHarness.setQueue({ tasks: [sameTaskReentryTask], meta: {} });
+const oldGenerationRun = sameTaskReentryHarness.runAutomatic(sameTaskReentryTask);
+await waitForCondition(() => sameTaskReentryStarts === 1, "first same-task generation start");
+sameTaskReentryHarness.invalidateAutomatic(sameTaskReentryTask, "test_reentry");
+const sameTaskReentryResult = await sameTaskReentryHarness.runAutomatic(sameTaskReentryTask);
+assert.equal(sameTaskReentryResult.status, "provider_busy",
+  "an invalidated generation must retain the provider lock until its late-start cleanup finishes");
+assert.equal(sameTaskReentryStarts, 1,
+  "a same-task re-entry must not start a second production job before old-generation cleanup");
+releaseSameTaskReentryStart({ jobId: "1688-same-task-reentry", status: "queued", phase: "queued" });
+await oldGenerationRun;
+
+const lateStartTimers = createManualTimers();
+let releaseTimedOutStart;
+const timedOutStartGate = new Promise((resolve) => { releaseTimedOutStart = resolve; });
+const timedOutStartHarness = delayedStartStopHarness(timedOutStartGate, { timers: lateStartTimers });
+const timedOutStartTask = automaticLifecycleTask("ozon-start-timeout");
+timedOutStartHarness.setQueue({ tasks: [timedOutStartTask], meta: {} });
+const timedOutStartBatch = timedOutStartHarness.runAutomaticBatch();
+await waitForCondition(() => timedOutStartHarness.extensionRequests.some((request) => request.action === "start_1688_job"), "in-flight start request before bridge timeout");
+lateStartTimers.fire(15_000);
+await waitForCondition(() => timedOutStartTask.sourcing.finalConfirmation?.blockers?.includes("bridge_start_response_pending_cancel"), "blocked state while awaiting a late start response");
+assert.equal(timedOutStartHarness.extensionRequests.filter((request) => request.action === "start_1688_job").length, 1,
+  "a timed-out start must not advance to a second search strategy while its first response is still unknown");
+assert.equal(timedOutStartHarness.extensionRequests.some((request) => request.action === "get_1688_job"), false,
+  "a timed-out start must not poll or progress a job before its delayed response is safely cancelled");
+assert.equal(timedOutStartHarness.apiRequests.length, 0,
+  "a timed-out start must not call Qwen while its background job identity is unresolved");
+assert.equal(timedOutStartHarness.finalPricingRequests.length, 0,
+  "a timed-out start must not request final repricing while its background job identity is unresolved");
+releaseTimedOutStart({ jobId: "1688-late-timeout", status: "queued", phase: "queued" });
+await waitForCondition(() => timedOutStartHarness.extensionRequests.filter((request) => request.action === "cancel_1688_job" && request.jobId === "1688-late-timeout").length === 1,
+  "late-start timeout cancellation cleanup");
+await timedOutStartBatch;
+assert.equal(timedOutStartHarness.extensionRequests.filter((request) => request.action === "cancel_1688_job" && request.jobId === "1688-late-timeout").length, 1,
+  "a late response after request timeout must still receive exactly one cancellation cleanup");
+
+let releaseProviderStart;
+const providerStartGate = new Promise((resolve) => { releaseProviderStart = resolve; });
+const providerBusyHarness = delayedStartStopHarness(providerStartGate);
+const providerOwnerTask = automaticLifecycleTask("ozon-provider-owner");
+const providerBusyFinal = {
+  confirmationId: "sourcing-confirmation-provider-busy",
+  status: "final_confirmation_rejected",
+  candidateSnapshot: automaticCandidate,
+};
+const providerBusyCardTask = {
+  ...automaticLifecycleTask("ozon-provider-card"),
+  sourcing: {
+    detailCandidates: [automaticCandidate],
+    finalConfirmation: providerBusyFinal,
+    finalActionTerminals: {
+      "sourcing-confirmation-provider-busy": {
+        confirmationId: "sourcing-confirmation-provider-busy",
+        action: "reject",
+        status: "rejected",
+        completedAt: "2026-09-07T00:00:00.000Z",
+      },
+    },
+  },
+};
+providerBusyHarness.setQueue({ tasks: [providerOwnerTask, providerBusyCardTask], meta: {} });
+const providerBusyBatch = providerBusyHarness.runAutomaticBatch();
+await waitForCondition(() => providerBusyHarness.extensionRequests.some((request) => request.action === "start_1688_job"), "provider owner start request");
+const providerBusyTarget = {
+  task: providerBusyCardTask,
+  taskId: "ozon-provider-card",
+  final: providerBusyFinal,
+  confirmationId: "sourcing-confirmation-provider-busy",
+};
+const providerBusyResult = await providerBusyHarness.continueRejected(providerBusyTarget);
+assert.equal(providerBusyResult.status, "provider_busy_batch",
+  "a final-card continuation must report provider occupancy before mutating its task");
+assert.strictEqual(providerBusyCardTask.sourcing.finalConfirmation, providerBusyFinal,
+  "a provider-busy return must not delete the final-confirmation card");
+assert.equal(providerBusyCardTask.sourcing.status, undefined,
+  "a provider-busy return must not leave the untouched card task in automatic_running");
+assert.equal(providerBusyCardTask.sourcing.detailCandidates[0].candidateId, "1688-77",
+  "a provider-busy return must retain the card's persisted candidate evidence");
+await providerBusyHarness.cancelBatch();
+releaseProviderStart({ jobId: "1688-provider-owner", status: "queued", phase: "queued" });
+await providerBusyBatch;
 
 const finalRaceHarness = createAppHarness({
   finalPricingResponse: previewResponse,
@@ -824,6 +1108,63 @@ assert.equal(partialPollTask.sourcing.detailCandidates?.[0]?.candidateId, "1688-
 await partialPollHarness.cancelBatch();
 await partialPollBatch;
 
+const perDetailClock = createControlledClock(0);
+let perDetailPollCount = 0;
+const perDetailClockHarness = createAppHarness({
+  clock: perDetailClock,
+  sourcingFlowDeps: sourcingFlowWithClock(perDetailClock),
+  extensionHandler: async (request) => {
+    if (request.action === "get_1688_job") {
+      perDetailPollCount += 1;
+      if (perDetailPollCount === 1) {
+        perDetailClock.set(46_000);
+        return {
+          ok: true, jobId: request.jobId, status: "running", phase: "inspect_details",
+          phaseStartedAt: new Date(perDetailClock.now() - 500).toISOString(), currentDetailIndex: 0,
+          candidates: [], detailCandidates: [], diagnostics: null,
+        };
+      }
+      return { ok: true, jobId: request.jobId, status: "completed", phase: "completed", candidates: [], detailCandidates: [], diagnostics: null };
+    }
+    if (request.action === "cancel_1688_job") return { ok: true, jobId: request.jobId, status: "cancelled" };
+    return { ok: false, error: "unexpected bridge action" };
+  },
+});
+const perDetailClockTask = automaticLifecycleTask("ozon-per-detail-clock");
+perDetailClockTask.sourcing = { status: "automatic_running", timing: { elapsedMs: 0, activeStartedAtMs: 0 } };
+perDetailClockHarness.setQueue({ tasks: [perDetailClockTask], meta: {} });
+const perDetailContext = perDetailClockHarness.beginAutomatic(perDetailClockTask, "single");
+const perDetailResult = await perDetailClockHarness.pollJob(perDetailContext, "1688-per-detail-clock", { type: "image", sourceUrl: perDetailClockTask.enrichment.mainImageUrl });
+await perDetailClockHarness.finishAutomatic(perDetailContext);
+assert.equal(perDetailResult.status, "completed",
+  "a job older than 45 seconds may keep polling when its persisted current detail is still within its own 15-second budget");
+assert.equal(perDetailClockHarness.extensionRequests.filter((request) => request.action === "cancel_1688_job").length, 0,
+  "a fresh persisted detail phase must not be cancelled by the removed whole-job 45-second cutoff");
+
+const activeBudgetClock = createControlledClock(0);
+const activeBudgetHarness = createAppHarness({
+  clock: activeBudgetClock,
+  sourcingFlowDeps: sourcingFlowWithClock(activeBudgetClock),
+  extensionHandler: async (request) => {
+    if (request.action === "get_1688_job") {
+      activeBudgetClock.set(150_000);
+      return { ok: true, jobId: request.jobId, status: "running", phase: "queued", candidates: [], detailCandidates: [], diagnostics: null };
+    }
+    if (request.action === "cancel_1688_job") return { ok: true, jobId: request.jobId, status: "cancelled" };
+    return { ok: false, error: "unexpected bridge action" };
+  },
+});
+const activeBudgetTask = automaticLifecycleTask("ozon-active-budget-cleanup");
+activeBudgetTask.sourcing = { status: "automatic_running", timing: { elapsedMs: 0, activeStartedAtMs: 0 } };
+activeBudgetHarness.setQueue({ tasks: [activeBudgetTask], meta: {} });
+const activeBudgetContext = activeBudgetHarness.beginAutomatic(activeBudgetTask, "single");
+const activeBudgetResult = await activeBudgetHarness.pollJob(activeBudgetContext, "1688-active-budget-cleanup", { type: "image", sourceUrl: activeBudgetTask.enrichment.mainImageUrl });
+await activeBudgetHarness.finishAutomatic(activeBudgetContext);
+assert.equal(activeBudgetResult.status, "automatic_timeout",
+  "a known running job that crosses the total active budget must stop with the explicit timeout result");
+assert.equal(activeBudgetHarness.extensionRequests.filter((request) => request.action === "cancel_1688_job" && request.jobId === "1688-active-budget-cleanup").length, 1,
+  "a known running job at the 150-second boundary must receive exactly one cancel cleanup");
+
 const uiHarness = createAppHarness();
 const uiCandidate = {
   ...moqExceptionCandidate,
@@ -879,6 +1220,19 @@ await assert.rejects(() => duplicateTaskHarness.confirmFinal("duplicate-ui-task"
   "an ambiguous task ID must not resolve to the first queue record");
 assert.equal(JSON.stringify(duplicateTaskHarness.getQueue()), duplicateBefore,
   "an ambiguous task action must not mutate either duplicate task record");
+
+for (const unsafeInMemoryId of [" leading", "trailing ", "tab\tinside", "control\u0001inside"]) {
+  const unsafeIdHarness = createAppHarness();
+  const unsafeIdTask = automaticLifecycleTask(unsafeInMemoryId);
+  unsafeIdHarness.setQueue({ tasks: [unsafeIdTask], meta: {} });
+  const beforeUnsafeIdRun = JSON.stringify(unsafeIdTask);
+  await assert.rejects(() => unsafeIdHarness.runAutomatic(unsafeIdTask), /任务ID无效|重复|变更/,
+    "an in-memory task must reject its original unsafe ID before starting an automatic bridge job");
+  assert.equal(unsafeIdHarness.extensionRequests.length, 0,
+    "an unsafe raw task ID must not reach the 1688 bridge");
+  assert.equal(JSON.stringify(unsafeIdTask), beforeUnsafeIdRun,
+    "rejecting an unsafe raw task ID must not manufacture automatic state on the task");
+}
 
 const nullTaskHarness = createAppHarness();
 nullTaskHarness.setQueue({ tasks: [null], meta: {} });

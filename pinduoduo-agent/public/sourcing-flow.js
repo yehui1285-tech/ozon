@@ -94,8 +94,8 @@ function offerIdFromCanonicalUrl(sourceUrl) {
 }
 
 function safeTaskId(value) {
-  return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(value.trim())
-    ? value.trim()
+  return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(value)
+    ? value
     : "";
 }
 
@@ -242,20 +242,44 @@ export function isUsableAutomaticCandidate(candidate) {
     && completeSkuBase(candidate);
 }
 
+function candidateRetentionScore(candidate) {
+  const detailRank = ({ failed: 0, search_only: 1, partial: 2, complete: 3 })[candidate?.detailStatus] ?? 0;
+  const shippingKnown = knownShipping(candidate) ? 1 : 0;
+  const skuComplete = completeSkuBase(candidate) ? 1 : 0;
+  const commercialFacts = (typeof candidate?.title === "string" && candidate.title.trim() ? 1 : 0)
+    + (Number.isInteger(candidate?.minimumOrderQuantity) && candidate.minimumOrderQuantity > 0 ? 1 : 0)
+    + shippingKnown
+    + skuComplete;
+  return (isUsableAutomaticCandidate(candidate) ? 10_000 : 0) + detailRank * 100 + commercialFacts;
+}
+
 /** Merges strategy output by canonical offer URL and enforces the global light-candidate ceiling. */
 export function mergeAutomaticCandidates(existing = [], incoming = []) {
-  const result = [];
-  const seenUrls = new Set();
-  const seenIds = new Set();
-  for (const candidate of [...(Array.isArray(existing) ? existing : []), ...(Array.isArray(incoming) ? incoming : [])]) {
-    const identity = candidateIdentity(candidate);
-    if (!identity || seenUrls.has(identity.sourceUrl) || seenIds.has(identity.candidateId)) continue;
-    seenUrls.add(identity.sourceUrl);
-    seenIds.add(identity.candidateId);
-    result.push(boundedCandidate(candidate, identity));
-    if (result.length === AUTOMATIC_1688_LIMITS.maxLightweightCandidates) break;
+  const entries = [];
+  const byUrl = new Map();
+  const candidateInputs = [...(Array.isArray(existing) ? existing : []), ...(Array.isArray(incoming) ? incoming : [])]
+    .slice(0, AUTOMATIC_1688_LIMITS.maxLightweightCandidates * 4);
+  for (const rawCandidate of candidateInputs) {
+    const identity = candidateIdentity(rawCandidate);
+    if (!identity) continue;
+    const candidate = boundedCandidate(rawCandidate, identity);
+    const score = candidateRetentionScore(candidate);
+    const previous = byUrl.get(identity.sourceUrl);
+    if (previous) {
+      if (score > previous.score) {
+        previous.candidate = candidate;
+        previous.score = score;
+      }
+      continue;
+    }
+    const entry = { candidate, score, order: entries.length };
+    entries.push(entry);
+    byUrl.set(identity.sourceUrl, entry);
   }
-  return result;
+  return entries
+    .sort((left, right) => right.score - left.score || left.order - right.order)
+    .slice(0, AUTOMATIC_1688_LIMITS.maxLightweightCandidates)
+    .map((entry) => entry.candidate);
 }
 
 /** Keeps the extension's five-detail limit defensively true at the page boundary. */
