@@ -547,6 +547,55 @@ const missingProofClaim = await missingProofDriver.api.__test.diagnoseOwnership(
 assert.equal(missingProofClaim.reason, "missing_memory_and_session_proof");
 assert.doesNotMatch(JSON.stringify(missingProofClaim), new RegExp(missingProofToken), "ownership diagnostics must not expose the owner token");
 
+// Chrome may expose a newly-created navigation as about:blank while the
+// requested 1688 URL is still present in pendingUrl. Exact memory/session
+// ownership plus a verified 1688 pendingUrl must keep the tab usable.
+const pendingNavigationToken = "e".repeat(48);
+const pendingNavigationTabId = 88;
+const pendingNavigationJob = persistedJob({
+  requestId: "pending-1688-navigation",
+  status: "running",
+  ownerToken: pendingNavigationToken,
+  tabId: pendingNavigationTabId,
+});
+const pendingNavigationDriver = createDriver({
+  sessionSeed: {
+    [`ozon1688SessionOwnerV1:${pendingNavigationJob.jobId}`]: {
+      jobId: pendingNavigationJob.jobId,
+      tabId: pendingNavigationTabId,
+      ownerToken: pendingNavigationToken,
+    },
+  },
+  existingTabs: {
+    [pendingNavigationTabId]: {
+      url: "about:blank",
+      pendingUrl: "https://s.1688.com/selloffer/offer_search.html",
+      status: "loading",
+    },
+  },
+});
+assert.equal((await pendingNavigationDriver.api.__test.diagnoseOwnership(pendingNavigationJob)).reason, "owned",
+  "a verified 1688 pendingUrl must survive the initial about:blank navigation state");
+
+const untrustedPendingNavigationDriver = createDriver({
+  sessionSeed: {
+    [`ozon1688SessionOwnerV1:${pendingNavigationJob.jobId}`]: {
+      jobId: pendingNavigationJob.jobId,
+      tabId: pendingNavigationTabId,
+      ownerToken: pendingNavigationToken,
+    },
+  },
+  existingTabs: {
+    [pendingNavigationTabId]: {
+      url: "about:blank",
+      pendingUrl: "https://evil.example/redirect",
+      status: "loading",
+    },
+  },
+});
+assert.equal((await untrustedPendingNavigationDriver.api.__test.diagnoseOwnership(pendingNavigationJob)).reason, "owned_tab_invalid_url",
+  "an untrusted pendingUrl must remain fail-closed");
+
 // Regression: requestId is an idempotency key for every persisted lifecycle
 // state. A duplicate must return that exact record before the active-job check.
 const duplicateRequest = { ...validImageRequest, requestId: "idempotent" };

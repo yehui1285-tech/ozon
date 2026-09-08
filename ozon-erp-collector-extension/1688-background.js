@@ -237,7 +237,7 @@
     }
     try {
       const tab = await chrome.tabs.get(job.ownedTabId);
-      if (!is1688Url(tab?.url)) return { tab: null, proof, sessionMatches, invalidUrl: true, reason: "owned_tab_invalid_url", memoryState, sessionState, tabState: "invalid_url" };
+      if (!is1688Url(tab?.url) && !is1688Url(tab?.pendingUrl)) return { tab: null, proof, sessionMatches, invalidUrl: true, reason: "owned_tab_invalid_url", memoryState, sessionState, tabState: "invalid_url" };
       if (!memoryMatches) owners.set(job.jobId, job.ownerToken);
       return { tab, proof, sessionMatches, reason: "", memoryState, sessionState, tabState: "available" };
     } catch {
