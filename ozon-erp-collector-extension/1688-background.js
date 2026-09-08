@@ -216,23 +216,43 @@
   }
 
   async function tabClaim(job) {
+    const memoryState = owners.has(job?.jobId)
+      ? owners.get(job?.jobId) === job?.ownerToken ? "match" : "mismatch"
+      : "missing";
+    const sessionAvailable = Boolean(sessionArea());
     if (!hasOwnerToken(job?.ownerToken) || !Number.isInteger(job?.tabId) || job.tabId !== job.ownedTabId) {
-      return { tab: null, proof: null, sessionMatches: false };
+      return { tab: null, proof: null, sessionMatches: false, reason: "invalid_job_identity", memoryState, sessionState: sessionAvailable ? "unchecked" : "unavailable", tabState: "unchecked" };
     }
     const memoryMatches = owners.get(job.jobId) === job.ownerToken;
     const proof = await readSessionOwner(job.jobId);
     const sessionMatches = proofMatches(job, proof);
+    const sessionState = !sessionAvailable ? "unavailable" : !proof ? "missing" : sessionMatches ? "match" : "mismatch";
     if ((owners.has(job.jobId) && !memoryMatches) || (!memoryMatches && !sessionMatches)) {
-      return { tab: null, proof, sessionMatches };
+      const reason = memoryState === "mismatch"
+        ? "memory_owner_mismatch"
+        : sessionState === "unavailable" ? "missing_memory_and_session_storage"
+          : sessionState === "missing" ? "missing_memory_and_session_proof"
+            : "session_proof_mismatch";
+      return { tab: null, proof, sessionMatches, reason, memoryState, sessionState, tabState: "unchecked" };
     }
     try {
       const tab = await chrome.tabs.get(job.ownedTabId);
-      if (!is1688Url(tab?.url)) return { tab: null, proof, sessionMatches, invalidUrl: true };
+      if (!is1688Url(tab?.url)) return { tab: null, proof, sessionMatches, invalidUrl: true, reason: "owned_tab_invalid_url", memoryState, sessionState, tabState: "invalid_url" };
       if (!memoryMatches) owners.set(job.jobId, job.ownerToken);
-      return { tab, proof, sessionMatches };
+      return { tab, proof, sessionMatches, reason: "", memoryState, sessionState, tabState: "available" };
     } catch {
-      return { tab: null, proof, sessionMatches };
+      return { tab: null, proof, sessionMatches, reason: "owned_tab_missing", memoryState, sessionState, tabState: "missing" };
     }
+  }
+
+  async function diagnoseOwnership(job) {
+    const claim = await tabClaim(job);
+    return {
+      reason: claim.reason || "owned",
+      memoryState: claim.memoryState,
+      sessionState: claim.sessionState,
+      tabState: claim.tabState,
+    };
   }
 
   async function ensureOwnedTab(generationRef) {
@@ -280,7 +300,7 @@
   async function ownedForUse(generationRef, phase = "") {
     const job = await live(generationRef, phase);
     const claim = await tabClaim(job);
-    if (!claim.tab) throw Error(OWNERSHIP_LOST);
+    if (!claim.tab) throw Error(`${OWNERSHIP_LOST}:${claim.reason || "unknown"};memory=${claim.memoryState || "unknown"};session=${claim.sessionState || "unknown"};tab=${claim.tabState || "unknown"}`);
     return { job, tab: claim.tab };
   }
 
@@ -758,6 +778,7 @@
     __test: Object.freeze({
       downloadTrustedImage,
       restoreJobs,
+      diagnoseOwnership,
       MAX_SEARCH_CANDIDATES: 12,
       MAX_DETAIL_CANDIDATES: 5,
     }),

@@ -534,6 +534,19 @@ const renewedOwnerless = await waitForJobStatus(ownerlessResumeDriver.api, untru
 assert.match(renewedOwnerless.ownerToken, /^[a-f0-9]{32,}$/i, "an empty owner token must be replaced before creating a dedicated tab");
 assert.equal(ownerlessResumeDriver.calls.some((call) => call.update?.tabId === untrustedTabId || call.tabId === untrustedTabId || call.remove === untrustedTabId), false, "untrusted persisted tab ID must not be navigated, messaged, or closed");
 
+// Diagnostics must distinguish a service-worker memory loss from a missing
+// chrome.storage.session proof without exposing the random owner token.
+const missingProofToken = "d".repeat(48);
+const missingProofJob = persistedJob({ requestId: "missing-session-proof", status: "running", ownerToken: missingProofToken, tabId: untrustedTabId });
+const missingProofDriver = createDriver({
+  sessionSeed: {},
+  existingTabs: { [untrustedTabId]: { url: "https://s.1688.com/selloffer/offer_search.html" } },
+});
+assert.equal(typeof missingProofDriver.api.__test.diagnoseOwnership, "function", "driver must expose safe ownership diagnostics for live acceptance");
+const missingProofClaim = await missingProofDriver.api.__test.diagnoseOwnership(missingProofJob);
+assert.equal(missingProofClaim.reason, "missing_memory_and_session_proof");
+assert.doesNotMatch(JSON.stringify(missingProofClaim), new RegExp(missingProofToken), "ownership diagnostics must not expose the owner token");
+
 // Regression: requestId is an idempotency key for every persisted lifecycle
 // state. A duplicate must return that exact record before the active-job check.
 const duplicateRequest = { ...validImageRequest, requestId: "idempotent" };
