@@ -20,10 +20,11 @@ Ozon扩展已升级到0.6.30，本地找品Agent已升级到MVP 6.0：自动批�
 ## 1688主渠道调整状态
 
 - 2026-09-07：Tasks 1–7实现及独立审查已通过；扩展版本为0.6.30、Agent页面为MVP 6.0。`package.json`完整测试入口已包含`test:1688-core`、`test:1688-extension`和`test:sourcing-agent-1688`，并保留全部旧套件。
-- 2026-09-07首次、2026-09-08新鲜复跑`tools\build-release.ps1`与完整`npm.cmd test`均通过，网页产物与源码一致。修正界面版本文字后，扩展ZIP独立核验为0.6.30、19项，包含`manifest.json`、`background.js`、`pinduoduo-bridge.js`、`1688-core.js`、`1688-content.js`、`1688-background.js`；SHA-256=`7B81E3695DBD212EF77520E9F2BADA7B4A83B4D544F80E7A1627754B791B4E98`。同一构建脚本生成的`local-crop-tool.zip`连续哈希一致、3项均与源码逐字节相同，SHA-256=`04793AF6C84375BC2EE2E432A9F48D4082D0680D78D1702C48384A59ED709272`。
+- 2026-09-07首次、2026-09-08新鲜复跑`tools\build-release.ps1`与完整`npm.cmd test`均通过，网页产物与源码一致。修正界面版本文字与桥接成功响应后，扩展ZIP独立核验为0.6.30、19项，包含`manifest.json`、`background.js`、`pinduoduo-bridge.js`、`1688-core.js`、`1688-content.js`、`1688-background.js`；SHA-256=`BCE00AFB0D49B55E853AF4AB8A1049A7CF48C031A4EC805D212B3631566080C6`。同一构建脚本生成的`local-crop-tool.zip`连续哈希一致、3项均与源码逐字节相同，SHA-256=`04793AF6C84375BC2EE2E432A9F48D4082D0680D78D1702C48384A59ED709272`。
 - 2026-09-08：重新启动本地Agent后HTTP 200，Chrome可见MVP 6.0、现有18件任务/18件可运行、状态待运行；1688图片搜索页及文件上传控件可见，但页面明确显示“登录 / 立即登录”。未代登录、未点击启动，Agent仍为处理中0/待最终确认0。因此三件冒烟未执行、无平均活动时长，不能写成真实验收通过。
 - 2026-09-08：20件用户验收仍待执行；必须回传结果JSON和计时证据，按图片→关键词→相似供应商活动时长计算平均值并与2.5分钟目标比较，平台验证等待剔除并单列。发布状态为`DONE_WITH_CONCERNS`。
 - 2026-09-08：用户重新登录1688后，三件冒烟曾在旧桥接仍生效时启动；首件15秒后安全进入人工处理，阻断码为`bridge_start_response_pending_cancel`，随后手动取消整批，未写入采购价、未启动拼多多。之后已从worktree安装0.6.30；扩展管理页显示0.6.30而工具栏弹窗显示0.6.29，已确认是`popup.html`与`sourcing-enrichment.html`静态版本文字遗漏更新，不是实际安装版本回退。静态文字与使用说明已统一为0.6.30，并新增与`manifest.json`一致性测试；重新加载扩展后的三件冒烟仍待执行。
+- 2026-09-08：重新加载0.6.30后实际运行三件冒烟，扩展按三条任务分别打开1688搜索页，但每条图片策略在17–102毫秒内返回`bridge_start_failed`、没有候选，随后关键词生成失败并安全转人工；三件均未写采购价，也未启动拼多多。导出结果定位到协议边界：扩展后台成功返回任务记录`{jobId,status,...}`，页面桥接却要求显式`ok:true`，因而把成功创建误判为失败。`pinduoduo-bridge.js`现把无`ok:false`的后台任务记录包装为`ok:true`，真实错误仍保持失败；新增真实后台返回形状回归测试，修复前按预期失败、修复后通过。需重新加载修复后的0.6.30再跑三件冒烟，当前仍不是浏览器PASS。
 - 交付动作：本次网页源码没有内容差异，发布脚本只同步出与源码一致的`feishu.html`/站点构建产物，因此无需上传`feishu.html`；必须重新加载或重装0.6.30扩展；Worker未改，无需部署Cloudflare Worker。
 - 回滚使用既有规范备份`C:\Users\Microsoft\Documents\Ozon\_备份_20260831_1688_automatic_sourcing_before`；2026-09-07读取canonical root常规备份恰好5个，未新建第6个，也未删除用户数据。worktree内Task 7内部回滚件保持忽略且不暂存。
 

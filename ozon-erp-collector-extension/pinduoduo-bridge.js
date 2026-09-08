@@ -113,7 +113,11 @@
       if (responded) return;
       responded = true;
       const runtimeError = chrome.runtime.lastError;
-      const body = runtimeError ? { ok: false, error: runtimeError.message || "扩展后台不可用" } : (result || { ok: true });
+      const body = runtimeError
+        ? { ok: false, error: runtimeError.message || "扩展后台不可用" }
+        : result?.ok === false
+          ? result
+          : { ok: true, ...(result && typeof result === "object" ? result : {}) };
       window.postMessage({ ...body, type: SOURCING_RESPONSE, requestId }, ORIGIN);
     };
     const timeout = setTimeout(() => respond({ ok: false, error: "扩展后台响应超时" }), SOURCING_TIMEOUT_MS);

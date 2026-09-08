@@ -73,6 +73,11 @@ assert.equal(validBridge.runtimeMessages.at(-1).type, "start1688SourcingJob");
 assert.equal(validBridge.runtimeMessages.at(-1).request.requestId, "request-123");
 assert.deepEqual(JSON.parse(JSON.stringify(validBridge.runtimeMessages.at(-1).request.strategy)), { type: "image", sourceUrl: "https://ir.ozone.ru/s3/multimedia-x/a.jpg" });
 assert.equal(validBridge.posts.at(-1).data.requestId, "request-123");
+
+const realBackgroundBridge = createBridge({ runtimeResult: { jobId: "1688-request-126", status: "queued", phase: "queued" } });
+realBackgroundBridge.postBridgeMessage({ type: "OZON_SOURCING_EXTENSION_REQUEST_V1", action: "start_1688_job", requestId: "request-126", taskId: "ozon-1", mainImageUrl: "https://ir.ozone.ru/s3/multimedia-x/a.jpg" });
+assert.equal(realBackgroundBridge.posts.at(-1).data.ok, true, "a successful background job record must cross the page bridge as an explicit success");
+assert.equal(realBackgroundBridge.posts.at(-1).data.jobId, "1688-request-126");
 const countAfterValid = validBridge.runtimeMessages.length;
 validBridge.postBridgeMessage({ type: "OZON_SOURCING_EXTENSION_REQUEST_V1", action: "start_1688_job", requestId: "request-124", taskId: "ozon-1", mainImageUrl: "https://evil.example/a.jpg", strategy: { type: "image" } });
 validBridge.postBridgeMessage({ type: "OZON_SOURCING_EXTENSION_REQUEST_V1", action: "launch_pinduoduo", requestId: "request-125" });
