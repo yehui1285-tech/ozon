@@ -12,6 +12,8 @@
   const CANCELLED = "__CANCELLED__";
   const STALE = "__STALE_GENERATION__";
   const OWNERSHIP_LOST = "__OWNERSHIP_LOST__";
+  const SEARCH_URL = "https://s.1688.com/";
+  const IMAGE_SEARCH_URL = "https://air.1688.com/kapp/1688-search/pc-image-search/";
 
   let q = Promise.resolve();
   const runners = new Map();
@@ -51,6 +53,9 @@
     && s(value.ownerToken) === s(job.ownerToken)
     && revisionOf(value) === revisionOf(job);
   const isTerminal = (job) => T.has(job?.status);
+  const initialSearchUrl = (strategyType) => strategyType === "image" || strategyType === "similar_supplier"
+    ? IMAGE_SEARCH_URL
+    : SEARCH_URL;
 
   function randomOwnerToken() {
     const cryptoApi = root.crypto;
@@ -251,7 +256,7 @@
     }
 
     await live(generationRef, "creating_tab");
-    const tab = await chrome.tabs.create({ url: "https://s.1688.com/", active: false });
+    const tab = await chrome.tabs.create({ url: initialSearchUrl(job.strategy?.type), active: false });
     const pending = { jobId: generationRef.jobId, ownerToken: generationRef.ownerToken, tabId: tab.id };
     pendingOwners.set(generationRef.jobId, pending);
     try {
@@ -502,7 +507,7 @@
 
       await transition(generationRef, "running");
       const owned = await ensureOwnedTab(generationRef);
-      await waitForTabComplete(generationRef, owned.created ? "https://s.1688.com/" : "");
+      await waitForTabComplete(generationRef, owned.created ? initialSearchUrl(owned.job.strategy?.type) : "");
       let job = await live(generationRef);
 
       if (job.strategy.type === "verify_sku") {

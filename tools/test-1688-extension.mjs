@@ -309,6 +309,9 @@ assert.equal(queued.status, "queued");
 await waitForDriver();
 const completed = await successful.api.getJob(queued.jobId);
 assert.equal(completed.status, "completed");
+assert.equal(successful.calls.find((call) => call.create)?.create.url,
+  "https://air.1688.com/kapp/1688-search/pc-image-search/",
+  "image sourcing must open the verified 1688 image-search page that exposes the upload control");
 assert.ok(completed.candidates.length <= 12);
 assert.ok(completed.detailCandidates.length <= 5);
 assert.equal(successful.calls.some((call) => /pinduoduo|yangkeduo|mumu/i.test(JSON.stringify(call))), false);
@@ -319,6 +322,30 @@ assert.ok(evidencePost.options.body.byteLength <= 1024 * 1024);
 assert.match(completed.detailCandidates[0].evidence.localRef, /^\/api\/evidence\//);
 assert.doesNotMatch(JSON.stringify(successful.storageData), /data:image\/jpeg;base64/i);
 assert.equal((await successful.api.cancelJob(queued.jobId)).status, "completed");
+
+const similarRouteDriver = createDriver();
+const similarRouteQueued = await similarRouteDriver.api.startJob({
+  requestId: "similar-route",
+  sku: "1001",
+  strategy: { type: "similar_supplier", query: "同款", sourceUrl: "https://img.alicdn.com/imgextra/i1/example.jpg" },
+});
+await waitForDriver();
+assert.equal((await similarRouteDriver.api.getJob(similarRouteQueued.jobId)).status, "completed");
+assert.equal(similarRouteDriver.calls.find((call) => call.create)?.create.url,
+  "https://air.1688.com/kapp/1688-search/pc-image-search/",
+  "similar-supplier sourcing must use the same verified image-search entry");
+
+const keywordRouteDriver = createDriver();
+const keywordRouteQueued = await keywordRouteDriver.api.startJob({
+  requestId: "keyword-route",
+  sku: "1001",
+  strategy: { type: "keyword", query: "蓝色女装" },
+});
+await waitForDriver();
+assert.equal((await keywordRouteDriver.api.getJob(keywordRouteQueued.jobId)).status, "completed");
+assert.equal(keywordRouteDriver.calls.find((call) => call.create)?.create.url,
+  "https://s.1688.com/",
+  "keyword sourcing must keep the ordinary 1688 search entry");
 
 const detailClockDriver = createDriver({ commandDelay: (command) => command === "read_product_detail" ? 120 : 0 });
 const detailClockQueued = await detailClockDriver.api.startJob({ ...validImageRequest, requestId: "detail-phase-clock" });
