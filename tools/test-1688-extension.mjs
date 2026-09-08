@@ -360,6 +360,21 @@ assert.equal(delayedSearchCompleted.status, "completed",
 assert.ok(delayedSearchCompleted.candidates.length > 0,
   "image sourcing must wait for real candidates instead of treating an unchanged loading page as an empty result");
 
+const postUploadVerificationDriver = createDriver({
+  probe: searchFixture,
+  search: { pageUrl: "https://air.1688.com/kapp/1688-search/pc-image-search/", title: "请完成滑块验证码", nodes: [] },
+});
+const postUploadVerificationQueued = await postUploadVerificationDriver.api.startJob({
+  ...validImageRequest,
+  requestId: "post-upload-verification",
+});
+const postUploadPaused = await waitForJobStatus(postUploadVerificationDriver.api, postUploadVerificationQueued.jobId, "paused_platform_verification");
+assert.ok(Number.isInteger(postUploadPaused.ownedTabId),
+  "platform verification that appears after image upload must pause and preserve the dedicated tab");
+assert.equal(postUploadVerificationDriver.calls.some((call) => call.remove === postUploadPaused.ownedTabId), false);
+assert.equal(postUploadVerificationDriver.calls.some((call) => call.update), false,
+  "a post-upload verification page must not continue into candidate detail navigation");
+
 const detailClockDriver = createDriver({ commandDelay: (command) => command === "read_product_detail" ? 120 : 0 });
 const detailClockQueued = await detailClockDriver.api.startJob({ ...validImageRequest, requestId: "detail-phase-clock" });
 const inspectingDetail = await waitForJobPhase(detailClockDriver.api, detailClockQueued.jobId, "inspect_details");
