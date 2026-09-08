@@ -1,23 +1,30 @@
 # PROJECT_STATUS.md - Ozon 当前项目状态
 
-更新时间：2026-08-31
+更新时间：2026-09-08
 用途：给新 Codex 对话快速续接项目，不再依赖旧聊天上下文。
 
 ## 一句话状态
 
-Ozon扩展维持0.6.29；拼多多找品维持MVP 5.3。1688主渠道修订设计已经用户确认，详细实施计划已完成：自动批量固定使用1688图片搜索、AI关键词补搜和相似供应商补搜，拼多多App仅保留最终确认页的单品深度补搜；运行代码尚未开始调整。
+Ozon扩展已升级到0.6.30，本地找品Agent已升级到MVP 6.0：自动批量固定使用1688图片搜索、AI关键词补搜和相似供应商补搜，拼多多App仅保留最终确认页的单品深度补搜。Tasks 1–7实现与独立审查已完成；Task 8发布构建和自动测试通过，但2026-09-08三件真实浏览器冒烟因当前Chrome未登录1688而未启动，20件用户验收尚未执行，当前为`DONE_WITH_CONCERNS`。
 
 ## 当前重要版本
 
-- Chrome/Edge 扩展：0.6.29（沿用禁运复核，并新增本地拼多多工具的条件式Ozon最终复价桥接；真实浏览器待验收）
+- Chrome/Edge 扩展：0.6.30（新增1688自动任务驱动、图片/关键词/相似供应商三轮搜索、详情与规格核验，并保留Ozon最终复价桥接；真实浏览器三件与20件验收待完成）
 - 在线页面入口：`https://yehui1285-tech.github.io/ozon/feishu.html?v=20260720`
 - GitHub 仓库：`https://github.com/yehui1285-tech/ozon`
 - 飞书同步 Worker：`https://ozon-feishu-sync.yehui1285.workers.dev/`
 - Ozon 详情采集 Worker：`https://ozon-erp-collector.yehui1285.workers.dev/`
-- 找品任务队列：schema v1（拼多多MVP 5.3支持候选链接优先保留、MuMu App直达、AI同款判断一致性校验、分离式单维度规格常规价核验及条件式Ozon最终复价；详情不完整、模型结论冲突、多维规格、低置信度或运费未知仍转人工）
+- 找品任务队列：schema v1 / sourcing schema `mvp6`（Agent MVP 6.0以1688为唯一自动批量渠道，支持三轮搜索、Qwen安全判断、目标规格核验、MOQ/运费闸门、最终复价预览和确认队列；拼多多MVP 5.3能力仅用于人工确认后的单件补搜）
 - MD转JSON工具：`Ozon批量MD转JSON.cmd`（双击选择MD，结果输出到MD同目录的`Ozon_JSON_转换结果`）
 
 ## 1688主渠道调整状态
+
+- 2026-09-07：Tasks 1–7实现及独立审查已通过；扩展版本为0.6.30、Agent页面为MVP 6.0。`package.json`完整测试入口已包含`test:1688-core`、`test:1688-extension`和`test:sourcing-agent-1688`，并保留全部旧套件。
+- 2026-09-07首次、2026-09-08新鲜复跑`tools\build-release.ps1`与完整`npm.cmd test`均通过，网页产物与源码一致。扩展ZIP独立核验为0.6.30、19项，包含`manifest.json`、`background.js`、`pinduoduo-bridge.js`、`1688-core.js`、`1688-content.js`、`1688-background.js`；SHA-256=`01A4E1C59B9E63DCD797EB9931A5420DE48FB811C90D83427F0C0A5F0ECB5E3C`。同一构建脚本生成的`local-crop-tool.zip`连续哈希一致、3项均与源码逐字节相同，SHA-256=`04793AF6C84375BC2EE2E432A9F48D4082D0680D78D1702C48384A59ED709272`。
+- 2026-09-08：重新启动本地Agent后HTTP 200，Chrome可见MVP 6.0、现有18件任务/18件可运行、状态待运行；1688图片搜索页及文件上传控件可见，但页面明确显示“登录 / 立即登录”。未代登录、未点击启动，Agent仍为处理中0/待最终确认0。因此三件冒烟未执行、无平均活动时长，不能写成真实验收通过。
+- 2026-09-08：20件用户验收仍待执行；必须回传结果JSON和计时证据，按图片→关键词→相似供应商活动时长计算平均值并与2.5分钟目标比较，平台验证等待剔除并单列。发布状态为`DONE_WITH_CONCERNS`。
+- 交付动作：本次网页源码没有内容差异，发布脚本只同步出与源码一致的`feishu.html`/站点构建产物，因此无需上传`feishu.html`；必须重新加载或重装0.6.30扩展；Worker未改，无需部署Cloudflare Worker。
+- 回滚使用既有规范备份`C:\Users\Microsoft\Documents\Ozon\_备份_20260831_1688_automatic_sourcing_before`；2026-09-07读取canonical root常规备份恰好5个，未新建第6个，也未删除用户数据。worktree内Task 7内部回滚件保持忽略且不暂存。
 
 - 2026-08-31：完成并修订`docs/superpowers/specs/2026-08-31-1688-sourcing-provider-design.md`设计，默认批量链路拟改为Chrome扩展自动执行1688图片搜索、AI关键词补搜和相似供应商补搜，本地Agent执行Qwen判断、安全闸门和采购成本计算。
 - 起订量大于2才自动排除；起订量为2的候选保留，只有页面存在一件代发/拿样价或已有同商品人工确认记录时才允许自动使用单件价。
