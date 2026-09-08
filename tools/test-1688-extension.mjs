@@ -735,6 +735,79 @@ assert.equal(observedAirUpload.selectedFiles.length, 1);
 assert.ok(observedAirUpload.searchResponse.result.nodes.some((node) => /空空如也/.test(node.text)),
   "the observed 1688 empty-result message must be preserved in the search snapshot");
 
+async function runObservedKeywordSearchCommand() {
+  const events = [];
+  let clicked = false;
+  const button = {
+    innerText: "搜 索",
+    parentElement: null,
+    getClientRects: () => [{}],
+    getAttribute: (name) => name === "class" ? "input-button" : "",
+    click: () => { clicked = true; },
+  };
+  const searchBox = {
+    innerText: "搜 索",
+    parentElement: null,
+    getAttribute: (name) => name === "class" ? "ali-search-box" : "",
+  };
+  const keywordsWrapper = {
+    innerText: "",
+    parentElement: searchBox,
+    getAttribute: (name) => name === "class" ? "ali-search-keywords" : "",
+  };
+  const form = {
+    id: "alisearch-from",
+    innerText: "搜 索",
+    parentElement: null,
+    getAttribute: (name) => name === "id" ? "alisearch-from"
+      : name === "action" ? "//s.1688.com/selloffer/offer_search.htm"
+        : "",
+    querySelectorAll: (selector) => selector.includes(".input-button") ? [button] : [],
+  };
+  searchBox.parentElement = form;
+  button.parentElement = searchBox;
+  const input = {
+    id: "alisearch-input",
+    type: "text",
+    name: "keywords",
+    value: "",
+    innerText: "",
+    parentElement: keywordsWrapper,
+    getClientRects: () => [{}],
+    getAttribute: (name) => name === "id" ? "alisearch-input"
+      : name === "type" ? ""
+        : name === "name" ? "keywords"
+          : name === "class" ? "ali-search-input"
+            : "",
+    closest: (selector) => selector === "form" ? form : null,
+    dispatchEvent: (event) => { events.push(event.type); return true; },
+  };
+  const document = {
+    documentElement: {},
+    body: { innerText: "搜索 热门搜索" },
+    querySelectorAll: (selector) => selector.includes("input#alisearch-input[name='keywords']") ? [input] : [],
+  };
+  const listeners = [];
+  const chrome = { runtime: { onMessage: { addListener: (listener) => listeners.push(listener) } } };
+  class TestEvent {
+    constructor(type, options) { this.type = type; this.bubbles = options.bubbles; }
+  }
+  const context = vm.createContext({ chrome, document, location: { href: "https://s.1688.com/selloffer/offer_search.html" }, Event: TestEvent, DataTransfer: class DataTransfer {}, File: class File {}, Uint8Array, atob, console, setTimeout });
+  context.globalThis = context;
+  vm.runInContext(contentSource, context, { filename: "1688-content.js" });
+  const response = await new Promise((resolve) => {
+    listeners[0]({ type: "OZON_1688_PAGE_COMMAND_V1", command: "submit_keyword_search", payload: { query: "扳手套装" } }, null, resolve);
+  });
+  return { response, inputValue: input.value, events, clicked };
+}
+
+const observedKeywordSearch = await runObservedKeywordSearchCommand();
+assert.equal(observedKeywordSearch.response.ok, true,
+  "the observed #alisearch-input text field and .input-button must accept a keyword-search command");
+assert.equal(observedKeywordSearch.inputValue, "扳手套装");
+assert.deepEqual(observedKeywordSearch.events, ["input"]);
+assert.equal(observedKeywordSearch.clicked, true);
+
 assert.match(contentSource, /const ALLOWED_COMMANDS = new Set\([\s\S]*"select_sku_option"/);
 assert.match(contentSource, /new DataTransfer\(\)/);
 assert.match(contentSource, /aria-selected/);

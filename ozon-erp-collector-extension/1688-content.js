@@ -50,12 +50,16 @@
   }
 
   function verifiedSearchControl() {
-    const input = [...document.querySelectorAll("input[type='search'][data-1688-keyword-search], input[type='search'][name='keywords']")]
-      .find((node) => node.getClientRects().length > 0 && !unsafeNode(node));
+    const input = [...document.querySelectorAll("input[type='search'][data-1688-keyword-search], input[type='search'][name='keywords'], input#alisearch-input[name='keywords']")]
+      .find((node) => node.getClientRects().length > 0 && (node.id !== "alisearch-input" || node.type === "text") && !unsafeNode(node));
     if (!input) throw new Error("未找到已识别的关键词输入框。");
     const form = input.closest("form");
-    const button = form && [...form.querySelectorAll("button[type='submit'], [role='button'][data-1688-keyword-submit]")]
+    let button = form && [...form.querySelectorAll("button[type='submit'], [role='button'][data-1688-keyword-submit]")]
       .find((node) => node.getClientRects().length > 0 && !unsafeNode(node));
+    if (!button && form?.id === "alisearch-from") {
+      button = [...form.querySelectorAll(".ali-search-box > .input-button")]
+        .find((node) => node.getClientRects().length > 0 && clean(node.innerText).replace(/\s+/g, "") === "搜索" && !unsafeNode(node));
+    }
     if (!button) throw new Error("未找到已识别的搜索控件。");
     return { input, button };
   }
