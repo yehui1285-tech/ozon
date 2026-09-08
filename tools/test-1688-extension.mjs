@@ -192,6 +192,7 @@ function createDriver({ probe = searchFixture, search = searchFixture, detail = 
     browser.tabs.set(tabId, { id: tabId, windowId: 1, status: "complete", ...tab });
   }
   const listeners = { messages: [] };
+  let searchReadCount = 0;
   const chrome = {
     storage: {
       local: storageArea(storageData, calls),
@@ -234,7 +235,7 @@ function createDriver({ probe = searchFixture, search = searchFixture, detail = 
         const delay = typeof commandDelay === "function" ? commandDelay(message.command, tabId) : commandDelay === message.command ? commandDelayMs : 0;
         if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
         const result = message.command === "probe" ? (tab.url.startsWith("https://detail.1688.com/") ? { ...detailFixture, pageUrl: tab.url } : probe)
-          : message.command === "read_search_results" ? search
+          : message.command === "read_search_results" ? (typeof search === "function" ? search(++searchReadCount) : search)
             : message.command === "read_product_detail" ? detail
               : message.command === "select_sku_option" ? { selected: true }
                 : { accepted: true };
@@ -346,6 +347,18 @@ assert.equal((await keywordRouteDriver.api.getJob(keywordRouteQueued.jobId)).sta
 assert.equal(keywordRouteDriver.calls.find((call) => call.create)?.create.url,
   "https://s.1688.com/",
   "keyword sourcing must keep the ordinary 1688 search entry");
+
+const loadingSearchSnapshot = { pageUrl: "https://air.1688.com/kapp/1688-search/pc-image-search/", title: "正在识图", nodes: [] };
+const delayedSearchDriver = createDriver({
+  search: (readCount) => readCount < 4 ? loadingSearchSnapshot : searchFixture,
+});
+const delayedSearchQueued = await delayedSearchDriver.api.startJob({ ...validImageRequest, requestId: "delayed-search-results" });
+await waitForDriver();
+const delayedSearchCompleted = await delayedSearchDriver.api.getJob(delayedSearchQueued.jobId);
+assert.equal(delayedSearchCompleted.status, "completed",
+  "image sourcing must not fail while the result page is still loading");
+assert.ok(delayedSearchCompleted.candidates.length > 0,
+  "image sourcing must wait for real candidates instead of treating an unchanged loading page as an empty result");
 
 const detailClockDriver = createDriver({ commandDelay: (command) => command === "read_product_detail" ? 120 : 0 });
 const detailClockQueued = await detailClockDriver.api.startJob({ ...validImageRequest, requestId: "detail-phase-clock" });
@@ -527,10 +540,20 @@ await new Promise((resolve) => setTimeout(resolve, 600));
 assert.equal(delayedFinallyDriver.storageData.ozon1688ActiveJobV1?.jobId, delayedSuccessor.jobId, "an old finally must not clear the successor ACTIVE pointer");
 assert.deepEqual(plain(await delayedFinallyDriver.api.getJob(delayedOriginal.jobId)), plain(delayedTerminal), "an old finally must not overwrite the duplicate generation");
 
-const failedDriver = createDriver({ search: { pageUrl: "https://s.1688.com/", title: "空结果", nodes: [] } });
+const failedDriver = createDriver({
+  search: {
+    pageUrl: "https://s.1688.com/",
+    title: "不安全候选",
+    nodes: [{
+      ...searchFixture.nodes[0],
+      href: "https://detail.1688.com/offer/900000000001.html",
+      text: "安全候选 ¥10 1件起批",
+      data: { ...searchFixture.nodes[0].data, title: "立即购买" },
+    }],
+  },
+});
 const failedQueued = await failedDriver.api.startJob({ ...validImageRequest, requestId: "parser" });
-await waitForDriver();
-const failed = await failedDriver.api.getJob(failedQueued.jobId);
+const failed = await waitForJobStatus(failedDriver.api, failedQueued.jobId, "failed");
 assert.equal(failed.status, "failed");
 assert.equal(failed.diagnostics.code, "search_parser_failed");
 

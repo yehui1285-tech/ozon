@@ -472,7 +472,8 @@
     while (Date.now() < deadline) {
       const page = snap(await command(generationRef, "read_search_results"));
       const signature = JSON.stringify(page.nodes.slice(0, 12).map((node) => [node.href, node.text, node.imageUrl]));
-      if (signature && signature === previous) return page;
+      const ready = verify(page) || root.Ozon1688Core.parseSearchSnapshot(page).length > 0;
+      if (ready && signature && signature === previous) return page;
       previous = signature;
       await sleep(50);
     }
