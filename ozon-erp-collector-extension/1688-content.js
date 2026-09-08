@@ -43,7 +43,7 @@
   }
 
   function verifiedUploadInput() {
-    const input = [...document.querySelectorAll("input[type='file'][accept*='image'], input[type='file'][data-1688-image-search]")]
+    const input = [...document.querySelectorAll("input[type='file']#img-search-upload, input[type='file'][accept*='image'], input[type='file'][data-1688-image-search]")]
       .find((node) => node.getClientRects().length > 0 && !unsafeNode(node));
     if (!input) throw new Error("未找到已识别的图片上传控件。");
     return input;

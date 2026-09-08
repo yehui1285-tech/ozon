@@ -569,6 +569,53 @@ assert.equal(capped.candidates.length, 12);
 assert.equal(capped.detailCandidates.length, 5);
 assert.equal(capDriver.calls.filter((call) => call.update).length, 5);
 
+async function runObservedAirUploadCommand() {
+  const events = [];
+  let selectedFiles = null;
+  const input = {
+    id: "img-search-upload",
+    parentElement: null,
+    getClientRects: () => [{}],
+    getAttribute: (name) => name === "id" ? "img-search-upload"
+      : name === "type" ? "file"
+        : name === "accept" ? ".jpg,.jpeg,.png,.bmp,.webp"
+          : "",
+    set files(value) { selectedFiles = value; },
+    dispatchEvent: (event) => { events.push(event.type); return true; },
+  };
+  const document = {
+    documentElement: {},
+    querySelectorAll: (selector) => selector.includes("#img-search-upload") ? [input] : [],
+  };
+  const listeners = [];
+  const chrome = { runtime: { onMessage: { addListener: (listener) => listeners.push(listener) } } };
+  class TestDataTransfer {
+    constructor() {
+      this.files = [];
+      this.items = { add: (file) => this.files.push(file) };
+    }
+  }
+  class TestFile {
+    constructor(parts, name, options) { this.parts = parts; this.name = name; this.type = options.type; }
+  }
+  class TestEvent {
+    constructor(type, options) { this.type = type; this.bubbles = options.bubbles; }
+  }
+  const context = vm.createContext({ chrome, document, location: { href: "https://air.1688.com/kapp/1688-search/pc-image-search/" }, Event: TestEvent, DataTransfer: TestDataTransfer, File: TestFile, Uint8Array, atob, console, setTimeout });
+  context.globalThis = context;
+  vm.runInContext(contentSource, context, { filename: "1688-content.js" });
+  const response = await new Promise((resolve) => {
+    listeners[0]({ type: "OZON_1688_PAGE_COMMAND_V1", command: "submit_image_search", payload: { imageBase64: "AQID", mimeType: "image/jpeg" } }, null, resolve);
+  });
+  return { response, events, selectedFiles };
+}
+
+const observedAirUpload = await runObservedAirUploadCommand();
+assert.equal(observedAirUpload.response.ok, true,
+  "the observed air.1688.com #img-search-upload control must accept an image-search command");
+assert.deepEqual(observedAirUpload.events, ["input", "change"]);
+assert.equal(observedAirUpload.selectedFiles.length, 1);
+
 assert.match(contentSource, /const ALLOWED_COMMANDS = new Set\([\s\S]*"select_sku_option"/);
 assert.match(contentSource, /new DataTransfer\(\)/);
 assert.match(contentSource, /aria-selected/);
