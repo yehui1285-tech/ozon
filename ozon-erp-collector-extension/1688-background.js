@@ -12,7 +12,7 @@
   const CANCELLED = "__CANCELLED__";
   const STALE = "__STALE_GENERATION__";
   const OWNERSHIP_LOST = "__OWNERSHIP_LOST__";
-  const SEARCH_URL = "https://s.1688.com/";
+  const SEARCH_URL = "https://s.1688.com/selloffer/offer_search.html";
   const IMAGE_SEARCH_URL = "https://air.1688.com/kapp/1688-search/pc-image-search/";
 
   let q = Promise.resolve();

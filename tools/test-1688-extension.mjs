@@ -345,8 +345,8 @@ const keywordRouteQueued = await keywordRouteDriver.api.startJob({
 await waitForDriver();
 assert.equal((await keywordRouteDriver.api.getJob(keywordRouteQueued.jobId)).status, "completed");
 assert.equal(keywordRouteDriver.calls.find((call) => call.create)?.create.url,
-  "https://s.1688.com/",
-  "keyword sourcing must keep the ordinary 1688 search entry");
+  "https://s.1688.com/selloffer/offer_search.html",
+  "keyword sourcing must open the final 1688 search URL without losing tab ownership during an entry redirect");
 
 const loadingSearchSnapshot = { pageUrl: "https://air.1688.com/kapp/1688-search/pc-image-search/", title: "正在识图", nodes: [] };
 const delayedSearchDriver = createDriver({
