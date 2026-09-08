@@ -78,6 +78,11 @@ const realBackgroundBridge = createBridge({ runtimeResult: { jobId: "1688-reques
 realBackgroundBridge.postBridgeMessage({ type: "OZON_SOURCING_EXTENSION_REQUEST_V1", action: "start_1688_job", requestId: "request-126", taskId: "ozon-1", mainImageUrl: "https://ir.ozone.ru/s3/multimedia-x/a.jpg" });
 assert.equal(realBackgroundBridge.posts.at(-1).data.ok, true, "a successful background job record must cross the page bridge as an explicit success");
 assert.equal(realBackgroundBridge.posts.at(-1).data.jobId, "1688-request-126");
+
+const explicitFailureBridge = createBridge({ runtimeResult: { ok: false, error: "已有一个 1688 找品任务正在运行。" } });
+explicitFailureBridge.postBridgeMessage({ type: "OZON_SOURCING_EXTENSION_REQUEST_V1", action: "start_1688_job", requestId: "request-127", taskId: "ozon-1", mainImageUrl: "https://ir.ozone.ru/s3/multimedia-x/a.jpg" });
+assert.equal(explicitFailureBridge.posts.at(-1).data.ok, false, "an explicit background failure must not be converted to success");
+assert.equal(explicitFailureBridge.posts.at(-1).data.error, "已有一个 1688 找品任务正在运行。");
 const countAfterValid = validBridge.runtimeMessages.length;
 validBridge.postBridgeMessage({ type: "OZON_SOURCING_EXTENSION_REQUEST_V1", action: "start_1688_job", requestId: "request-124", taskId: "ozon-1", mainImageUrl: "https://evil.example/a.jpg", strategy: { type: "image" } });
 validBridge.postBridgeMessage({ type: "OZON_SOURCING_EXTENSION_REQUEST_V1", action: "launch_pinduoduo", requestId: "request-125" });
