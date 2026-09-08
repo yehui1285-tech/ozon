@@ -360,6 +360,19 @@ assert.equal(delayedSearchCompleted.status, "completed",
 assert.ok(delayedSearchCompleted.candidates.length > 0,
   "image sourcing must wait for real candidates instead of treating an unchanged loading page as an empty result");
 
+const explicitEmptySearch = {
+  pageUrl: "https://air.1688.com/kapp/1688-search/pc-image-search/",
+  title: "批发_供应_阿里巴巴",
+  nodes: [{ text: "哎呦喂，这里空空如也～", href: "", imageUrl: "", visible: true }],
+};
+const explicitEmptyDriver = createDriver({ search: explicitEmptySearch });
+const explicitEmptyQueued = await explicitEmptyDriver.api.startJob({ ...validImageRequest, requestId: "explicit-empty-search" });
+await waitForDriver();
+const explicitEmptyCompleted = await explicitEmptyDriver.api.getJob(explicitEmptyQueued.jobId);
+assert.equal(explicitEmptyCompleted.status, "failed",
+  "an explicit 1688 empty-result state must finish promptly instead of waiting until the result deadline");
+assert.equal(explicitEmptyCompleted.diagnostics?.code, "search_parser_failed");
+
 const postUploadVerificationDriver = createDriver({
   probe: searchFixture,
   search: { pageUrl: "https://air.1688.com/kapp/1688-search/pc-image-search/", title: "请完成滑块验证码", nodes: [] },
@@ -623,6 +636,7 @@ async function runObservedAirUploadCommand() {
   };
   const document = {
     documentElement: {},
+    body: { innerText: "搜索 找到以下货源 哎呦喂，这里空空如也～" },
     querySelectorAll: (selector) => selector.includes("#img-search-upload") ? [input] : [],
   };
   const listeners = [];
@@ -645,7 +659,10 @@ async function runObservedAirUploadCommand() {
   const response = await new Promise((resolve) => {
     listeners[0]({ type: "OZON_1688_PAGE_COMMAND_V1", command: "submit_image_search", payload: { imageBase64: "AQID", mimeType: "image/jpeg" } }, null, resolve);
   });
-  return { response, events, selectedFiles };
+  const searchResponse = await new Promise((resolve) => {
+    listeners[0]({ type: "OZON_1688_PAGE_COMMAND_V1", command: "read_search_results", payload: {} }, null, resolve);
+  });
+  return { response, searchResponse, events, selectedFiles };
 }
 
 const observedAirUpload = await runObservedAirUploadCommand();
@@ -653,6 +670,8 @@ assert.equal(observedAirUpload.response.ok, true,
   "the observed air.1688.com #img-search-upload control must accept an image-search command");
 assert.deepEqual(observedAirUpload.events, ["input", "change"]);
 assert.equal(observedAirUpload.selectedFiles.length, 1);
+assert.ok(observedAirUpload.searchResponse.result.nodes.some((node) => /空空如也/.test(node.text)),
+  "the observed 1688 empty-result message must be preserved in the search snapshot");
 
 assert.match(contentSource, /const ALLOWED_COMMANDS = new Set\([\s\S]*"select_sku_option"/);
 assert.match(contentSource, /new DataTransfer\(\)/);

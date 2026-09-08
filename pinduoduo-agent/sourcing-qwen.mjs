@@ -45,9 +45,14 @@ function ownStringArray(value, limit = 20) {
 function safeStructuredTerm(value) {
   const term = clean(value, 100).normalize("NFKC");
   return term && !/[\p{Cc}\p{Cf}]/u.test(term) && !/[¥￥$€£₽₹]/.test(term)
-    && !/(?:采购(?:价|成本)?|价格|单价|成本|运费|报价|起订|MOQ|\b(?:price|shipping)\b)/i.test(term)
+    && !/(?:采购(?:价|成本)?|价格|单价|成本|运费|报价|起订|起批|包邮|免邮|一件代发|拿样|MOQ|\b(?:price|shipping)\b)/i.test(term)
     ? term
     : "";
+}
+
+function safeExactTitleTerm(value) {
+  const title = clean(value, 100).normalize("NFKC");
+  return title.length <= 40 ? safeStructuredTerm(title) : "";
 }
 
 function structuredTerms(value, limit = 20) {
@@ -79,6 +84,7 @@ function sourceTask(task = {}) {
   return {
     sku: clean(ownValue(ozon, "sku"), 100),
     title,
+    exactTitleTerm: safeExactTitleTerm(title),
     category,
     brand: safeStructuredTerm(ownValue(ozon, "brand") || ownValue(enrichment, "brand")),
     model: safeStructuredTerm(ownValue(ozon, "model") || ownValue(enrichment, "model")),
@@ -169,7 +175,7 @@ export async function generate1688Keywords(task = {}) {
     "关键词只能由下方允许词白名单中的品牌、型号和通用品类词组合；不得输出白名单外的品牌、型号或通用品类词。",
     "不得生成、猜测或改写价格、MOQ、运费、SKU或任何供应商事实；价格不是同款证据。",
     `Ozon证据：${JSON.stringify({ title: target.title, category: target.category, brand: target.brand, model: target.model, specification: target.specification })}`,
-    `允许词白名单：${JSON.stringify({ allowedBrand: target.brand, allowedModel: target.model, allowedGenericTerms: target.allowedGenericTerms, trustedGenericTerms: target.trustedGenericTerms, categoryTerms: target.categoryTerms })}`,
+    `允许词白名单：${JSON.stringify({ allowedBrand: target.brand, allowedModel: target.model, allowedGenericTerms: target.allowedGenericTerms, trustedGenericTerms: target.trustedGenericTerms, categoryTerms: target.categoryTerms, exactTitleTerm: target.exactTitleTerm })}`,
     "仅返回严格JSON对象：{\"keywords\":[\"关键词\"]}。不得添加其它字段或Markdown。",
   ].join("\n");
   const content = [{ type: "text", text: prompt }];
@@ -181,6 +187,7 @@ export async function generate1688Keywords(task = {}) {
     allowedGenericTerms: target.allowedGenericTerms,
     trustedGenericTerms: target.trustedGenericTerms,
     categoryTerms: target.categoryTerms,
+    exactTitleTerm: target.exactTitleTerm,
   });
   if (!keywords.length) throw new Error("千问关键词没有留下可验证的检索词。");
   return { ...responseMetadata(qwenResponse), keywords };

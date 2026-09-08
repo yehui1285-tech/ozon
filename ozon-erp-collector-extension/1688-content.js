@@ -61,7 +61,19 @@
   }
 
   function snapshot() {
-    return { pageUrl: location.href, title: document.title, capturedAt: new Date().toISOString(), nodes: visibleNodeSnapshot() };
+    const nodes = visibleNodeSnapshot();
+    const bodyText = clean(document.body?.innerText);
+    const emptyMatch = bodyText.match(/(?:哎呦喂[^。！？\n]{0,40}空空如也|没有相关商品|未找到相关(?:商品|货源)|暂无相关(?:商品|货源))/i);
+    if (emptyMatch) nodes.unshift({
+      tag: "status",
+      text: clean(emptyMatch[0]),
+      href: "",
+      imageUrl: "",
+      ariaLabel: "",
+      visible: true,
+      data: { searchStatus: "empty" },
+    });
+    return { pageUrl: location.href, title: document.title, capturedAt: new Date().toISOString(), nodes };
   }
 
   async function submitImageSearch(payload = {}) {

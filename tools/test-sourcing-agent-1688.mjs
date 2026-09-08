@@ -356,6 +356,12 @@ assert.deepEqual(normalizeKeywordResult({ keywords: ["耐克 跑步鞋", "阿迪
   "a free title must never authorize an unlisted brand token");
 assert.deepEqual(normalizeKeywordResult({ keywords: ["普通 运动鞋"] }, { allowedBrand: "", allowedModel: "", categoryTerms: ["普通", "运动鞋"] }), ["普通 运动鞋"],
   "ordinary no-brand category keywords require explicit structured category terms");
+assert.deepEqual(normalizeKeywordResult({ keywords: ["扳手套装"] }, { exactTitleTerm: "扳手套装" }), ["扳手套装"],
+  "a short safe exact Ozon title must remain available when structured category terms are absent");
+for (const unsafeExactTitle of ["扳手套装2件起批", "扳手套装起批2件", "扳手套装包邮", "扳手套装一件代发"]) {
+  assert.deepEqual(normalizeKeywordResult({ keywords: [unsafeExactTitle] }, { exactTitleTerm: unsafeExactTitle }), [],
+    `an exact Ozon title must not authorize transaction terms: ${unsafeExactTitle}`);
+}
 assert.deepEqual(normalizeKeywordResult({ keywords: ["耐克 跑步鞋"] }, { allowedBrand: "耐克", allowedModel: "" }), [],
   "without safe generic terms, a brand plus an unlisted category term must fail closed");
 assert.deepEqual(normalizeKeywordResult({ keywords: ["价\u200b格 运动鞋", "采\u200b购价 运动鞋", "\ufeff普通 鞋类"] }, keywordContext), [],

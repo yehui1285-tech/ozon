@@ -194,7 +194,7 @@ function normalizeKeywordText(value) {
 function keywordHasUnsafeCommercialText(keyword) {
   return /[\p{Cc}\p{Cf}]/u.test(keyword)
     || /[¥￥$€£₽₹]/.test(keyword)
-    || /(?:采购(?:价|成本)?|价格|单价|成本|运费|报价|起订|MOQ|\b(?:price|shipping)\b)/i.test(keyword)
+    || /(?:采购(?:价|成本)?|价格|单价|成本|运费|报价|起订|起批|包邮|免邮|一件代发|拿样|MOQ|\b(?:price|shipping)\b)/i.test(keyword)
     || /\d+(?:\.\d{1,2})?\s*(?:元|rmb|cny|人民币)/i.test(keyword);
 }
 
@@ -217,6 +217,7 @@ function keywordContext(raw) {
     ...allowedTerms(ownValue(source, "allowedGenericTerms")),
     ...allowedTerms(ownValue(source, "trustedGenericTerms")),
     ...allowedTerms(ownValue(source, "categoryTerms")),
+    ...allowedTerms(ownValue(source, "exactTitleTerm"), 1),
   ];
   const terms = [...new Set([allowedBrand, allowedModel, ...genericTerms].filter(Boolean))];
   if (!terms.length) return null;

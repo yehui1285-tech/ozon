@@ -368,6 +368,12 @@
     return /登录|验证码|滑块|人机验证|captcha|sign in|log in/i.test([value.title, ...value.nodes.map((node) => node.text)].join(" "));
   }
 
+  function explicitEmpty(value) {
+    return value.nodes.some((node) => node?.data?.searchStatus === "empty")
+      || /哎呦喂[^。！？\n]{0,40}空空如也|没有相关商品|未找到相关(?:商品|货源)|暂无相关(?:商品|货源)/i
+        .test([value.title, ...value.nodes.map((node) => node.text)].join(" "));
+  }
+
   async function command(generationRef, name, payload = {}) {
     const deadline = Date.now() + 15000;
     let lastError;
@@ -472,7 +478,7 @@
     while (Date.now() < deadline) {
       const page = snap(await command(generationRef, "read_search_results"));
       const signature = JSON.stringify(page.nodes.slice(0, 12).map((node) => [node.href, node.text, node.imageUrl]));
-      const ready = verify(page) || root.Ozon1688Core.parseSearchSnapshot(page).length > 0;
+      const ready = verify(page) || explicitEmpty(page) || root.Ozon1688Core.parseSearchSnapshot(page).length > 0;
       if (ready && signature && signature === previous) return page;
       previous = signature;
       await sleep(50);
