@@ -509,7 +509,7 @@ function remainingActiveMs(task) {
 function activeRequestTimeout(task, requestedMs) {
   return sourcingFlow.automaticRequestTimeoutMs(task?.sourcing?.timing || {}, requestedMs);
 }
-function automaticTimeoutResult() { return { status: "automatic_timeout", diagnostics: { code: "automatic_timeout" } }; }
+function automaticTimeoutResult(jobId = "") { return { status: "automatic_timeout", ...(jobId ? { jobId } : {}), diagnostics: { code: "automatic_timeout" } }; }
 function recordAudit(task, action, details = {}) {
   const sourcing = sourcingState(task), entries = Array.isArray(sourcing.confirmationAudit) ? sourcing.confirmationAudit : [];
   entries.push({ taskIdentity: stableTaskIdentity(task), action, at: new Date().toISOString(), ...clone(details, {}) }); sourcing.confirmationAudit = entries.slice(-80);
@@ -560,9 +560,10 @@ function mergeJobCandidates(task, strategy, job) {
   const sourcing = sourcingState(task);
   const lightweight = sourcingFlow.mergeAutomaticCandidates([], Array.isArray(job?.candidates) ? job.candidates : []);
   const detailed = mergeDetailedCandidates([], Array.isArray(job?.detailCandidates) ? job.detailCandidates : []);
-  if (!lightweight.length && !detailed.length) return { lightweight, detailed, usableCount: usableCandidates(task).length };
+  if (!["image", "keyword", "similar_supplier"].includes(strategy?.type)) return { lightweight: [], detailed: [], usableCount: usableCandidates(task).length };
   sourcing.strategyCandidates = object(sourcing.strategyCandidates) || {};
-  const previous = object(sourcing.strategyCandidates[strategy?.type]) || {};
+  const saved = object(sourcing.strategyCandidates[strategy?.type]) || {};
+  const previous = text(saved.jobId) === text(job?.jobId) ? saved : {};
   const strategyLightweight = sourcingFlow.mergeAutomaticCandidates(previous.lightweightCandidates || [], lightweight);
   const strategyDetailed = mergeDetailedCandidates(previous.detailCandidates || [], detailed);
   sourcing.strategyCandidates[strategy.type] = {
@@ -570,11 +571,13 @@ function mergeJobCandidates(task, strategy, job) {
     detailCandidates: clone(strategyDetailed, []),
     query: text(strategy?.query) || null,
     jobId: text(job?.jobId) || null,
+    status: text(job?.status, "failed"),
+    ...sourcingFlow.sourcingJobAudit({ ...previous, ...job }),
     updatedAt: new Date().toISOString(),
   };
-  sourcing.lightweightCandidates = sourcingFlow.mergeAutomaticCandidates(sourcing.lightweightCandidates || [], lightweight);
-  sourcing.detailCandidates = mergeDetailedCandidates(sourcing.detailCandidates || [], detailed);
-  return { lightweight, detailed, usableCount: usableCandidates(task).length };
+  Object.assign(sourcing, sourcingFlow.automaticCandidatePools(sourcing));
+  const committed = job?.status === "completed";
+  return { lightweight: committed ? strategyLightweight : [], detailed: committed ? strategyDetailed : [], usableCount: usableCandidates(task).length };
 }
 function usableCandidates(task) {
   const rejected = new Set((task?.sourcing?.rejectedCandidateIds || []).map(String));
@@ -590,7 +593,7 @@ function boundedDiagnostics(value) {
 }
 function recordSearchAttempt(task, strategy, result) {
   const sourcing = sourcingState(task), attempts = Array.isArray(sourcing.searchAttempts) ? sourcing.searchAttempts : [];
-  attempts.push({ strategy, status: text(result.status, "failed"), usableCount: Number(result.usableCount) || 0, candidateCount: Number(result.candidateCount) || 0, durationMs: Math.max(0, Math.min(Number(result.durationMs) || 0, sourcingFlow.AUTOMATIC_1688_LIMITS.totalActiveMs)), diagnostics: boundedDiagnostics(result.diagnostics), jobId: text(result.jobId) || null, completedAt: new Date().toISOString() }); sourcing.searchAttempts = attempts.slice(-20);
+  attempts.push({ strategy, status: text(result.status, "failed"), usableCount: Number(result.usableCount) || 0, candidateCount: Number(result.candidateCount) || 0, durationMs: Math.max(0, Math.min(Number(result.durationMs) || 0, sourcingFlow.AUTOMATIC_1688_LIMITS.totalActiveMs)), diagnostics: boundedDiagnostics(result.diagnostics), jobId: text(result.jobId) || null, ...sourcingFlow.sourcingJobAudit(result), completedAt: new Date().toISOString() }); sourcing.searchAttempts = attempts.slice(-20);
 }
 async function safeCancel1688Job(jobId, context = null) {
   const safeJobId = text(jobId);
@@ -602,7 +605,7 @@ async function safeCancel1688Job(jobId, context = null) {
 function pauseForPlatformVerification(context, job, strategy) {
   if (!automaticContextCanAdvance(context)) return automaticContextStopResult(context, text(job?.jobId));
   const sourcing = sourcingState(context.task); sourcing.timing = sourcingFlow.pauseAutomaticTiming(sourcing.timing); sourcing.status = "paused_platform_verification"; sourcing.searchStrategy = strategy.type;
-  sourcing.activeJob = { jobId: text(job?.jobId), strategy: clone(strategy, null), status: "paused_platform_verification", diagnostics: boundedDiagnostics(job?.diagnostics) };
+  sourcing.activeJob = { jobId: text(job?.jobId), strategy: clone(strategy, null), status: "paused_platform_verification", diagnostics: boundedDiagnostics(job?.diagnostics), ...sourcingFlow.sourcingJobAudit(job) };
   automaticBatch.paused = true; automaticBatch.status = "paused_platform_verification"; automaticBatch.pauseReason = "1688平台要求人工验证"; persistQueue(); render(); setStatus("1688平台要求人工验证，整批已暂停；验证后点击恢复。", "bad");
   invalidateAutomaticRun(context.task, "platform_verification");
   return { status: "paused_platform_verification", jobId: text(job?.jobId) };
@@ -639,13 +642,13 @@ async function poll1688Job(context, jobId, strategy) {
     const stageRemainingMs = Math.min(15_000, verifySkuRemainingMs, detailRemainingMs);
     if (stageRemainingMs <= 0) { await safeCancel1688Job(jobId, context); return { status: "stage_timeout", diagnostics: { code: "stage_timeout", stage: "detail_or_sku", ...(detailIndex === null ? {} : { currentDetailIndex: detailIndex }) }, jobId }; }
     const requestTimeout = activeRequestTimeout(task, stageRemainingMs);
-    if (!requestTimeout) { await safeCancel1688Job(jobId, context); return automaticTimeoutResult(); }
+    if (!requestTimeout) { await safeCancel1688Job(jobId, context); return automaticTimeoutResult(jobId); }
     let job;
     try { job = await sourcingExtensionRequest("get_1688_job", { jobId }, requestTimeout, context.controller?.signal); }
     catch (error) {
       await safeCancel1688Job(jobId, context);
       if (!automaticContextCanAdvance(context)) return automaticContextStopResult(context, jobId);
-      if (timeExceeded(task)) return automaticTimeoutResult();
+      if (timeExceeded(task)) return automaticTimeoutResult(jobId);
       if (detailDeadlineMs !== null && Date.now() >= detailDeadlineMs) {
         return { status: "stage_timeout", diagnostics: { code: "stage_timeout", stage: "detail_or_sku", currentDetailIndex: detailIndex }, jobId };
       }
@@ -655,7 +658,7 @@ async function poll1688Job(context, jobId, strategy) {
       await safeCancel1688Job(jobId, context);
       return automaticContextStopResult(context, jobId);
     }
-    if (timeExceeded(task)) { await safeCancel1688Job(jobId, context); return automaticTimeoutResult(); }
+    if (timeExceeded(task)) { await safeCancel1688Job(jobId, context); return automaticTimeoutResult(jobId); }
     // A successful response can win the event loop race with its due timer.
     // Recheck the captured detail deadline before accepting any returned state.
     if (detailDeadlineMs !== null && Date.now() >= detailDeadlineMs) {
@@ -671,6 +674,7 @@ async function poll1688Job(context, jobId, strategy) {
       phaseStartedAt: text(job?.phaseStartedAt) || null,
       currentDetailIndex: Number.isInteger(job?.currentDetailIndex) && job.currentDetailIndex >= 0 ? job.currentDetailIndex : null,
       diagnostics: boundedDiagnostics(job?.diagnostics),
+      ...sourcingFlow.sourcingJobAudit(job),
       updatedAt: new Date().toISOString(),
     }; persistQueue(); render();
     if (job?.status === "paused_platform_verification") return { ...job, status: "paused_platform_verification", jobId };
@@ -752,9 +756,9 @@ async function run1688BridgeJob(context, strategy) {
     await safeCancel1688Job(jobId, context);
     return automaticContextStopResult(context, jobId);
   }
-  const jobId = text(started?.jobId); if (timeExceeded(context.task)) { await safeCancel1688Job(jobId, context); return automaticTimeoutResult(); }
+  const jobId = text(started?.jobId); if (timeExceeded(context.task)) { await safeCancel1688Job(jobId, context); return automaticTimeoutResult(jobId); }
   if (!jobId) return { status: "bridge_failed", diagnostics: { code: "missing_job_id" } };
-  const sourcing = sourcingState(context.task); sourcing.searchStrategy = strategy.type; sourcing.activeJob = { jobId, strategy: clone(strategy, null), status: text(started.status, "queued"), phase: text(started.phase, "queued"), updatedAt: new Date().toISOString() }; persistQueue(); render();
+  const sourcing = sourcingState(context.task); sourcing.searchStrategy = strategy.type; sourcing.activeJob = { jobId, strategy: clone(strategy, null), status: text(started.status, "queued"), phase: text(started.phase, "queued"), ...sourcingFlow.sourcingJobAudit(started), updatedAt: new Date().toISOString() }; persistQueue(); render();
   return poll1688Job(context, jobId, strategy);
 }
 async function runSearchStrategy(context, strategy) {
@@ -766,10 +770,10 @@ async function runSearchStrategy(context, strategy) {
   const progress = mergeJobCandidates(context.task, strategy, result);
   if (!sourcing.strategyCandidates?.[strategy.type]) {
     sourcing.strategyCandidates = object(sourcing.strategyCandidates) || {};
-    sourcing.strategyCandidates[strategy.type] = { lightweightCandidates: [], detailCandidates: [], query: text(strategy?.query) || null, jobId: text(result?.jobId) || null, updatedAt: new Date().toISOString() };
+    sourcing.strategyCandidates[strategy.type] = { lightweightCandidates: [], detailCandidates: [], query: text(strategy?.query) || null, jobId: text(result?.jobId) || null, ...sourcingFlow.sourcingJobAudit(result), updatedAt: new Date().toISOString() };
   }
   if (!["paused_platform_verification", "paused_manual", "cancelled", "stale"].includes(result.status)) {
-    recordSearchAttempt(context.task, strategy.type, { status: result.status === "completed" ? "completed" : result.status || "failed", usableCount: progress.usableCount, candidateCount: progress.lightweight.length, diagnostics: result.diagnostics, jobId: result.jobId, durationMs: Date.now() - startedAt });
+    recordSearchAttempt(context.task, strategy.type, { status: result.status === "completed" ? "completed" : result.status || "failed", usableCount: progress.usableCount, candidateCount: progress.lightweight.length, diagnostics: result.diagnostics, jobId: result.jobId, searchImageId: result.searchImageId, ...sourcingFlow.sourcingJobAudit({ ...sourcing.strategyCandidates[strategy.type], ...result }), durationMs: Date.now() - startedAt });
   }
   persistQueue(); render();
   if (result.status === "paused_platform_verification") return pauseForPlatformVerification(context, result, strategy);
@@ -802,7 +806,10 @@ async function runKeywordSearches(context) {
   }
   return last;
 }
-function similarSupplierImage(task) { return [...(task?.sourcing?.lightweightCandidates || []), ...(task?.sourcing?.detailCandidates || [])].map((candidate) => ({ candidate, imageUrl: text(candidate?.imageUrl) })).find((entry) => trusted1688Image(entry.imageUrl)) || null; }
+function similarSupplierImage(task) {
+  const pools = sourcingFlow.automaticCandidatePools(task?.sourcing);
+  return [...pools.lightweightCandidates, ...pools.detailCandidates].map((candidate) => ({ candidate, imageUrl: text(candidate?.imageUrl) })).find((entry) => trusted1688Image(entry.imageUrl)) || null;
+}
 function judgementCanContinue(judgement, candidate) {
   const assessment = (judgement?.candidateAssessments || []).find((entry) => text(entry?.candidateId) === text(candidate?.candidateId));
   return judgement?.verdict === "same_product" && judgement?.needsHumanReview === false && Number(judgement?.confidence) >= 85 && judgement?.bestCandidateId === candidate?.candidateId && assessment?.verdict === "same_product" && Number(assessment?.confidence) >= 85 && Array.isArray(assessment?.differences) && assessment.differences.length === 0;
@@ -911,8 +918,7 @@ async function runAutomatic1688Task(task, { mode = "single" } = {}) {
     sourcing.provider = "1688";
     sourcing.timing = sourcingFlow.resumeAutomaticTiming(sourcing.timing);
     sourcing.searchAttempts = Array.isArray(sourcing.searchAttempts) ? sourcing.searchAttempts : [];
-    sourcing.lightweightCandidates = Array.isArray(sourcing.lightweightCandidates) ? sourcing.lightweightCandidates : [];
-    sourcing.detailCandidates = Array.isArray(sourcing.detailCandidates) ? sourcing.detailCandidates : [];
+    Object.assign(sourcing, sourcingFlow.automaticCandidatePools(sourcing));
     sourcing.rejectedCandidateIds = Array.isArray(sourcing.rejectedCandidateIds) ? sourcing.rejectedCandidateIds : [];
     persistQueue(); render();
     const resumedStrategy = activeSearchStrategy(task);

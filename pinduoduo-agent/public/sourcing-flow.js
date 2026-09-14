@@ -21,6 +21,24 @@ export const AUTOMATIC_1688_LIMITS = Object.freeze({
   totalActiveMs: 150_000,
 });
 
+/** Retains only the bounded search identity needed to audit an extension job. */
+export function sourcingJobAudit(job = {}) {
+  const searchImageId = typeof job?.searchImageId === "string" ? job.searchImageId.trim() : "";
+  const audit = { searchImageId: /^\d{1,100}$/.test(searchImageId) ? searchImageId : null };
+  if (/^\d{1,3}(?:\.\d{1,3}){2,3}$/.test(job.extensionVersion || "")) audit.extensionVersion = job.extensionVersion;
+  const upload = job.uploadDiagnostics;
+  if (upload && /^[a-z_]{1,40}$/.test(upload.stage || "")) audit.uploadDiagnostics = {
+    stage: upload.stage,
+    mimeType: /^image\/(jpeg|png|webp|gif)$/.test(upload.mimeType || "") ? upload.mimeType : "",
+    byteLength: Math.max(0, Math.min(Number(upload.byteLength) || 0, 15 * 1024 * 1024)),
+    selectedFileCount: Math.max(0, Math.min(Number(upload.selectedFileCount) || 0, 1)),
+    changeDispatched: upload.changeDispatched === true,
+    previewConfirmed: upload.previewConfirmed === true,
+    searchSubmitted: upload.searchSubmitted === true,
+  };
+  return audit;
+}
+
 function attemptsFrom(task) {
   return Array.isArray(task?.searchAttempts) ? task.searchAttempts : [];
 }
@@ -280,6 +298,25 @@ export function mergeAutomaticCandidates(existing = [], incoming = []) {
     .sort((left, right) => right.score - left.score || left.order - right.order)
     .slice(0, AUTOMATIC_1688_LIMITS.maxLightweightCandidates)
     .map((entry) => entry.candidate);
+}
+
+/** Rebuilds active pools from completed jobs; progress remains diagnostic only. */
+export function automaticCandidatePools(sourcing = {}) {
+  let lightweightCandidates = [], detailCandidates = [];
+  for (const strategy of ["image", "keyword", "similar_supplier"]) {
+    const record = sourcing?.strategyCandidates?.[strategy];
+    if (!record || !record.jobId) continue;
+    const attempt = (Array.isArray(sourcing.searchAttempts) ? sourcing.searchAttempts : [])
+      .filter((entry) => entry?.strategy === strategy).at(-1);
+    // Older exports lack a record status. Require a matching completed attempt
+    // before allowing their retained candidates back into an automatic run.
+    const status = record.status || (attempt?.jobId === record.jobId ? attempt.status : "");
+    if (status !== "completed") continue;
+    lightweightCandidates = mergeAutomaticCandidates(lightweightCandidates, record.lightweightCandidates);
+    detailCandidates = mergeAutomaticCandidates(detailCandidates, record.detailCandidates)
+      .slice(0, AUTOMATIC_1688_LIMITS.maxDetailCandidates);
+  }
+  return { lightweightCandidates, detailCandidates };
 }
 
 /** Keeps the extension's five-detail limit defensively true at the page boundary. */

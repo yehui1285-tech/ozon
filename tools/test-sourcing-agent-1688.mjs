@@ -21,7 +21,14 @@ import {
   promoteNextCandidate,
   quoteAutomaticSingleUnit,
   resumeAutomaticTiming,
+  sourcingJobAudit,
 } from "../pinduoduo-agent/public/sourcing-flow.js";
+
+const agentAppSource = fs.readFileSync(new URL("../pinduoduo-agent/public/app.js", import.meta.url), "utf8");
+assert.ok((agentAppSource.match(/sourcingJobAudit\(/g) || []).length >= 6,
+  "all persisted strategy, active-job, paused-job, and attempt records must apply the bounded job audit mapping");
+assert.match(agentAppSource, /recordSearchAttempt[\s\S]{0,2500}searchImageId:\s*result\.searchImageId/,
+  "the terminal extension result imageId must reach the durable search-attempt record");
 
 assert.equal(nextAutomaticAction({ searchAttempts: [] }).type, "start_image_search");
 assert.equal(nextAutomaticAction({ searchAttempts: [{ strategy: "image", usableCount: 0 }] }).type, "generate_keywords");
@@ -33,6 +40,17 @@ assert.equal(nextAutomaticAction({ finalConfirmation: { status: "final_confirmat
 assert.equal(nextAutomaticAction({ status: "paused_platform_verification", searchAttempts: [] }).type, "pause_platform_verification",
   "platform verification pauses the whole persisted sequence before any new search is started");
 assert.equal(promoteNextCandidate([{ candidateId: "a" }, { candidateId: "b" }], ["a"]).candidateId, "b");
+assert.deepEqual(sourcingJobAudit({ searchImageId: "222" }), { searchImageId: "222" },
+  "the Agent task record must retain the numeric 1688 imageId returned by the extension");
+assert.deepEqual(sourcingJobAudit({ searchImageId: "222<script>" }), { searchImageId: null },
+  "untrusted image-search identifiers must not enter the persisted Agent queue");
+assert.deepEqual(sourcingJobAudit({ searchImageId: "222", extensionVersion: "0.6.37", uploadDiagnostics: {
+  stage: "preview_submitted", mimeType: "image/jpeg", byteLength: 3, selectedFileCount: 1,
+  changeDispatched: true, previewConfirmed: true, searchSubmitted: true, token: "must-not-persist",
+} }), { searchImageId: "222", extensionVersion: "0.6.37", uploadDiagnostics: {
+  stage: "preview_submitted", mimeType: "image/jpeg", byteLength: 3, selectedFileCount: 1,
+  changeDispatched: true, previewConfirmed: true, searchSubmitted: true,
+} }, "exported audit must retain upload progress and version while excluding arbitrary fields");
 
 const automaticCandidateFixture = (id) => ({
   provider: "1688",
@@ -63,7 +81,12 @@ const legacyMvp53Task = {
   taskId: "ozon-legacy-1",
   status: "pending_human_review",
   history: [{ stage: "mvp5.3", result: "kept" }],
-  sourcing: { searchCandidates: [{ candidateId: "legacy-candidate" }], legacyResult: { selected: true } },
+  sourcing: {
+    searchCandidates: [{ candidateId: "legacy-candidate" }],
+    searchAttempts: [{ strategy: "image", searchImageId: "222" }],
+    strategyCandidates: { image: { searchImageId: "222" } },
+    legacyResult: { selected: true },
+  },
   pricing: { purchaseCost: 12.34, sourceUrl: "https://mobile.yangkeduo.com/goods.html?goods_id=1" },
 };
 const legacyMvp53Saved = { queue: { meta: { pinduoduoBatch: { cursor: 2 }, preservedFlag: "yes" }, tasks: [legacyMvp53Task] }, sourceName: "mvp53.json" };
@@ -74,6 +97,9 @@ assert.equal(migratedMvp6Saved.saved.queue.meta.sourcingSchema, "mvp6");
 assert.deepEqual(migratedMvp6Saved.saved.queue.meta.pinduoduoBatch, { cursor: 2 }, "migration must retain legacy batch recovery data");
 assert.equal(migratedMvp6Saved.saved.queue.tasks[0].history[0].result, "kept", "migration must retain MVP 5.3 history");
 assert.equal(migratedMvp6Saved.saved.queue.tasks[0].sourcing.legacyResult.selected, true, "migration must retain historical candidates and manual decisions");
+assert.equal(migratedMvp6Saved.saved.queue.tasks[0].sourcing.searchAttempts[0].searchImageId, "222",
+  "queue migration and export-compatible task JSON must retain the 1688 image-search audit identity");
+assert.equal(migratedMvp6Saved.saved.queue.tasks[0].sourcing.strategyCandidates.image.searchImageId, "222");
 assert.deepEqual(migratedMvp6Saved.saved.queue.meta.singleUnitExceptions, {});
 
 // A persisted queue is an authority boundary: an invalid task object or a

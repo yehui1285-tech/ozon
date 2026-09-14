@@ -18,24 +18,46 @@
   }
 
   function visibleNodeSnapshot(rootNode = document) {
-    return [...rootNode.querySelectorAll("a,img,button,[role='button'],[aria-selected],[aria-checked],[data-offer-id]")]
+    return [...rootNode.querySelectorAll("a,img,button,[role='button'],[aria-selected],[aria-checked],[data-offer-id],[data-offer-expose-id]")]
       .filter((node) => node.getClientRects().length > 0)
       .slice(0, 2000)
+      .map((node) => {
+        const productAnchor = node.querySelector?.("a[href*='detail.m.1688.com/page/index.html'], a[href*='detail.1688.com/offer/']");
+        const productImage = node.querySelector?.("img");
+        return {
+          text: String(node.innerText || node.alt || "").replace(/\s+/g, " ").trim().slice(0, 500),
+          href: node.href || productAnchor?.href || "",
+          imageUrl: node.currentSrc || node.src || productImage?.currentSrc || productImage?.src || "",
+          ariaLabel: node.getAttribute("aria-label") || "",
+          data: { offerId: node.getAttribute("data-offer-id") || node.getAttribute("data-offer-expose-id") || "" },
+          visible: true,
+        };
+      });
+  }
+
+  function visibleControlSnapshot() {
+    return [...document.querySelectorAll("input,button,form")]
+      .slice(0, 200)
       .map((node) => ({
-        text: String(node.innerText || node.alt || "").replace(/\s+/g, " ").trim().slice(0, 500),
-        href: node.href || "",
-        imageUrl: node.currentSrc || node.src || "",
-        ariaLabel: node.getAttribute("aria-label") || "",
-        data: { offerId: node.getAttribute("data-offer-id") || "" },
-        visible: true,
+        tag: clean(node.tagName || "input").toLowerCase(),
+        id: clean(node.id || node.getAttribute?.("id")).slice(0, 120),
+        type: clean(node.type || node.getAttribute?.("type")).toLowerCase().slice(0, 40),
+        name: clean(node.name || node.getAttribute?.("name")).slice(0, 120),
+        placeholder: clean(node.placeholder || node.getAttribute?.("placeholder")).slice(0, 200),
+        role: clean(node.getAttribute?.("role")).slice(0, 80),
+        visible: node.getClientRects?.().length > 0,
       }));
+  }
+
+  function unsafeOwnNode(node) {
+    const fields = ["id", "name", "title", "value", "placeholder", "href", "aria-label", "action"];
+    return UNSAFE_SEMANTICS.test(`${node?.innerText || ""} ${fields.map((field) => node?.getAttribute?.(field) || "").join(" ")}`);
   }
 
   function unsafeNode(node) {
     let current = node;
     while (current) {
-      const fields = ["id", "name", "title", "value", "placeholder", "href", "aria-label", "action"];
-      if (UNSAFE_SEMANTICS.test(`${current.innerText || ""} ${fields.map((field) => current.getAttribute?.(field) || "").join(" ")}`)) return true;
+      if (unsafeOwnNode(current)) return true;
       if (current === document.documentElement || current.getAttribute?.("data-1688-safe-container") === "true") break;
       current = current.parentElement;
     }
@@ -51,14 +73,14 @@
 
   function verifiedSearchControl() {
     const input = [...document.querySelectorAll("input[type='search'][data-1688-keyword-search], input[type='search'][name='keywords'], input#alisearch-input[name='keywords']")]
-      .find((node) => node.getClientRects().length > 0 && (node.id !== "alisearch-input" || node.type === "text") && !unsafeNode(node));
+      .find((node) => node.getClientRects().length > 0 && (node.id !== "alisearch-input" || node.type === "text") && !unsafeOwnNode(node));
     if (!input) throw new Error("未找到已识别的关键词输入框。");
     const form = input.closest("form");
     let button = form && [...form.querySelectorAll("button[type='submit'], [role='button'][data-1688-keyword-submit]")]
-      .find((node) => node.getClientRects().length > 0 && !unsafeNode(node));
+      .find((node) => node.getClientRects().length > 0 && !unsafeOwnNode(node));
     if (!button && form?.id === "alisearch-from") {
       button = [...form.querySelectorAll(".ali-search-box > .input-button")]
-        .find((node) => node.getClientRects().length > 0 && clean(node.innerText).replace(/\s+/g, "") === "搜索" && !unsafeNode(node));
+        .find((node) => node.getClientRects().length > 0 && clean(node.innerText).replace(/\s+/g, "") === "搜索" && !unsafeOwnNode(node));
     }
     if (!button) throw new Error("未找到已识别的搜索控件。");
     return { input, button };
@@ -77,7 +99,7 @@
       visible: true,
       data: { searchStatus: "empty" },
     });
-    return { pageUrl: location.href, title: document.title, capturedAt: new Date().toISOString(), nodes };
+    return { pageUrl: location.href, title: document.title, capturedAt: new Date().toISOString(), nodes, controls: visibleControlSnapshot() };
   }
 
   async function submitImageSearch(payload = {}) {
@@ -91,12 +113,71 @@
     for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
     if (!bytes.byteLength || bytes.byteLength > 15 * 1024 * 1024) throw new Error("图片搜索数据无效。");
     const input = verifiedUploadInput();
+    const initialUrl = location.href;
+    const expectedPreview = `data:${mimeType};base64,${imageBase64}`;
+    const previousPreview = [...document.querySelectorAll(".copy-image-container")]
+      .some((node) => node.getClientRects().length > 0 && node.querySelector("img")?.src === expectedPreview);
+    const uploadDiagnostics = {
+      stage: "assigning_file", mimeType, byteLength: bytes.byteLength,
+      selectedFileCount: 0, changeDispatched: false, previewConfirmed: false, searchSubmitted: false,
+    };
     const transfer = new DataTransfer();
     transfer.items.add(new File([bytes], "ozon-image", { type: mimeType }));
     input.files = transfer.files;
+    uploadDiagnostics.selectedFileCount = input.files?.length || 0;
+    if (uploadDiagnostics.selectedFileCount !== 1) {
+      const error = new Error("图片文件未稳定写入上传控件。");
+      error.uploadDiagnostics = uploadDiagnostics;
+      throw error;
+    }
     input.dispatchEvent(new Event("input", { bubbles: true }));
     input.dispatchEvent(new Event("change", { bubbles: true }));
-    return { accepted: true };
+    uploadDiagnostics.changeDispatched = true;
+    uploadDiagnostics.stage = "awaiting_preview";
+    // The current 1688 uploader first prepares IDs and a matching preview.
+    // A file change alone does not submit the search. Never click an old
+    // preview for the same image until the new upload has shown a transition.
+    let sawTransition = !previousPreview, previousButton = null;
+    const deadline = Date.now() + 25_000;
+    while (Date.now() < deadline) {
+      if (location.href !== initialUrl) {
+        const next = new URL(location.href), before = new URL(initialUrl);
+        const imageId = next.searchParams.get("imageId") || "";
+        if (next.protocol === "https:" && next.hostname === "air.1688.com"
+          && next.pathname === "/kapp/1688-search/pc-image-search/"
+          && /^\d{1,100}$/.test(imageId) && imageId !== before.searchParams.get("imageId")) {
+          uploadDiagnostics.stage = "page_transition";
+          return { accepted: true, uploadDiagnostics };
+        }
+        uploadDiagnostics.stage = "unexpected_page_transition";
+        const error = new Error("上传期间页面发生未绑定本次图片的跳转。");
+        error.uploadDiagnostics = uploadDiagnostics;
+        throw error;
+      }
+      const previews = [...document.querySelectorAll(".copy-image-container")]
+        .filter((node) => node.getClientRects().length > 0);
+      const uploading = document.querySelectorAll(".image-upload-button-loading").length > 0
+        || previews.some((node) => /上传中/.test(clean(node.innerText)));
+      if (!previews.some((node) => node.querySelector("img")?.src === expectedPreview) || uploading) sawTransition = true;
+      const matches = previews.filter((node) => node.querySelector("img")?.src === expectedPreview && !unsafeOwnNode(node))
+        .flatMap((node) => [...node.querySelectorAll(".search-btn")])
+        .filter((node) => node?.getClientRects().length > 0);
+      const button = !uploading && matches.length === 1 && sawTransition
+        && clean(matches[0].innerText) === "搜索图片" && !unsafeOwnNode(matches[0]) ? matches[0] : null;
+      if (button && button === previousButton) {
+        uploadDiagnostics.previewConfirmed = true;
+        uploadDiagnostics.stage = "submitting_preview";
+        button.click();
+        uploadDiagnostics.searchSubmitted = true;
+        uploadDiagnostics.stage = "preview_submitted";
+        return { accepted: true, uploadDiagnostics };
+      }
+      previousButton = button;
+      await sleep(50);
+    }
+    const error = new Error("图片已选入，但未出现与本次主图匹配的可提交搜索预览。");
+    error.uploadDiagnostics = uploadDiagnostics;
+    throw error;
   }
 
   function submitKeywordSearch(payload = {}) {
@@ -172,7 +253,7 @@
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type !== "OZON_1688_PAGE_COMMAND_V1") return false;
-    handleCommand(message).then((result) => sendResponse({ ok: true, result })).catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
+    handleCommand(message).then((result) => sendResponse({ ok: true, result })).catch((error) => sendResponse({ ok: false, error: error.message || String(error), ...(error.uploadDiagnostics ? { uploadDiagnostics: error.uploadDiagnostics } : {}) }));
     return true;
   });
 

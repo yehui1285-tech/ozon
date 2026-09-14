@@ -5,7 +5,7 @@ import vm from "node:vm";
 
 const manifest = JSON.parse(fs.readFileSync(new URL("../ozon-erp-collector-extension/manifest.json", import.meta.url), "utf8"));
 const packageJson = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
-assert.equal(manifest.version, "0.6.30");
+assert.equal(manifest.version, "0.6.37");
 const popupHtml = fs.readFileSync(new URL("../ozon-erp-collector-extension/popup.html", import.meta.url), "utf8");
 const enrichmentHtml = fs.readFileSync(new URL("../ozon-erp-collector-extension/sourcing-enrichment.html", import.meta.url), "utf8");
 const popupVersion = popupHtml.match(/<span class="version">\s*v([0-9.]+)\s*<\/span>/i)?.[1];
@@ -152,6 +152,16 @@ const coreSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/1688
 const driverSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/1688-background.js", import.meta.url), "utf8");
 const contentSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/1688-content.js", import.meta.url), "utf8");
 const searchFixture = JSON.parse(fs.readFileSync(new URL("./fixtures/1688-search-snapshot.json", import.meta.url), "utf8"));
+const boundSearchFixture = {
+  ...searchFixture,
+  pageUrl: "https://air.1688.com/kapp/1688-search/pc-image-search/?tab=imageSearch&imageId=200&imageIdList=200",
+};
+const blankImageSearchProbe = {
+  ...searchFixture,
+  pageUrl: "https://air.1688.com/kapp/1688-search/pc-image-search/",
+  title: "1688 图片搜索",
+  nodes: [],
+};
 const detailFixture = JSON.parse(fs.readFileSync(new URL("./fixtures/1688-detail-snapshot.json", import.meta.url), "utf8"));
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
@@ -181,7 +191,7 @@ function response({ ok = true, contentType = "image/jpeg", bytes = new Uint8Arra
   };
 }
 
-function createDriver({ probe = searchFixture, search = searchFixture, detail = detailFixture, imageResponse, commandDelay = null, commandDelayMs = 5, captureDataUrl = "data:image/jpeg;base64,AQID", storageSeed = null, sessionSeed = null, browserState = null, existingTabs = null, taskTabActive = true, fetchDelay = 0, createDelay = 0, removeDelay = 0 } = {}) {
+function createDriver({ probe = blankImageSearchProbe, search = boundSearchFixture, detail = detailFixture, imageResponse, uploadResult = null, commandDelay = null, commandDelayMs = 5, commandError = null, captureDataUrl = "data:image/jpeg;base64,AQID", storageSeed = null, sessionSeed = null, browserState = null, existingTabs = null, taskTabActive = true, fetchDelay = 0, createDelay = 0, removeDelay = 0 } = {}) {
   const storageData = storageSeed || {};
   const calls = [];
   const browser = browserState || { nextTabId: 100, tabs: new Map() };
@@ -198,7 +208,7 @@ function createDriver({ probe = searchFixture, search = searchFixture, detail = 
       local: storageArea(storageData, calls),
       ...(sessionSeed ? { session: storageArea(sessionSeed, calls) } : {}),
     },
-    runtime: { onMessage: { addListener: (listener) => listeners.messages.push(listener) } },
+    runtime: { getManifest: () => ({ version: "0.6.37" }), onMessage: { addListener: (listener) => listeners.messages.push(listener) } },
     tabs: {
       async query() { return []; },
       async create(args) {
@@ -234,11 +244,13 @@ function createDriver({ probe = searchFixture, search = searchFixture, detail = 
         calls.push({ tabId, message });
         const delay = typeof commandDelay === "function" ? commandDelay(message.command, tabId) : commandDelay === message.command ? commandDelayMs : 0;
         if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+        const forcedError = typeof commandError === "function" ? commandError(message.command, tabId) : commandError?.[message.command];
+        if (forcedError) return { ok: false, error: forcedError, ...(uploadResult || {}) };
         const result = message.command === "probe" ? (tab.url.startsWith("https://detail.1688.com/") ? { ...detailFixture, pageUrl: tab.url } : probe)
           : message.command === "read_search_results" ? (typeof search === "function" ? search(++searchReadCount) : search)
             : message.command === "read_product_detail" ? detail
               : message.command === "select_sku_option" ? { selected: true }
-                : { accepted: true };
+                : message.command === "submit_image_search" && uploadResult ? uploadResult : { accepted: true };
         return { ok: true, result };
       },
     },
@@ -261,6 +273,15 @@ const validImageRequest = { requestId: "lifecycle", sku: "1001", strategy: { typ
 const waitForDriver = () => new Promise((resolve) => setTimeout(resolve, 300));
 async function waitForJobStatus(api, jobId, status) {
   for (let attempt = 0; attempt < 30; attempt += 1) {
+    const job = await api.getJob(jobId);
+    if (job?.status === status) return job;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`Timed out waiting for ${jobId} to reach ${status}`);
+}
+
+async function waitForSlowJobStatus(api, jobId, status) {
+  for (let attempt = 0; attempt < 600; attempt += 1) {
     const job = await api.getJob(jobId);
     if (job?.status === status) return job;
     await new Promise((resolve) => setTimeout(resolve, 25));
@@ -310,6 +331,77 @@ assert.equal(queued.status, "queued");
 await waitForDriver();
 const completed = await successful.api.getJob(queued.jobId);
 assert.equal(completed.status, "completed");
+assert.equal(completed.searchImageId, "200",
+  "a fresh image-search tab must retain the imageId issued for the current upload");
+const uploadAuditFixture = { stage: "preview_submitted", mimeType: "image/jpeg", byteLength: 3,
+  selectedFileCount: 1, changeDispatched: true, previewConfirmed: true, searchSubmitted: true };
+const auditedDriver = createDriver({ uploadResult: { accepted: true, uploadDiagnostics: { ...uploadAuditFixture, token: "must-not-persist" } } });
+const auditedQueued = await auditedDriver.api.startJob({ ...validImageRequest, requestId: "upload-audit" });
+await waitForDriver();
+const auditedCompleted = await auditedDriver.api.getJob(auditedQueued.jobId);
+assert.equal(auditedCompleted.status, "completed");
+assert.equal(auditedCompleted.extensionVersion, "0.6.37");
+assert.deepEqual(plain(auditedCompleted.uploadDiagnostics), uploadAuditFixture);
+const uploadFailedDriver = createDriver({ commandError: { submit_image_search: "preview missing" },
+  uploadResult: { uploadDiagnostics: { ...uploadAuditFixture, stage: "awaiting_preview", previewConfirmed: false, searchSubmitted: false } } });
+const uploadFailedQueued = await uploadFailedDriver.api.startJob({ ...validImageRequest, requestId: "upload-failure-audit" });
+await waitForDriver();
+const uploadFailed = await uploadFailedDriver.api.getJob(uploadFailedQueued.jobId);
+assert.equal(uploadFailed.status, "failed");
+assert.equal(uploadFailed.uploadDiagnostics.stage, "awaiting_preview");
+assert.equal(uploadFailed.uploadDiagnostics.searchSubmitted, false);
+assert.deepEqual(plain(successful.api.__test.searchPageDiagnostics({
+  pageUrl: "https://air.1688.com/kapp/1688-search/pc-image-search/?tab=imageSearch&imageId=777&token=must-not-leak#secret",
+  title: "1688 图片搜索",
+  nodes: [{
+    href: "https://detail.1688.com/offer/7001.html?spm=must-not-leak#secret",
+    text: "候选一 ¥10",
+    imageUrl: "https://cbu01.alicdn.com/private-image.jpg?token=must-not-leak",
+    visible: true,
+  }, {
+    href: "https://login.1688.com/member/signin.htm?token=must-not-leak",
+    text: "登录",
+    imageUrl: "",
+    visible: true,
+  }, {
+    href: "",
+    text: "候选二 ¥20",
+    imageUrl: "",
+    visible: true,
+    data: { offerId: "7002" },
+  }],
+})), {
+  pageHost: "air.1688.com",
+  pagePath: "/kapp/1688-search/pc-image-search/",
+  pageTitle: "1688 图片搜索",
+  searchImageId: "777",
+  candidateCount: 2,
+  visibleNodeCount: 3,
+  canonicalOfferHrefCount: 1,
+  numericOfferIdNodeCount: 1,
+  explicitEmpty: false,
+}, "live diagnostics must identify the failed page without persisting arbitrary query parameters");
+const boundedPageDiagnostics = plain(successful.api.__test.searchPageDiagnostics({
+  pageUrl: "https://s.1688.com/selloffer/offer_search.html?token=must-not-leak",
+  title: "诊断上限",
+  nodes: [],
+  controls: Array.from({ length: 80 }, (_, index) => ({
+    tag: "input",
+    id: `input-${index}-${"i".repeat(120)}`,
+    type: "text",
+    name: `name-${index}-${"n".repeat(120)}`,
+    placeholder: `placeholder-${index}-${"p".repeat(200)}`,
+    role: `role-${"r".repeat(80)}`,
+    visible: true,
+    value: "must-not-leak",
+  })),
+}));
+assert.ok(JSON.stringify(boundedPageDiagnostics).length <= 4_000,
+  "live page diagnostics must remain below the Agent persistence ceiling");
+assert.equal(boundedPageDiagnostics.controls.length, 8,
+  "only the first bounded control summaries are needed to identify a changed search form");
+assert.doesNotMatch(JSON.stringify(boundedPageDiagnostics), /must-not-leak/,
+  "diagnostics must omit query parameters and control values even at the size boundary");
 assert.equal(successful.calls.find((call) => call.create)?.create.url,
   "https://air.1688.com/kapp/1688-search/pc-image-search/",
   "image sourcing must open the verified 1688 image-search page that exposes the upload control");
@@ -336,7 +428,7 @@ assert.equal(similarRouteDriver.calls.find((call) => call.create)?.create.url,
   "https://air.1688.com/kapp/1688-search/pc-image-search/",
   "similar-supplier sourcing must use the same verified image-search entry");
 
-const keywordRouteDriver = createDriver();
+const keywordRouteDriver = createDriver({ search: searchFixture });
 const keywordRouteQueued = await keywordRouteDriver.api.startJob({
   requestId: "keyword-route",
   sku: "1001",
@@ -348,9 +440,38 @@ assert.equal(keywordRouteDriver.calls.find((call) => call.create)?.create.url,
   "https://s.1688.com/selloffer/offer_search.html",
   "keyword sourcing must open the final 1688 search URL without losing tab ownership during an entry redirect");
 
+const missingKeywordControlPage = {
+  pageUrl: "https://s.1688.com/selloffer/offer_search.html?token=must-not-leak",
+  title: "1688 搜索",
+  nodes: [],
+};
+const missingKeywordControlDriver = createDriver({
+  probe: missingKeywordControlPage,
+  commandError: { submit_keyword_search: "未找到已识别的关键词输入框。" },
+});
+const missingKeywordControlQueued = await missingKeywordControlDriver.api.startJob({
+  requestId: "missing-keyword-control-diagnostics",
+  sku: "1001",
+  strategy: { type: "keyword", query: "扳手套装" },
+});
+const missingKeywordControlFailed = await waitForJobStatus(missingKeywordControlDriver.api, missingKeywordControlQueued.jobId, "failed");
+assert.deepEqual(plain(missingKeywordControlFailed.diagnostics), {
+  code: "driver_error",
+  message: "未找到已识别的关键词输入框。",
+  pageHost: "s.1688.com",
+  pagePath: "/selloffer/offer_search.html",
+  pageTitle: "1688 搜索",
+  searchImageId: null,
+  candidateCount: 0,
+  visibleNodeCount: 0,
+  canonicalOfferHrefCount: 0,
+  numericOfferIdNodeCount: 0,
+  explicitEmpty: false,
+}, "a failed live page command must retain a bounded sanitized page diagnosis");
+
 const loadingSearchSnapshot = { pageUrl: "https://air.1688.com/kapp/1688-search/pc-image-search/", title: "正在识图", nodes: [] };
 const delayedSearchDriver = createDriver({
-  search: (readCount) => readCount < 4 ? loadingSearchSnapshot : searchFixture,
+  search: (readCount) => readCount < 4 ? loadingSearchSnapshot : boundSearchFixture,
 });
 const delayedSearchQueued = await delayedSearchDriver.api.startJob({ ...validImageRequest, requestId: "delayed-search-results" });
 await waitForDriver();
@@ -360,8 +481,89 @@ assert.equal(delayedSearchCompleted.status, "completed",
 assert.ok(delayedSearchCompleted.candidates.length > 0,
   "image sourcing must wait for real candidates instead of treating an unchanged loading page as an empty result");
 
+const unboundImageResult = {
+  pageUrl: "https://air.1688.com/kapp/1688-search/pc-image-search/?imageId=888&token=must-not-leak",
+  title: "识图结果加载异常",
+  nodes: [],
+};
+const unboundImageDriver = createDriver({ search: unboundImageResult });
+const unboundImageQueued = await unboundImageDriver.api.startJob({
+  ...validImageRequest,
+  requestId: "unbound-image-result-diagnostics",
+});
+const unboundImageFailed = await waitForSlowJobStatus(unboundImageDriver.api, unboundImageQueued.jobId, "failed");
+assert.deepEqual(plain(unboundImageFailed.diagnostics), {
+  code: "driver_error",
+  message: "搜索结果未稳定",
+  pageHost: "air.1688.com",
+  pagePath: "/kapp/1688-search/pc-image-search/",
+  pageTitle: "识图结果加载异常",
+  searchImageId: "888",
+  candidateCount: 0,
+  visibleNodeCount: 0,
+  canonicalOfferHrefCount: 0,
+  numericOfferIdNodeCount: 0,
+  explicitEmpty: false,
+}, "an image-result timeout must retain the final observed page rather than the pre-upload probe");
+
+const staleImageResultUrl = "https://air.1688.com/kapp/1688-search/pc-image-search/?tab=imageSearch&imageId=111&imageIdList=111";
+const freshImageResultUrl = "https://air.1688.com/kapp/1688-search/pc-image-search/?tab=imageSearch&imageId=222&imageIdList=222";
+const stalePageFurniture = Array.from({ length: 13 }, (_, index) => ({
+  text: `页面控件${index + 1}`,
+  href: "",
+  imageUrl: "",
+  visible: true,
+}));
+const staleImageSearch = {
+  ...searchFixture,
+  pageUrl: staleImageResultUrl,
+  nodes: [...stalePageFurniture, {
+    ...searchFixture.nodes[0],
+    text: "上一张图片的错误候选 ¥16.00 运费10元 1件起批",
+    href: "https://detail.1688.com/offer/911111111111.html",
+  }],
+};
+const freshImageSearch = {
+  ...searchFixture,
+  pageUrl: freshImageResultUrl,
+  nodes: [{ ...stalePageFurniture[0], text: "上传完成" }, ...stalePageFurniture.slice(1), {
+    ...searchFixture.nodes[0],
+    text: "本次图片的正确候选 ¥18.00 运费5元 1件起批",
+    href: "https://detail.1688.com/offer/922222222222.html",
+  }],
+};
+const freshImageIdWithStaleCandidates = {
+  ...staleImageSearch,
+  pageUrl: freshImageResultUrl,
+  nodes: [
+    { ...stalePageFurniture[0], text: "上传完成" },
+    ...staleImageSearch.nodes.slice(1),
+    {
+      ...searchFixture.nodes[0],
+      href: "https://detail.1688.com/offer/933333333333.html",
+      text: "新增但不允许保存的页面动作 ¥9.00 1件起批",
+      data: { ...searchFixture.nodes[0].data, title: "立即购买" },
+    },
+  ],
+};
+const staleThenFreshDriver = createDriver({
+  probe: staleImageSearch,
+  search: (readCount) => readCount < 3 ? freshImageIdWithStaleCandidates : freshImageSearch,
+});
+const staleThenFreshQueued = await staleThenFreshDriver.api.startJob({
+  ...validImageRequest,
+  requestId: "fresh-image-result-binding",
+});
+await waitForDriver();
+const staleThenFreshCompleted = await staleThenFreshDriver.api.getJob(staleThenFreshQueued.jobId);
+assert.equal(staleThenFreshCompleted.status, "completed");
+assert.equal(staleThenFreshCompleted.searchImageId, "222",
+  "image sourcing must bind candidates to a new imageId created after the current upload");
+assert.equal(staleThenFreshCompleted.candidates[0].sourceUrl, "https://detail.1688.com/offer/922222222222.html",
+  "image sourcing must not accept candidates that still belong to the previous imageId");
+
 const explicitEmptySearch = {
-  pageUrl: "https://air.1688.com/kapp/1688-search/pc-image-search/",
+  pageUrl: "https://air.1688.com/kapp/1688-search/pc-image-search/?tab=imageSearch&imageId=201&imageIdList=201",
   title: "批发_供应_阿里巴巴",
   nodes: [{ text: "哎呦喂，这里空空如也～", href: "", imageUrl: "", visible: true }],
 };
@@ -372,6 +574,29 @@ const explicitEmptyCompleted = await explicitEmptyDriver.api.getJob(explicitEmpt
 assert.equal(explicitEmptyCompleted.status, "failed",
   "an explicit 1688 empty-result state must finish promptly instead of waiting until the result deadline");
 assert.equal(explicitEmptyCompleted.diagnostics?.code, "search_parser_failed");
+assert.equal(explicitEmptyCompleted.searchImageId, "201",
+  "an explicit empty result must retain the current upload imageId for audit and diagnosis");
+
+const explicitEmptyWithoutIdSearch = {
+  pageUrl: "https://air.1688.com/kapp/1688-search/pc-image-search/",
+  title: "批发_供应_阿里巴巴",
+  nodes: [{ text: "哎呦喂，这里空空如也～", href: "", imageUrl: "", visible: true }],
+};
+const explicitEmptyWithoutIdDriver = createDriver({
+  probe: blankImageSearchProbe,
+  search: explicitEmptyWithoutIdSearch,
+});
+const explicitEmptyWithoutIdQueued = await explicitEmptyWithoutIdDriver.api.startJob({
+  ...validImageRequest,
+  requestId: "explicit-empty-without-image-id",
+});
+const explicitEmptyWithoutIdFailed = await waitForSlowJobStatus(explicitEmptyWithoutIdDriver.api, explicitEmptyWithoutIdQueued.jobId, "failed");
+assert.equal(explicitEmptyWithoutIdFailed.diagnostics?.code, "search_parser_failed",
+  "a newly appeared explicit-empty result may safely fall through without accepting any candidate when 1688 omits imageId");
+assert.equal(explicitEmptyWithoutIdFailed.diagnostics?.emptyResultBinding, "fresh_transition_without_image_id");
+assert.equal(explicitEmptyWithoutIdFailed.searchImageId, null);
+assert.equal(explicitEmptyWithoutIdFailed.candidates.length, 0,
+  "the no-imageId exception must never authorize candidate acceptance");
 
 const postUploadVerificationDriver = createDriver({
   probe: searchFixture,
@@ -630,22 +855,33 @@ await new Promise((resolve) => setTimeout(resolve, 600));
 assert.equal(delayedFinallyDriver.storageData.ozon1688ActiveJobV1?.jobId, delayedSuccessor.jobId, "an old finally must not clear the successor ACTIVE pointer");
 assert.deepEqual(plain(await delayedFinallyDriver.api.getJob(delayedOriginal.jobId)), plain(delayedTerminal), "an old finally must not overwrite the duplicate generation");
 
-const failedDriver = createDriver({
-  search: {
-    pageUrl: "https://s.1688.com/",
-    title: "不安全候选",
-    nodes: [{
-      ...searchFixture.nodes[0],
-      href: "https://detail.1688.com/offer/900000000001.html",
-      text: "安全候选 ¥10 1件起批",
-      data: { ...searchFixture.nodes[0].data, title: "立即购买" },
-    }],
-  },
-});
-const failedQueued = await failedDriver.api.startJob({ ...validImageRequest, requestId: "parser" });
-const failed = await waitForJobStatus(failedDriver.api, failedQueued.jobId, "failed");
-assert.equal(failed.status, "failed");
-assert.equal(failed.diagnostics.code, "search_parser_failed");
+const mixedProductCardSearch = {
+  pageUrl: "https://s.1688.com/selloffer/offer_search.htm",
+  title: "扳手套装_扳手套装批发_扳手套装供应_阿里巴巴",
+  nodes: [{
+    ...searchFixture.nodes[0],
+    href: "https://detail.1688.com/offer/800000000001.html",
+    text: "扳手套装 ¥10 1件起批 联系客服 立即购买",
+    data: { ...searchFixture.nodes[0].data, title: "扳手套装" },
+  }],
+};
+const mixedProductCandidates = createDriver().api.__test.searchCandidates(mixedProductCardSearch);
+assert.equal(mixedProductCandidates.length, 1,
+  "read-only candidate discovery must not discard an entire product card merely because the card also renders transaction actions");
+assert.equal(mixedProductCandidates[0].title, "扳手套装");
+
+const unsafeSearch = {
+  pageUrl: "https://air.1688.com/kapp/1688-search/pc-image-search/?tab=imageSearch&imageId=202&imageIdList=202",
+  title: "不安全候选",
+  nodes: [{
+    ...searchFixture.nodes[0],
+    href: "https://detail.1688.com/offer/900000000001.html",
+    text: "安全候选 ¥10 1件起批",
+    data: { ...searchFixture.nodes[0].data, title: "立即购买" },
+  }],
+};
+assert.equal(createDriver().api.__test.searchCandidates(unsafeSearch).length, 0,
+  "signature, readiness, and persistence must share the same dangerous-title filter");
 
 for (const [label, url, imageResponse] of [
   ["http", "http://cdn.ozone.ru/image.jpg", response()],
@@ -666,7 +902,7 @@ await assert.rejects(() => createDriver({ imageResponse: streamTooLarge }).api._
 await assert.doesNotReject(() => createDriver({ imageResponse: response({ bytes: new Uint8Array([1, 2, 3]).buffer }) }).api.__test.downloadTrustedImage("https://cdn.ozone.ru/image.jpg"));
 
 const oversizedSearch = {
-  ...searchFixture,
+  ...boundSearchFixture,
   nodes: Array.from({ length: 14 }, (_, index) => ({
     ...searchFixture.nodes[index % searchFixture.nodes.length],
     href: `https://detail.1688.com/offer/${900000000000 + index}.html`,
@@ -682,9 +918,21 @@ assert.equal(capped.candidates.length, 12);
 assert.equal(capped.detailCandidates.length, 5);
 assert.equal(capDriver.calls.filter((call) => call.update).length, 5);
 
-async function runObservedAirUploadCommand() {
+async function runObservedAirUploadCommand(mode = "matching") {
   const events = [];
   let selectedFiles = null;
+  let previewAvailable = mode === "stale" || mode === "loading";
+  let searchClicks = 0;
+  const previewImage = { src: mode === "mismatched" ? "data:image/jpeg;base64,BAUG" : "data:image/jpeg;base64,AQID" };
+  const searchButton = {
+    innerText: "搜索图片", getClientRects: () => [{}], getAttribute: (name) => mode === "unsafe" && name === "aria-label" ? "立即购买" : "",
+    click: () => { searchClicks += 1; },
+  };
+  const preview = {
+    innerText: "帮你找同款 搜索图片", getClientRects: () => [{}], getAttribute: () => "",
+    querySelector: (selector) => selector === ".search-btn" ? searchButton : selector === "img" ? previewImage : null,
+    querySelectorAll: (selector) => selector === ".search-btn" ? mode === "multiple_buttons" ? [searchButton, searchButton] : [searchButton] : [],
+  };
   const input = {
     id: "img-search-upload",
     parentElement: null,
@@ -694,12 +942,15 @@ async function runObservedAirUploadCommand() {
         : name === "accept" ? ".jpg,.jpeg,.png,.bmp,.webp"
           : "",
     set files(value) { selectedFiles = value; },
-    dispatchEvent: (event) => { events.push(event.type); return true; },
+    get files() { return selectedFiles; },
+    dispatchEvent: (event) => { events.push(event.type); if (event.type === "change") previewAvailable = true; return true; },
   };
   const document = {
     documentElement: {},
     body: { innerText: "搜索 找到以下货源 哎呦喂，这里空空如也～" },
-    querySelectorAll: (selector) => selector.includes("#img-search-upload") ? [input] : [],
+    querySelectorAll: (selector) => selector.includes("#img-search-upload") ? [input]
+      : selector === ".image-upload-button-loading" && mode === "loading" ? [{}]
+        : selector === ".copy-image-container" && previewAvailable ? mode === "ambiguous" ? [preview, preview] : [preview] : [],
   };
   const listeners = [];
   const chrome = { runtime: { onMessage: { addListener: (listener) => listeners.push(listener) } } };
@@ -715,7 +966,10 @@ async function runObservedAirUploadCommand() {
   class TestEvent {
     constructor(type, options) { this.type = type; this.bubbles = options.bubbles; }
   }
-  const context = vm.createContext({ chrome, document, location: { href: "https://air.1688.com/kapp/1688-search/pc-image-search/" }, Event: TestEvent, DataTransfer: TestDataTransfer, File: TestFile, Uint8Array, atob, console, setTimeout });
+  let clock = 0;
+  class TestDate extends Date { static now() { return clock; } }
+  const fastTimeout = (callback) => { clock += 5000; return setTimeout(callback, 0); };
+  const context = vm.createContext({ chrome, document, location: { href: "https://air.1688.com/kapp/1688-search/pc-image-search/" }, Event: TestEvent, DataTransfer: TestDataTransfer, File: TestFile, Uint8Array, atob, console, setTimeout: fastTimeout, Date: TestDate, URL });
   context.globalThis = context;
   vm.runInContext(contentSource, context, { filename: "1688-content.js" });
   const response = await new Promise((resolve) => {
@@ -724,7 +978,7 @@ async function runObservedAirUploadCommand() {
   const searchResponse = await new Promise((resolve) => {
     listeners[0]({ type: "OZON_1688_PAGE_COMMAND_V1", command: "read_search_results", payload: {} }, null, resolve);
   });
-  return { response, searchResponse, events, selectedFiles };
+  return { response, searchResponse, events, selectedFiles, searchClicks };
 }
 
 const observedAirUpload = await runObservedAirUploadCommand();
@@ -732,8 +986,18 @@ assert.equal(observedAirUpload.response.ok, true,
   "the observed air.1688.com #img-search-upload control must accept an image-search command");
 assert.deepEqual(observedAirUpload.events, ["input", "change"]);
 assert.equal(observedAirUpload.selectedFiles.length, 1);
+assert.equal(observedAirUpload.searchClicks, 1,
+  "the current 1688 uploader prepares a preview; its matching Search Image button must be submitted exactly once");
 assert.ok(observedAirUpload.searchResponse.result.nodes.some((node) => /空空如也/.test(node.text)),
   "the observed 1688 empty-result message must be preserved in the search snapshot");
+assert.equal(observedAirUpload.response.result.uploadDiagnostics.stage, "preview_submitted");
+for (const mode of ["mismatched", "stale", "loading", "ambiguous", "multiple_buttons", "unsafe"]) {
+  const rejectedUpload = await runObservedAirUploadCommand(mode);
+  assert.equal(rejectedUpload.response.ok, false, `${mode} preview must not be submitted`);
+  assert.equal(rejectedUpload.searchClicks, 0);
+  assert.equal(rejectedUpload.response.uploadDiagnostics.stage, "awaiting_preview");
+  assert.equal(rejectedUpload.response.uploadDiagnostics.searchSubmitted, false);
+}
 
 async function runObservedKeywordSearchCommand() {
   const events = [];
@@ -764,6 +1028,13 @@ async function runObservedKeywordSearchCommand() {
         : "",
     querySelectorAll: (selector) => selector.includes(".input-button") ? [button] : [],
   };
+  const documentElement = {};
+  const pageShell = {
+    innerText: "联系客服 立即购买",
+    parentElement: documentElement,
+    getAttribute: () => "",
+  };
+  form.parentElement = pageShell;
   searchBox.parentElement = form;
   button.parentElement = searchBox;
   const input = {
@@ -783,9 +1054,9 @@ async function runObservedKeywordSearchCommand() {
     dispatchEvent: (event) => { events.push(event.type); return true; },
   };
   const document = {
-    documentElement: {},
+    documentElement,
     body: { innerText: "搜索 热门搜索" },
-    querySelectorAll: (selector) => selector.includes("input#alisearch-input[name='keywords']") ? [input] : [],
+    querySelectorAll: (selector) => selector === "input,button,form" || selector.includes("input#alisearch-input[name='keywords']") ? [input] : [],
   };
   const listeners = [];
   const chrome = { runtime: { onMessage: { addListener: (listener) => listeners.push(listener) } } };
@@ -798,7 +1069,10 @@ async function runObservedKeywordSearchCommand() {
   const response = await new Promise((resolve) => {
     listeners[0]({ type: "OZON_1688_PAGE_COMMAND_V1", command: "submit_keyword_search", payload: { query: "扳手套装" } }, null, resolve);
   });
-  return { response, inputValue: input.value, events, clicked };
+  const searchResponse = await new Promise((resolve) => {
+    listeners[0]({ type: "OZON_1688_PAGE_COMMAND_V1", command: "read_search_results", payload: {} }, null, resolve);
+  });
+  return { response, searchResponse, inputValue: input.value, events, clicked };
 }
 
 const observedKeywordSearch = await runObservedKeywordSearchCommand();
@@ -807,6 +1081,54 @@ assert.equal(observedKeywordSearch.response.ok, true,
 assert.equal(observedKeywordSearch.inputValue, "扳手套装");
 assert.deepEqual(observedKeywordSearch.events, ["input"]);
 assert.equal(observedKeywordSearch.clicked, true);
+assert.deepEqual(plain(observedKeywordSearch.searchResponse.result.controls), [{
+  tag: "input",
+  id: "alisearch-input",
+  type: "text",
+  name: "keywords",
+  placeholder: "",
+  role: "",
+  visible: true,
+}], "search snapshots must expose bounded control metadata without input values");
+
+function runObservedResultCardSnapshot() {
+  const image = {
+    innerText: "",
+    alt: "绿林内六角扳手套装",
+    currentSrc: "https://cbu01.alicdn.com/observed-card.jpg",
+    src: "https://cbu01.alicdn.com/observed-card.jpg",
+    getClientRects: () => [{}],
+    getAttribute: () => "",
+    querySelector: () => null,
+  };
+  const anchor = {
+    innerText: "绿林内六角扳手套装 ¥29.90 1件起批",
+    href: "http://detail.m.1688.com/page/index.html?offerId=705455488262&trace_log=normal",
+    getClientRects: () => [{}],
+    getAttribute: () => "",
+    querySelector: (selector) => selector === "img" ? image : null,
+  };
+  const card = {
+    innerText: "绿林内六角扳手套装 ¥29.90 1件起批 旺旺在线",
+    getClientRects: () => [{}],
+    getAttribute: (name) => name === "data-offer-expose-id" ? "705455488262" : "",
+    querySelector: (selector) => selector === "img" ? image : selector.includes("detail.m.1688.com") ? anchor : null,
+  };
+  const document = { querySelectorAll: () => [card, anchor, image] };
+  const chrome = { runtime: { onMessage: { addListener: () => {} } } };
+  const context = vm.createContext({ chrome, document, location: { href: "https://s.1688.com/selloffer/offer_search.htm" }, console, setTimeout });
+  context.globalThis = context;
+  vm.runInContext(contentSource, context, { filename: "1688-content.js" });
+  return JSON.parse(JSON.stringify(context.Ozon1688Content.visibleNodeSnapshot(document)));
+}
+
+const observedResultCardNodes = runObservedResultCardSnapshot();
+const observedResultCardNode = observedResultCardNodes.find((node) => node.data.offerId === "705455488262");
+assert.ok(observedResultCardNode, "data-offer-expose-id must remain available as a numeric candidate identity");
+assert.equal(observedResultCardNode.href,
+  "http://detail.m.1688.com/page/index.html?offerId=705455488262&trace_log=normal");
+assert.equal(observedResultCardNode.imageUrl, "https://cbu01.alicdn.com/observed-card.jpg",
+  "the candidate identity and image must come from the same observed result card");
 
 assert.match(contentSource, /const ALLOWED_COMMANDS = new Set\([\s\S]*"select_sku_option"/);
 assert.match(contentSource, /new DataTransfer\(\)/);

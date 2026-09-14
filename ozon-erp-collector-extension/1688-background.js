@@ -376,12 +376,39 @@
 
   function snap(value) {
     const nodes = Array.isArray(value?.nodes) ? value.nodes : [];
+    const controls = Array.isArray(value?.controls) ? value.controls : [];
     return {
       pageUrl: s(value?.pageUrl),
+      imageId: imageSearchId(value),
       title: s(value?.title),
       capturedAt: s(value?.capturedAt) || new Date().toISOString(),
-      nodes: nodes.filter((node) => node && node.visible !== false && !X.test(String(node.text || "") + " " + String(node.ariaLabel || ""))).slice(0, 2000),
+      // Search-result cards often render read-only product data and transaction
+      // action labels inside the same node. Keep the card for parsing, then apply
+      // the dangerous-title filter to the normalized candidate below. Actual
+      // clickable controls remain protected in 1688-content.js.
+      nodes: nodes.filter((node) => node && node.visible !== false).slice(0, 2000),
+      controls: controls.slice(0, 8).map((control) => ({
+        tag: /^(?:input|button|form)$/.test(s(control?.tag).toLowerCase()) ? s(control.tag).toLowerCase() : "",
+        id: s(control?.id).slice(0, 80),
+        type: s(control?.type).toLowerCase().slice(0, 30),
+        name: s(control?.name).slice(0, 80),
+        placeholder: s(control?.placeholder).slice(0, 120),
+        role: s(control?.role).slice(0, 40),
+        visible: control?.visible === true,
+      })).filter((control) => control.tag),
     };
+  }
+
+  function imageSearchId(value) {
+    const explicit = s(value?.imageId);
+    if (/^\d+$/.test(explicit)) return explicit;
+    try {
+      const url = new URL(s(value?.pageUrl));
+      const id = s(url.searchParams.get("imageId") || url.searchParams.get("imageIdList"));
+      return /^\d+$/.test(id) ? id : "";
+    } catch {
+      return "";
+    }
   }
 
   function verify(value) {
@@ -392,6 +419,59 @@
     return value.nodes.some((node) => node?.data?.searchStatus === "empty")
       || /哎呦喂[^。！？\n]{0,40}空空如也|没有相关商品|未找到相关(?:商品|货源)|暂无相关(?:商品|货源)/i
         .test([value.title, ...value.nodes.map((node) => node.text)].join(" "));
+  }
+
+  function searchCandidates(value) {
+    const page = snap(value);
+    return root.Ozon1688Core.parseSearchSnapshot(page)
+      .filter((candidate) => !X.test(candidate.title))
+      .slice(0, 12);
+  }
+
+  function resultSignature(value, candidates = searchCandidates(value)) {
+    const page = snap(value);
+    return JSON.stringify([
+      explicitEmpty(page),
+      ...candidates.map((candidate) => [candidate.candidateId, candidate.sourceUrl, candidate.title, candidate.imageUrl]),
+    ]);
+  }
+
+  function searchPageDiagnostics(value) {
+    const page = snap(value);
+    const candidates = searchCandidates(page);
+    let pageHost = "";
+    let pagePath = "";
+    try {
+      const url = new URL(page.pageUrl);
+      pageHost = s(url.hostname).slice(0, 200);
+      pagePath = s(url.pathname).slice(0, 500);
+    } catch {}
+    const diagnostics = {
+      pageHost,
+      pagePath,
+      pageTitle: s(page.title).slice(0, 300),
+      searchImageId: imageSearchId(page) || null,
+      candidateCount: candidates.length,
+      visibleNodeCount: page.nodes.length,
+      canonicalOfferHrefCount: page.nodes.filter((node) => node?.visible !== false && root.Ozon1688Core.canonicalOfferUrl(node?.href)).length,
+      numericOfferIdNodeCount: page.nodes.filter((node) => node?.visible !== false && /^\d+$/.test(s(node?.data?.offerId))).length,
+      explicitEmpty: explicitEmpty(page),
+    };
+    if (page.controls.length) diagnostics.controls = page.controls;
+    return diagnostics;
+  }
+
+  function uploadAudit(upload) {
+    if (!upload || !/^[a-z_]{1,40}$/.test(upload.stage || "")) return null;
+    return {
+      stage: upload.stage,
+      mimeType: /^image\/(jpeg|png|webp|gif)$/.test(upload.mimeType || "") ? upload.mimeType : "",
+      byteLength: Math.max(0, Math.min(Number(upload.byteLength) || 0, 15 * 1024 * 1024)),
+      selectedFileCount: Math.max(0, Math.min(Number(upload.selectedFileCount) || 0, 1)),
+      changeDispatched: upload.changeDispatched === true,
+      previewConfirmed: upload.previewConfirmed === true,
+      searchSubmitted: upload.searchSubmitted === true,
+    };
   }
 
   async function command(generationRef, name, payload = {}) {
@@ -407,7 +487,9 @@
         });
         await live(generationRef);
         if (response?.ok) return response.result;
-        throw Error(s(response?.error) || "页面命令失败");
+        const error = Error(s(response?.error) || "页面命令失败");
+        if (response?.uploadDiagnostics) error.uploadDiagnostics = uploadAudit(response.uploadDiagnostics);
+        throw error;
       } catch (error) {
         lastError = error;
         if (!/Receiving end does not exist|Could not establish connection/i.test(s(error.message))) throw error;
@@ -492,18 +574,44 @@
     }
   }
 
-  async function stable(generationRef) {
+  async function stable(generationRef, binding = {}) {
     let previous = "";
+    let lastPage = null;
     const deadline = Date.now() + 12000;
+    const previousImageId = s(binding.previousImageId);
+    const previousResultSignature = s(binding.previousResultSignature);
+    const previousExplicitEmpty = binding.previousExplicitEmpty === true;
+    const requireFreshImageId = binding.requireFreshImageId === true;
     while (Date.now() < deadline) {
       const page = snap(await command(generationRef, "read_search_results"));
-      const signature = JSON.stringify(page.nodes.slice(0, 12).map((node) => [node.href, node.text, node.imageUrl]));
-      const ready = verify(page) || explicitEmpty(page) || root.Ozon1688Core.parseSearchSnapshot(page).length > 0;
-      if (ready && signature && signature === previous) return page;
+      lastPage = page;
+      const currentImageId = imageSearchId(page);
+      const candidates = searchCandidates(page);
+      const currentResultSignature = resultSignature(page, candidates);
+      const freshExplicitEmptyWithoutId = Boolean(
+        requireFreshImageId
+        && !currentImageId
+        && !previousExplicitEmpty
+        && explicitEmpty(page)
+        && currentResultSignature !== previousResultSignature
+      );
+      const resultBound = !requireFreshImageId || freshExplicitEmptyWithoutId || Boolean(
+        currentImageId
+        && currentImageId !== previousImageId
+        && currentResultSignature !== previousResultSignature
+      );
+      const signature = JSON.stringify([currentImageId, currentResultSignature]);
+      const ready = verify(page) || (resultBound && (explicitEmpty(page) || candidates.length > 0));
+      if (ready && signature && signature === previous) {
+        if (freshExplicitEmptyWithoutId) page.emptyResultBinding = "fresh_transition_without_image_id";
+        return page;
+      }
       previous = signature;
       await sleep(50);
     }
-    throw Error("搜索结果未稳定");
+    const error = Error("搜索结果未稳定");
+    error.pageDiagnostics = searchPageDiagnostics(lastPage || {});
+    throw error;
   }
 
   async function finishRun(generationRef, entry) {
@@ -528,6 +636,7 @@
   }
 
   async function run(generationRef, entry) {
+    let observedPage = null;
     try {
       const initial = await load(generationRef.jobId);
       if (!initial || !sameGeneration(initial, generationRef) || isTerminal(initial)) return initial;
@@ -549,24 +658,41 @@
       }
 
       const probe = snap(await command(generationRef, "probe"));
+      observedPage = probe;
       if (verify(probe)) return transition(generationRef, "paused_platform_verification");
 
-      if (job.strategy.type === "image" || job.strategy.type === "similar_supplier") {
+      const usesImageSearch = job.strategy.type === "image" || job.strategy.type === "similar_supplier";
+      const previousImageId = usesImageSearch ? imageSearchId(probe) : "";
+      const previousResultSignature = usesImageSearch ? resultSignature(probe) : "";
+      const previousExplicitEmpty = usesImageSearch ? explicitEmpty(probe) : false;
+      if (usesImageSearch) {
         await mutate(generationRef, (current) => ({ ...current, phase: "downloading_image" }));
         const image = await downloadTrustedImage(job.strategy.sourceUrl, job.strategy.type === "similar_supplier", entry.controller?.signal);
         await live(generationRef);
-        await command(generationRef, "submit_image_search", image);
+        const submitted = await command(generationRef, "submit_image_search", image);
+        await mutate(generationRef, (current) => ({ ...current, uploadDiagnostics: uploadAudit(submitted?.uploadDiagnostics) }));
       } else {
         await command(generationRef, "submit_keyword_search", { query: job.strategy.query });
       }
 
-      const page = await stable(generationRef);
+      const page = await stable(generationRef, { requireFreshImageId: usesImageSearch, previousImageId, previousResultSignature, previousExplicitEmpty });
+      observedPage = page;
       if (verify(page)) return transition(generationRef, "paused_platform_verification");
-      const candidates = root.Ozon1688Core.parseSearchSnapshot(page).filter((candidate) => !X.test(candidate.title)).slice(0, 12);
+      if (usesImageSearch) {
+        await mutate(generationRef, (current) => ({ ...current, searchImageId: imageSearchId(page) || null }));
+      }
+      if (page.emptyResultBinding === "fresh_transition_without_image_id") {
+        return transition(generationRef, "failed", {
+          candidates: [],
+          diagnostics: { code: "search_parser_failed", emptyResultBinding: page.emptyResultBinding, ...searchPageDiagnostics(page) },
+        });
+      }
+      const candidates = searchCandidates(page);
       if (!candidates.length) return transition(generationRef, "failed", { diagnostics: { code: "search_parser_failed" } });
       await mutate(generationRef, (current) => ({
         ...current,
         candidates,
+        searchImageId: usesImageSearch ? (imageSearchId(page) || null) : null,
         phase: "inspect_details",
         phaseStartedAt: new Date().toISOString(),
         currentDetailIndex: 0,
@@ -603,7 +729,8 @@
       try {
         return await transition(generationRef, "failed", {
           error: s(error.message),
-          diagnostics: { code: "driver_error", message: s(error.message) },
+          ...(error.uploadDiagnostics ? { uploadDiagnostics: error.uploadDiagnostics } : {}),
+          diagnostics: { code: "driver_error", message: s(error.message), ...(error.pageDiagnostics || searchPageDiagnostics(observedPage || {})) },
         });
       } catch (transitionError) {
         if (s(transitionError.message) === STALE || s(transitionError.message) === CANCELLED) return load(generationRef.jobId);
@@ -647,6 +774,7 @@
       if (!sku) throw Error("缺少 Ozon SKU。");
       const job = {
         jobId,
+        extensionVersion: s(chrome.runtime.getManifest?.()?.version),
         ownerToken: randomOwnerToken(),
         taskId: "ozon-" + sku,
         strategy: { type: normalized.type, query: normalized.query, sourceUrl: normalized.sourceUrl },
@@ -777,6 +905,8 @@
     resumeJob,
     __test: Object.freeze({
       downloadTrustedImage,
+      searchCandidates,
+      searchPageDiagnostics,
       restoreJobs,
       diagnoseOwnership,
       MAX_SEARCH_CANDIDATES: 12,

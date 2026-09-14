@@ -1,15 +1,17 @@
 # PROJECT_STATUS.md - Ozon 当前项目状态
 
-更新时间：2026-09-08
+更新时间：2026-09-14
 用途：给新 Codex 对话快速续接项目，不再依赖旧聊天上下文。
 
 ## 一句话状态
 
-Ozon扩展已升级到0.6.30，本地找品Agent已升级到MVP 6.0：自动批量固定使用1688图片搜索、AI关键词补搜和相似供应商补搜，拼多多App仅保留最终确认页的单品深度补搜。Tasks 1–7实现与独立审查已完成；Task 8发布构建和自动测试通过。2026-09-08单件真实复跑确认新建标签的瞬时`pendingUrl`修复有效，`owned_tab_invalid_url`已消失；任务继续到关键词页后暴露下一问题：真实输入框为普通`text`类型的`#alisearch-input`，提交控件为`.input-button`，旧精确白名单无法识别。现已按真实DOM属性新增受限兼容并通过RED/GREEN及完整测试，待重新加载扩展后复跑单件。20件用户验收尚未执行，当前为`DONE_WITH_CONCERNS`。
+扩展候选版0.6.37，本地找品Agent保持MVP 6.0。AiPrice人工对照成功返回商品卡并打开1688详情，证明手动图片搜索可用；保存HTML没有稳定详情链接或数字imageId，尚不能证明可直接自动集成。最新SKU `4275207601`诊断仍未完成自动图片搜索，关键词轮超时后12个无关候选被误供下一轮。0.6.37补齐原生上传后匹配预览的“搜索图片”动作，并隔离失败、超时及运行中候选；旧JSON无明确成功记录的候选也不复用。完整自动测试、发布构建、ZIP源码逐字节核对和独立复核通过；真实浏览器单件、三件及20件验收待完成，当前为`DONE_WITH_CONCERNS`。
 
 ## 当前重要版本
 
-- Chrome/Edge 扩展：0.6.30（新增1688自动任务驱动、图片/关键词/相似供应商三轮搜索、详情与规格核验，并保留Ozon最终复价桥接；真实浏览器三件与20件验收待完成）
+下一步：重新加载0.6.37扩展，刷新或新开Agent页面，重新启动SKU `4275207601`的单件任务（旧失败终态不会自动重跑），导出新的诊断JSON。先检查扩展版本、uploadDiagnostics、数字searchImageId及各轮状态，再决定是否扩大样本。不要以AiPrice人工成功或自动测试通过代替真实浏览器验收。
+
+- Chrome/Edge 扩展：0.6.37（包含0.6.31–36图片绑定、关键词控件和商品卡身份兼容；新增本次图片预览搜索提交、失败候选隔离、上传阶段与版本审计；真实单件、三件及20件验收待完成）
 - 在线页面入口：`https://yehui1285-tech.github.io/ozon/feishu.html?v=20260720`
 - GitHub 仓库：`https://github.com/yehui1285-tech/ozon`
 - 飞书同步 Worker：`https://ozon-feishu-sync.yehui1285.workers.dev/`
@@ -18,6 +20,34 @@ Ozon扩展已升级到0.6.30，本地找品Agent已升级到MVP 6.0：自动批�
 - MD转JSON工具：`Ozon批量MD转JSON.cmd`（双击选择MD，结果输出到MD同目录的`Ozon_JSON_转换结果`）
 
 ## 1688主渠道调整状态
+
+- 2026-09-12：SKU `4275207601`最新单件诊断总活动时间30.948秒。图片轮13.292秒停在无数字`imageId`的明确空页；关键词轮14.205秒已进入正常“扳手套装”结果页并读取403个节点，但`canonicalOfferHrefCount=0`、`numericOfferIdNodeCount=0`、候选0；相似供应商因无可信候选图跳过。本次诊断JSON未记录扩展版本，因此不能单凭文件证明0.6.35已参与运行。
+- 2026-09-12：搜索结束后程序关闭专用标签页，用户用浏览器恢复了关键词结果页；页面肉眼可见多张商品卡。对用户保存的2,098,459字节真实HTML做只读检查，确认其中有48个`detail.m.1688.com/page/index.html?offerId=数字`商品链接、60个纯数字`data-offer-expose-id`，标准`detail.1688.com/offer/数字.html`链接和`data-offer-id`均为0。由此确认旧解析器与当前1688商品卡身份格式不兼容，不能再把候选0解释为页面无商品。
+- 2026-09-12：0.6.36只接受`detail.m.1688.com`精确主机、`/page/index.html`精确路径和纯数字`offerId`，统一转换为标准HTTPS详情地址；只读页面快照新增`data-offer-expose-id`并从同一商品卡读取后代商品链接和图片。错误主机、非数字ID及链接与属性ID冲突仍拒绝，实际操作控件和交易动作禁令未变。
+- 2026-09-12：新增真实页面形状回归，旧实现分别因手机版链接不被接受、曝光ID未保留而准确转RED，最小修复后转GREEN。`tools\\build-release.ps1`及完整`npm.cmd test`均退出0，57个解析样本继续通过；发布ZIP共19项、manifest为0.6.36，SHA-256=`7FB11B2D2FC66310577EA0B408F943B1CA6F46D5516DB7082820647DA2616D87`。回滚备份为`C:\Users\Microsoft\Documents\Ozon\_备份_20260912_1688_mobile_offer_parser_before`；创建后删除最旧常规备份`_备份_20260909_1688_image_binding_before`，常规备份保持5个。无需上传`feishu.html`或部署Worker；必须重新加载0.6.36并刷新或新开Agent页后复跑同一单件，当前仍不是浏览器PASS。
+
+- 2026-09-10：重新加载0.6.34后单件复跑SKU `4275207601`，总活动时间45.269秒。关键词仍成功进入正常“扳手套装”结果页，但15.181秒后候选0；诊断显示403个经过后台过滤后保留的可见节点中，`canonicalOfferHrefCount=0`、`numericOfferIdNodeCount=0`。图片轮14.182秒仍为无数字`imageId`的明确空页，相似供应商因无可信候选图0秒跳过。
+- 2026-09-10：继续回溯发现诊断计数本身位于`1688-background.js`的`snap()`之后，而旧`snap()`会在解析前删除任何文字或ARIA标签包含“联系客服/立即购买/购买/订单”等词的整个节点。1688商品卡可把商品标题、价格和这些操作按钮渲染在同一卡片节点中，因此标准详情链接与数字商品ID会在进入解析器和诊断计数前一起消失；0.6.34的两个零计数不能证明原始DOM没有商品身份，只能证明过滤后没有。
+- 2026-09-10：0.6.35取消只读快照层的整卡交易词删除，候选规范化后仍由危险标题过滤器统一把关；`1688-content.js`对实际会点击的搜索、上传和SKU控件仍沿用严格安全选择器，程序没有新增购买、客服、聊天、优惠券、订单或支付动作。搜索卡证据先解析价格/MOQ，持久化时只保留商品标题，不保存混合卡片中的交易操作文字。新增混合商品卡回归先在旧代码下准确得到0，修复后得到唯一候选；纯交易标题候选仍为0。
+- 2026-09-10：`test-1688-core`、`test-1688-extension`、完整`npm.cmd test`及`tools\build-release.ps1`均退出0；发布ZIP共19项、manifest为0.6.35，SHA-256=`8C9DE14DEF9C414F956987806F1C510C90B7A8B78F315B943CA0376CC4316128`。回滚备份为`C:\Users\Microsoft\Documents\Ozon\_备份_20260910_1688_card_filter_before`；创建后删除最旧常规备份`_备份_20260831_1688_automatic_sourcing_before`，常规备份保持5个。无需上传`feishu.html`或部署Worker；必须重新加载0.6.35并刷新/新开Agent页后复跑同一单件，当前仍不是浏览器PASS。
+
+- 2026-09-10：重新加载0.6.33后单件复跑SKU `4275207601`，总活动时间33.339秒。图片轮14.280秒仍停在无数字`imageId`的明确空页；关键词轮已成功输入“扳手套装”并进入标题为“扳手套装_扳手套装批发_扳手套装供应_阿里巴巴”的正常结果页，说明0.6.33关键词控件修复真实生效，但该页403个可见节点仍解析为0个候选并在15.201秒后超时；相似供应商因无可信候选图0秒跳过。当前故障已从“无法提交关键词”推进到“结果商品卡身份未被解析”。
+- 2026-09-10：代码审计发现`visibleNodeSnapshot()`已从当前1688商品卡读取`data-offer-id`，但`parseSearchSnapshot()`旧实现完全忽略该字段并强制要求节点自身带标准`detail.1688.com/offer/{id}.html`链接。0.6.34仅在`data-offer-id`为纯数字时构造同ID的官方标准详情地址；节点同时存在标准链接和商品ID但两者冲突时直接丢弃，非数字ID和任意外域链接不能解锁候选。失败诊断新增`canonicalOfferHrefCount`与`numericOfferIdNodeCount`两个纯计数，不保存商品ID、查询参数、页面文字或链接。
+- 2026-09-10：新增“无标准链接但含纯数字商品ID”“链接与ID冲突”“非数字ID”回归，旧实现先按预期失败，修复后`test-1688-core`和`test-1688-extension`转GREEN。`tools\build-release.ps1`与完整`npm.cmd test`均退出0；发布ZIP共19项、manifest为0.6.34，SHA-256=`53B1354760FC6FF070BDD7E13111CA87AA6F0C854D193FBE87773A76064C9856`。回滚备份为`C:\Users\Microsoft\Documents\Ozon\_备份_20260910_1688_offer_id_parser_before`；创建后删除最旧常规备份`_备份_20260831_1688_implementation_plan_before`，常规备份保持5个。无需上传`feishu.html`或部署Worker；必须重新加载0.6.34并刷新/新开Agent页后复跑同一单件，当前仍不是浏览器PASS。
+
+- 2026-09-10：0.6.32诊断复跑SKU `4275207601`，总活动时间20.733秒。图片轮13.751秒，最终页为`air.1688.com/kapp/1688-search/pc-image-search/`、标题“批发_供应_阿里巴巴”、`explicitEmpty=true`、候选0、`searchImageId=null`，页面同时保留可见`img-search-upload`；关键词轮3.048秒，页为`s.1688.com/selloffer/offer_search.html`，327个可见节点，且存在可见`input#alisearch-input[name=keywords][type=text]`，但仍报“未找到已识别的关键词输入框”。相似供应商因无可信候选图0秒跳过。该证据排除登录跳转和输入框选择器缺失。
+- 2026-09-10：根因一是图片安全绑定把“明确空结果”也绝对要求数字`imageId`，而真实当前页面对该空结果不提供ID；0.6.33仅新增严格例外：上传前不是明确空状态、上传后明确空状态新出现且签名连续稳定时，可在无ID情况下记录`fresh_transition_without_image_id`并以无候选结果进入关键词兜底。该路径强制候选数组为空；有任何候选时仍必须取得相对上传前更新的数字ID和变化后稳定的最终候选集合。
+- 2026-09-10：根因二是`verifiedSearchControl()`虽命中真实`alisearch-input`，但旧`unsafeNode()`继续向上检查祖先区域整块文字，1688页面其他位置的“联系客服/立即购买”等文字导致安全搜索框被误拒。0.6.33对经过精确结构选择器命中的搜索输入与其表单内搜索按钮只检查控件自身属性/文字；关键词本身仍禁止交易语义，上传、SKU、下单、支付、客服和聊天控件规则不变。两个真实失败形状均先以测试复现RED，再以最小改动转GREEN。
+- 2026-09-10：`powershell -ExecutionPolicy Bypass -File tools\build-release.ps1`和完整`npm.cmd test`均退出0。发布ZIP共19项、manifest为0.6.33，关键扩展文件与源码逐字节一致，SHA-256=`7D0F37E8B2694C6C5A5F1D0CE6AF28E39752995AEDAA5C0B94EAD490D15FFECE`。回滚备份为`C:\Users\Microsoft\Documents\Ozon\_备份_20260910_1688_explicit_empty_keyword_fix_before`；创建后删除最旧常规备份`_备份_20260831_1688_sourcing_design_revision_before`，常规备份保持5个。网页业务源码与Worker未改，无需上传`feishu.html`或部署Worker；必须重新加载0.6.33并刷新/新开Agent页后再跑同一单件。
+
+- 2026-09-10：重新加载0.6.31并在Agent MVP 6.0单件运行SKU `4275207601`。活动时间约21秒，图片轮15.290秒以`driver_error / 搜索结果未稳定`结束，关键词`扳手套装`生成成功但关键词轮3.042秒报“未找到已识别的关键词输入框”，相似供应商因无可信候选图以`no_trusted_supplier_image`在0秒按设计跳过；未进入AI同款判断、详情、规格价或采购价写入。该结果证明故障位于1688页面适配/候选采集层，不是AI误判。
+- 2026-09-10：0.6.31只保存错误文字，无法区分图片轮最终页面是否取得新`imageId`/候选、关键词轮是否落在登录或改版页面。0.6.32新增最小脱敏诊断：仅保存页面主机、路径、截断标题、纯数字图片ID、候选/可见节点数量、明确空状态及前8个控件的截断标签/ID/类型/名称/占位符/角色/可见性；不保存控件值、Cookie、任意查询参数、页面文字或图片地址，整体保持在Agent的4KB持久化上限内。关键词命令失败保留提交前页面摘要，图片稳定超时保留最后一次结果页而不是上传前探针；原图片结果绑定安全闸门不变。
+- 2026-09-10：诊断回归先准确失败再转GREEN；`powershell -ExecutionPolicy Bypass -File tools\build-release.ps1`和完整`npm.cmd test`均退出0。发布ZIP共19项、manifest为0.6.32，关键扩展文件与源码逐字节一致，SHA-256=`84D53BE1E7D33D6372EB265DD7D97382A6FAA04D8CA9A6CA40CD4A233EA82793`。回滚备份为`C:\Users\Microsoft\Documents\Ozon\_备份_20260910_1688_live_diagnostics_before`；创建后删除最旧常规备份`_备份_20260831_1688_sourcing_design_before`，常规备份保持5个。网页业务源码与Worker未改，无需上传`feishu.html`或部署Worker；必须重新加载0.6.32并刷新/新开Agent页后再跑同一单件。
+
+- 2026-09-09：对同批10件商品做旧扩展链路与隔离`1688-cli`探针。旧0.6.30链路约5–11秒/件但0/10形成可确认候选；`1688-cli`七次尝试仅首次返回相关候选，随后出现三次`about:blank`、两次45–50秒超时及一次同图返回完全无关接线端子，且既有详情命令两次超过60秒。结论是不直接引入第三方CLI、守护进程或其登录运行时。
+- 2026-09-09：根因回溯确认旧扩展在图片上传后只按候选/空状态的DOM签名稳定性结束等待，没有把结果绑定到本次上传；页面残留的旧候选或旧“空空如也”可被误判为当前结果。`tools/test-1688-extension.mjs`准确复现“URL先更新为`imageId=222`、顶部UI已经变化、第12个节点之后仍短暂保留`imageId=111`旧候选，并新增一个最终会被危险标题过滤的页面动作”的组合竞态；旧实现会错误收下旧商品。最小修复让签名、就绪判断和最终保存统一使用同一个`parse → 危险标题过滤 → 前12个`候选集合，并要求新ID、该集合身份/内容（或明确空状态）变化、连续稳定同时成立；平台验证仍可优先暂停。候选和明确空结果都会在扩展任务中保存`searchImageId`，Agent的当前任务、分策略结果和最终搜索记录也保留经过白名单过滤的同一字段，刷新、迁移和导出后仍可审计。专项测试转GREEN。
+- 2026-09-09：扩展版本统一提升到0.6.31，`powershell -ExecutionPolicy Bypass -File tools\build-release.ps1`和完整`npm.cmd test`均退出0；发布ZIP共19项、内含0.6.31 manifest，SHA-256=`6142CE7C91CFB2437E07A5365B4CCB9977609D5522D8396701E60C1AFEBD2D23`。网页业务源码与Worker未改，无需上传`feishu.html`或部署Worker；必须重新加载扩展并刷新/新开Agent页后先跑SKU `4275207601`单件，再决定是否扩大到三件和20件。
+- 2026-09-09：回滚备份为`C:\Users\Microsoft\Documents\Ozon\_备份_20260909_1688_image_binding_before`；按规则删除最旧常规备份`_备份_20260831_pinduoduo_split_sku_price_before`，常规备份保持5个。
 
 - 2026-09-07：Tasks 1–7实现及独立审查已通过；扩展版本为0.6.30、Agent页面为MVP 6.0。`package.json`完整测试入口已包含`test:1688-core`、`test:1688-extension`和`test:sourcing-agent-1688`，并保留全部旧套件。
 - 2026-09-07首次、2026-09-08新鲜复跑`tools\build-release.ps1`与完整`npm.cmd test`均通过，网页产物与源码一致。修正界面版本文字、桥接成功响应、图片策略入口、真实上传控件识别、结果就绪判断、明确空结果识别及关键词兜底后，扩展ZIP为0.6.30、19项，包含`manifest.json`、`background.js`、`pinduoduo-bridge.js`、`1688-core.js`、`1688-content.js`、`1688-background.js`；最新SHA-256=`AACF1DA9D2A334AC30A17084A263A02DD6374A767F94F9D9429742B7309E9BA0`。同一构建脚本生成的`local-crop-tool.zip`连续哈希一致、3项均与源码逐字节相同，SHA-256=`04793AF6C84375BC2EE2E432A9F48D4082D0680D78D1702C48384A59ED709272`。

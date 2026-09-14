@@ -358,7 +358,12 @@ function createAppHarness({ apiHandler = null, extensionHandler = null, finalPri
   const savedQueue = JSON.stringify({ queue: { tasks: [], meta: { pinduoduoBatch: {} } }, sourceName: "test.json" });
   const context = {
     __pricingDeps: { applyFinalOzonPricing, createFinalPricingRequestGuard, preliminaryPricingDecision, previewFinalOzonPricing },
-    __sourcingFlowDeps: sourcingFlowDeps,
+    __sourcingFlowDeps: {
+      ...sourcingFlowDeps,
+      // Copy VM-created diagnostic records into the module's realm. In the
+      // browser both modules share one realm; the VM is only a test boundary.
+      automaticCandidatePools: (value) => sourcingFlowDeps.automaticCandidatePools(JSON.parse(JSON.stringify(value || {}))),
+    },
     // The VM owns app-created object literals while the imported safety module
     // is evaluated in this test realm. Keep the task reference intact for
     // Task 5's capability check, while copying only untrusted serial facts
@@ -389,9 +394,12 @@ function createAppHarness({ apiHandler = null, extensionHandler = null, finalPri
       "const { applyFinalOzonPricing, createFinalPricingRequestGuard, preliminaryPricingDecision, previewFinalOzonPricing } = globalThis.__pricingDeps;")
     .replace(/^import \* as sourcingFlow from "\.\/sourcing-flow\.js";\r?$/m, "const sourcingFlow = globalThis.__sourcingFlowDeps;")
     .replace(/^import \* as sourcingCore from "\/sourcing-core\.mjs";\r?$/m, "const sourcingCore = globalThis.__sourcingCoreDeps;")
-    + "\nglobalThis.__appTest = { commitPurchaseCostWithFinalPricing, runAutomatic1688Task, runAutomatic1688Batch, pauseAutomatic1688Batch, cancelAutomatic1688Batch, confirmFinalCandidate, rejectFinalCandidate, continueRejectedCandidate, saveSingleUnitException, startSinglePinduoduoDeepSearch, renderConfirmationQueue, beginAutomaticRun, finishAutomaticRun, invalidateAutomaticRun, poll1688Job, setQueue: (value) => { queue = value; }, getQueue: () => queue };";
+    + "\nglobalThis.__appTest = { mergeJobCandidates, similarSupplierImage, recordSearchAttempt, commitPurchaseCostWithFinalPricing, runAutomatic1688Task, runAutomatic1688Batch, pauseAutomatic1688Batch, cancelAutomatic1688Batch, confirmFinalCandidate, rejectFinalCandidate, continueRejectedCandidate, saveSingleUnitException, startSinglePinduoduoDeepSearch, renderConfirmationQueue, beginAutomaticRun, finishAutomaticRun, invalidateAutomaticRun, poll1688Job, setQueue: (value) => { queue = value; }, getQueue: () => queue };";
   vm.runInNewContext(appForVm, context, { filename: "app.js" });
   return {
+    mergeJob: context.__appTest.mergeJobCandidates,
+    similarImage: context.__appTest.similarSupplierImage,
+    recordAttempt: context.__appTest.recordSearchAttempt,
     commit: context.__appTest.commitPurchaseCostWithFinalPricing,
     runAutomatic: context.__appTest.runAutomatic1688Task,
     runAutomaticBatch: context.__appTest.runAutomatic1688Batch,
@@ -586,6 +594,51 @@ const automaticCandidate = {
   detailStatus: "complete",
   evidence: { localRef: "/api/evidence/test/77.jpg" },
 };
+
+// A running job may persist diagnostic candidates, but only a completed search
+// may supply candidates to another strategy or the AI/pricing pipeline.
+const candidateIsolationHarness = createAppHarness();
+const candidateIsolationTask = { sourcing: {} };
+const isolationStrategy = { type: "keyword", query: "扳手套装" };
+candidateIsolationHarness.mergeJob(candidateIsolationTask, isolationStrategy, {
+  jobId: "1688-isolation-1", status: "running", candidates: [automaticCandidate], detailCandidates: [automaticCandidate],
+  extensionVersion: "0.6.37", uploadDiagnostics: { stage: "preview_submitted", searchSubmitted: true },
+});
+assert.equal(candidateIsolationTask.sourcing.lightweightCandidates.length, 0,
+  "nonterminal candidates must stay outside the shared fallback pool");
+assert.equal(candidateIsolationTask.sourcing.strategyCandidates.keyword.lightweightCandidates.length, 1,
+  "the running snapshot must remain available as diagnostic evidence");
+candidateIsolationHarness.mergeJob(candidateIsolationTask, isolationStrategy, {
+  jobId: "1688-isolation-1", status: "stage_timeout", candidates: [], detailCandidates: [],
+});
+assert.equal(candidateIsolationTask.sourcing.strategyCandidates.keyword.status, "stage_timeout");
+assert.equal(candidateIsolationTask.sourcing.strategyCandidates.keyword.extensionVersion, "0.6.37");
+assert.equal(candidateIsolationTask.sourcing.strategyCandidates.keyword.uploadDiagnostics.searchSubmitted, true,
+  "a synthetic timeout must preserve the same job's last known upload diagnostics");
+assert.equal(candidateIsolationTask.sourcing.detailCandidates.length, 0,
+  "a timeout must quarantine even complete details collected before failure");
+assert.equal(candidateIsolationHarness.similarImage(candidateIsolationTask), null,
+  "a timed-out candidate must never seed similar-supplier search");
+candidateIsolationHarness.mergeJob(candidateIsolationTask, isolationStrategy, {
+  jobId: "1688-isolation-2", status: "completed", candidates: [automaticCandidate], detailCandidates: [automaticCandidate],
+});
+assert.equal(candidateIsolationTask.sourcing.detailCandidates.length, 1,
+  "a completed replacement search must still supply usable details");
+assert.equal(candidateIsolationHarness.similarImage(candidateIsolationTask).candidate.candidateId, "1688-77");
+candidateIsolationHarness.mergeJob(candidateIsolationTask, { type: "image" }, {
+  jobId: "1688-isolation-3", status: "failed", candidates: [], detailCandidates: [],
+});
+assert.equal(candidateIsolationTask.sourcing.detailCandidates.length, 1,
+  "failure of another strategy must not remove a successful search");
+const restoredFailedPool = {
+  sourcing: {
+    lightweightCandidates: [automaticCandidate], detailCandidates: [automaticCandidate],
+    strategyCandidates: { keyword: { jobId: "1688-old-failed", lightweightCandidates: [automaticCandidate], detailCandidates: [automaticCandidate] } },
+    searchAttempts: [{ strategy: "keyword", jobId: "1688-old-failed", status: "stage_timeout" }],
+  },
+};
+assert.equal(candidateIsolationHarness.similarImage(restoredFailedPool), null,
+  "legacy JSON containing a failed candidate pool must fail closed after restore");
 
 function automaticConfirmationHarness(sourcingCoreModule, { clock = null, timers = null, resumedJob = null, beforePoll = null } = {}) {
   const jobs = new Map(resumedJob ? [[resumedJob.jobId, resumedJob]] : []);
@@ -1147,8 +1200,10 @@ const partialPollTask = automaticLifecycleTask("ozon-partial-poll");
 partialPollHarness.setQueue({ tasks: [partialPollTask], meta: {} });
 const partialPollBatch = partialPollHarness.runAutomaticBatch();
 await waitForCondition(() => partialPollTask.sourcing.activeJob?.status === "running", "running detail poll");
-assert.equal(partialPollTask.sourcing.detailCandidates?.[0]?.candidateId, "1688-77",
-  "each nonterminal poll must merge its persistent complete candidates before the next poll or a refresh");
+assert.equal(partialPollTask.sourcing.strategyCandidates.image.detailCandidates?.[0]?.candidateId, "1688-77",
+  "each nonterminal poll must persist complete details as per-job diagnostic progress before refresh");
+assert.equal(partialPollTask.sourcing.detailCandidates.length, 0,
+  "nonterminal diagnostic details must not enter the active pipeline before completion");
 await partialPollHarness.cancelBatch();
 await partialPollBatch;
 
@@ -1337,6 +1392,8 @@ const activeBudgetResult = await activeBudgetHarness.pollJob(activeBudgetContext
 await activeBudgetHarness.finishAutomatic(activeBudgetContext);
 assert.equal(activeBudgetResult.status, "automatic_timeout",
   "a known running job that crosses the total active budget must stop with the explicit timeout result");
+assert.equal(activeBudgetResult.jobId, "1688-active-budget-cleanup",
+  "the actual total-budget timeout must retain its known extension job identity");
 assert.equal(activeBudgetHarness.extensionRequests.filter((request) => request.action === "cancel_1688_job" && request.jobId === "1688-active-budget-cleanup").length, 1,
   "a known running job at the 150-second boundary must receive exactly one cancel cleanup");
 
@@ -1572,7 +1629,7 @@ assert.match(qwenSource, /selectSkuOptionWithQwen/);
 assert.match(bridgeSource, /OZON_FINAL_REPRICE_REQUEST_V1/);
 assert.match(bridgeSource, /http:\/\/127\.0\.0\.1:17628/);
 assert.match(bridgeSource, /validTask/);
-assert.equal(extensionManifest.version, "0.6.30");
+assert.equal(extensionManifest.version, "0.6.37");
 assert.ok(extensionManifest.content_scripts.some((entry) => entry.matches?.includes("http://127.0.0.1:17628/*") && entry.js?.includes("pinduoduo-bridge.js")));
 assert.doesNotMatch(qwenSource, /sk-[A-Za-z0-9]{12,}/);
 console.log("Pinduoduo agent core tests passed.");

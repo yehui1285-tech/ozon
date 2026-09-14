@@ -33,9 +33,17 @@
     try {
       const url = new URL(clean(rawUrl));
       const match = /^\/offer\/(\d+)\.html$/.exec(url.pathname);
-      return url.protocol === "https:" && url.hostname === "detail.1688.com" && match
-        ? `https://detail.1688.com/offer/${match[1]}.html`
-        : "";
+      if (url.protocol === "https:" && url.hostname === "detail.1688.com" && match) {
+        return `https://detail.1688.com/offer/${match[1]}.html`;
+      }
+      const mobileOfferId = url.searchParams.get("offerId") || "";
+      if ((url.protocol === "http:" || url.protocol === "https:")
+        && url.hostname === "detail.m.1688.com"
+        && url.pathname === "/page/index.html"
+        && /^\d+$/.test(mobileOfferId)) {
+        return `https://detail.1688.com/offer/${mobileOfferId}.html`;
+      }
+      return "";
     } catch {
       return "";
     }
@@ -245,11 +253,17 @@
     const candidates = [];
     for (const node of Array.isArray(snapshot.nodes) ? snapshot.nodes : []) {
       if (!node || node.visible === false) continue;
-      const sourceUrl = canonicalOfferUrl(node.href);
+      const data = node.data && typeof node.data === "object" ? node.data : {};
+      const suppliedOfferId = clean(data.offerId);
+      const dataOfferId = /^\d+$/.test(suppliedOfferId) ? suppliedOfferId : "";
+      const canonicalHref = canonicalOfferUrl(node.href);
+      const hrefOfferId = offerIdFromUrl(canonicalHref);
+      if (hrefOfferId && dataOfferId && hrefOfferId !== dataOfferId) continue;
+      const sourceUrl = canonicalHref || (dataOfferId ? `https://detail.1688.com/offer/${dataOfferId}.html` : "");
       if (!sourceUrl || seen.has(sourceUrl)) continue;
       seen.add(sourceUrl);
       const text = clean(node.text);
-      const data = node.data && typeof node.data === "object" ? node.data : {};
+      const title = clean(data.title || (text.split(/[¥￥]/)[0] || text));
       const shippingMatch = text.match(/运费\s*[¥￥]?\s*([\d.,]+)/);
       const isFreeShipping = data.shipping === "free" || /包邮/.test(text);
       const shippingFee = data.shipping !== undefined && data.shipping !== "free"
@@ -257,7 +271,7 @@
         : toFiniteNumber(shippingMatch?.[1]);
       candidates.push(normalizeCandidate({
         href: sourceUrl,
-        title: clean(data.title || (text.split(/[¥￥]/)[0] || text)),
+        title,
         imageUrl: node.imageUrl,
         minimumOrderQuantity: data.moq ?? toFiniteNumber((text.match(/(\d+)\s*件起批/) || [])[1]),
         pricing: {
@@ -270,7 +284,7 @@
             ? { status: "known", fee: shippingFee }
             : { status: "unknown", fee: null },
         detailStatus: "search_only",
-        evidence: { rank: data.rank ?? null, text },
+        evidence: { rank: data.rank ?? null, text: title },
       }));
     }
     return candidates;

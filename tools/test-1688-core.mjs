@@ -17,6 +17,50 @@ assert.match(candidates[0].sourceUrl, /^https:\/\/detail\.1688\.com\/offer\/\d+\
 assert.equal(candidates[0].minimumOrderQuantity, 1);
 assert.equal(candidates[0].pricing.displayedPrice, 16);
 assert.equal(candidates[0].shipping.fee, 10);
+const dataOfferIdOnly = JSON.parse(JSON.stringify(core.parseSearchSnapshot({ nodes: [{
+  text: "扳手套装 ¥29.90 1件起批",
+  href: "",
+  imageUrl: "https://cbu01.alicdn.com/example.jpg",
+  visible: true,
+  data: { offerId: "1234567890123" },
+}] })));
+assert.equal(dataOfferIdOnly.length, 1,
+  "a current 1688 result card with a numeric data-offer-id must remain discoverable when it has no canonical anchor href");
+assert.equal(dataOfferIdOnly[0].productId, "1234567890123");
+assert.equal(dataOfferIdOnly[0].sourceUrl, "https://detail.1688.com/offer/1234567890123.html");
+const observedMobileOffer = JSON.parse(JSON.stringify(core.parseSearchSnapshot({ nodes: [{
+  text: "绿林内六角扳手套装 ¥29.90 1件起批",
+  href: "http://detail.m.1688.com/page/index.html?offerId=705455488262&trace_log=normal",
+  imageUrl: "https://cbu01.alicdn.com/observed-card.jpg",
+  visible: true,
+  data: { offerId: "705455488262" },
+}] })));
+assert.equal(observedMobileOffer.length, 1,
+  "the observed detail.m.1688.com result-card URL must produce a candidate");
+assert.equal(observedMobileOffer[0].productId, "705455488262");
+assert.equal(observedMobileOffer[0].sourceUrl, "https://detail.1688.com/offer/705455488262.html");
+assert.equal(observedMobileOffer[0].imageUrl, "https://cbu01.alicdn.com/observed-card.jpg");
+assert.equal(core.parseSearchSnapshot({ nodes: [{
+  text: "冲突商品",
+  href: "https://detail.1688.com/offer/1111111111111.html",
+  visible: true,
+  data: { offerId: "2222222222222" },
+}] }).length, 0, "conflicting href and data-offer-id identities must be rejected");
+assert.equal(core.parseSearchSnapshot({ nodes: [{
+  text: "伪造商品",
+  href: "",
+  visible: true,
+  data: { offerId: "123-not-numeric" },
+}] }).length, 0, "only a purely numeric data-offer-id may construct a canonical 1688 detail URL");
+const cardWithTransactionActions = core.parseSearchSnapshot({ nodes: [{
+  text: "扳手套装 ¥29.90 1件起批 联系客服 立即购买",
+  href: "https://detail.1688.com/offer/3333333333333.html",
+  visible: true,
+}] });
+assert.equal(cardWithTransactionActions.length, 1);
+assert.equal(cardWithTransactionActions[0].title, "扳手套装");
+assert.equal(cardWithTransactionActions[0].evidence.text, "扳手套装",
+  "persisted candidate evidence must omit transaction-action text from a mixed product card");
 assert.equal(core.nextSearchStrategy([]), "image");
 assert.equal(core.nextSearchStrategy(["image"]), "keyword");
 assert.equal(core.nextSearchStrategy(["image", "keyword"]), "similar_supplier");
@@ -55,6 +99,9 @@ assert.equal(core.singleUnitQuote(twoUnitCandidate, { productId: "different", so
 assert.equal(core.candidateBlockers({ sourceUrl: "https://detail.1688.com/offer/6.html", title: "x", minimumOrderQuantity: 2, sku: singleSkuEvidence }).length, 0);
 assert.equal(core.canonicalOfferUrl("http://detail.1688.com/offer/1.html"), "");
 assert.equal(core.canonicalOfferUrl("https://detail.1688.com/offer/1.html?x=1"), "https://detail.1688.com/offer/1.html");
+assert.equal(core.canonicalOfferUrl("http://detail.m.1688.com/page/index.html?offerId=705455488262&trace_log=normal"),
+  "https://detail.1688.com/offer/705455488262.html");
+assert.equal(core.canonicalOfferUrl("https://evil.example/page/index.html?offerId=705455488262"), "");
 assert.equal(core.normalizeCandidate({ minimumOrderQuantity: null }).minimumOrderQuantity, null);
 assert.ok(core.candidateBlockers({ sourceUrl: "https://detail.1688.com/offer/7.html", title: "x", minimumOrderQuantity: null }).includes("minimum_order_quantity_unknown"));
 assert.ok(core.candidateBlockers({ sourceUrl: "https://detail.1688.com/offer/7.html", title: "x", minimumOrderQuantity: "" }).includes("minimum_order_quantity_unknown"));
