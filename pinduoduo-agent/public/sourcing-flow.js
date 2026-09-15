@@ -36,6 +36,19 @@ export function sourcingJobAudit(job = {}) {
     previewConfirmed: upload.previewConfirmed === true,
     searchSubmitted: upload.searchSubmitted === true,
   };
+  const search = job.searchDiagnostics;
+  if (search && typeof search === "object") {
+    audit.searchDiagnostics = {};
+    for (const key of ["candidateCount", "visibleNodeCount", "canonicalOfferHrefCount", "numericOfferIdNodeCount"]) {
+      if (Number.isFinite(search[key])) audit.searchDiagnostics[key] = Math.max(0, Math.min(search[key], 100000));
+    }
+    for (const key of ["keywordQueryMatched", "resultsChanged", "explicitEmpty"]) {
+      if (typeof search[key] === "boolean") audit.searchDiagnostics[key] = search[key];
+    }
+    if (/^\d{1,100}$/.test(search.searchImageId || "")) audit.searchDiagnostics.searchImageId = search.searchImageId;
+    if (["s.1688.com", "air.1688.com"].includes(search.pageHost)) audit.searchDiagnostics.pageHost = search.pageHost;
+    if (["/selloffer/offer_search.html", "/kapp/1688-search/pc-image-search/"].includes(search.pagePath)) audit.searchDiagnostics.pagePath = search.pagePath;
+  }
   return audit;
 }
 

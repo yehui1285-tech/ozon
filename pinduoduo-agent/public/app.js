@@ -767,6 +767,8 @@ async function runSearchStrategy(context, strategy) {
   if (!contextIsCurrent(context) || result.status === "stale") return result;
   if (!automaticContextCanAdvance(context) && result.status !== "paused_platform_verification") return automaticContextStopResult(context, result.jobId);
   const sourcing = sourcingState(context.task);
+  if (["completed", "failed", "stage_timeout"].includes(result.status)
+      && result.jobId && sourcing.activeJob?.jobId === result.jobId) sourcing.activeJob = null;
   const progress = mergeJobCandidates(context.task, strategy, result);
   if (!sourcing.strategyCandidates?.[strategy.type]) {
     sourcing.strategyCandidates = object(sourcing.strategyCandidates) || {};

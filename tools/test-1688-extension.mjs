@@ -5,7 +5,7 @@ import vm from "node:vm";
 
 const manifest = JSON.parse(fs.readFileSync(new URL("../ozon-erp-collector-extension/manifest.json", import.meta.url), "utf8"));
 const packageJson = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
-assert.equal(manifest.version, "0.6.37");
+assert.equal(manifest.version, "0.6.38");
 const popupHtml = fs.readFileSync(new URL("../ozon-erp-collector-extension/popup.html", import.meta.url), "utf8");
 const enrichmentHtml = fs.readFileSync(new URL("../ozon-erp-collector-extension/sourcing-enrichment.html", import.meta.url), "utf8");
 const popupVersion = popupHtml.match(/<span class="version">\s*v([0-9.]+)\s*<\/span>/i)?.[1];
@@ -208,7 +208,7 @@ function createDriver({ probe = blankImageSearchProbe, search = boundSearchFixtu
       local: storageArea(storageData, calls),
       ...(sessionSeed ? { session: storageArea(sessionSeed, calls) } : {}),
     },
-    runtime: { getManifest: () => ({ version: "0.6.37" }), onMessage: { addListener: (listener) => listeners.messages.push(listener) } },
+    runtime: { getManifest: () => ({ version: "0.6.38" }), onMessage: { addListener: (listener) => listeners.messages.push(listener) } },
     tabs: {
       async query() { return []; },
       async create(args) {
@@ -262,7 +262,7 @@ function createDriver({ probe = blankImageSearchProbe, search = boundSearchFixtu
     if (String(url).startsWith("http://127.0.0.1:17628/api/evidence/1688?")) return response({ json: { localRef: "/api/evidence/1688/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } });
     return imageResponse || response();
   };
-  const context = vm.createContext({ chrome, console, URL, fetch, Uint8Array, atob, btoa, setTimeout, AbortController, crypto: webcrypto });
+  const context = vm.createContext({ chrome, console, URL, fetch, Uint8Array, TextDecoder, atob, btoa, setTimeout, AbortController, crypto: webcrypto });
   context.globalThis = context;
   vm.runInContext(coreSource, context, { filename: "1688-core.js" });
   vm.runInContext(driverSource, context, { filename: "1688-background.js" });
@@ -340,7 +340,7 @@ const auditedQueued = await auditedDriver.api.startJob({ ...validImageRequest, r
 await waitForDriver();
 const auditedCompleted = await auditedDriver.api.getJob(auditedQueued.jobId);
 assert.equal(auditedCompleted.status, "completed");
-assert.equal(auditedCompleted.extensionVersion, "0.6.37");
+assert.equal(auditedCompleted.extensionVersion, "0.6.38");
 assert.deepEqual(plain(auditedCompleted.uploadDiagnostics), uploadAuditFixture);
 const uploadFailedDriver = createDriver({ commandError: { submit_image_search: "preview missing" },
   uploadResult: { uploadDiagnostics: { ...uploadAuditFixture, stage: "awaiting_preview", previewConfirmed: false, searchSubmitted: false } } });
@@ -428,7 +428,36 @@ assert.equal(similarRouteDriver.calls.find((call) => call.create)?.create.url,
   "https://air.1688.com/kapp/1688-search/pc-image-search/",
   "similar-supplier sourcing must use the same verified image-search entry");
 
-const keywordRouteDriver = createDriver({ search: searchFixture });
+// A click acknowledgement is not a result acknowledgement: stale recommendations
+// may remain visible for several reads, including after the URL changes.
+let keywordReads = 0;
+const keywordUrl = 'https://s.1688.com/selloffer/offer_search.html?keywords=' + encodeURIComponent('蓝色女装');
+const freshKeywordPage = { ...searchFixture, pageUrl: keywordUrl };
+const oldKeywordPage = { ...searchFixture, title: '推荐商品', nodes: searchFixture.nodes.map(n => ({ ...n, text: '旧推荐 ' + (n.text || '') })) };
+const delayedKeywordDriver = createDriver({ probe: oldKeywordPage, search: () => {
+  keywordReads++;
+  if (keywordReads <= 2) return oldKeywordPage;
+  if (keywordReads <= 4) return { ...oldKeywordPage, pageUrl: keywordUrl };
+  return freshKeywordPage;
+} });
+const delayedKeywordJob = await delayedKeywordDriver.api.startJob({ requestId: 'keyword-freshness-regression', sku: '1001', strategy: { type: 'keyword', query: '蓝色女装' } });
+await waitForJobStatus(delayedKeywordDriver.api, delayedKeywordJob.jobId, 'completed');
+assert.equal((await delayedKeywordDriver.api.getJob(delayedKeywordJob.jobId)).status, 'completed');
+assert.ok(keywordReads >= 6, 'must wait for the matching query AND changed result list before inspecting details');
+let identityReads = 0;
+const invalidKeywordPages = [
+  'https://evil.example/selloffer/offer_search.html?keywords=' + encodeURIComponent('蓝色女装'),
+  'https://s.1688.com/selloffer/offer_search.html?keywords=wrong',
+  keywordUrl + '&keywords=wrong',
+];
+const identityDriver = createDriver({ search: () => {
+  const url = invalidKeywordPages[Math.floor(identityReads++ / 2)] || keywordUrl;
+  return { ...searchFixture, pageUrl: url };
+} });
+const identityJob = await identityDriver.api.startJob({ requestId:'keyword-identity-regression', sku:'1001', strategy:{type:'keyword',query:'蓝色女装'} });
+await waitForJobStatus(identityDriver.api, identityJob.jobId, 'completed');
+assert.ok(identityReads >= 8, 'foreign hosts, wrong keywords and ambiguous duplicate queries must not authorize candidates');
+const keywordRouteDriver = createDriver({ search: freshKeywordPage });
 const keywordRouteQueued = await keywordRouteDriver.api.startJob({
   requestId: "keyword-route",
   sku: "1001",
@@ -681,7 +710,7 @@ const restartSeed = {
     candidates: [], detailCandidates: [], error: "", diagnostics: null, startedAt: new Date().toISOString(), updatedAt: new Date().toISOString(), completedAt: "",
   }, ozon1688ActiveJobV1: "1688-restart",
 };
-const restartedDriver = createDriver({ storageSeed: restartSeed });
+const restartedDriver = createDriver({ storageSeed: restartSeed, search: { ...searchFixture, pageUrl: 'https://s.1688.com/selloffer/offer_search.html?keywords=%B2%E2%CA%D4' } });
 await waitForDriver();
 assert.equal((await restartedDriver.api.getJob("1688-restart")).status, "completed");
 const duplicateRestartSeed = JSON.parse(JSON.stringify(restartSeed));
@@ -689,7 +718,7 @@ duplicateRestartSeed["ozon1688Job:1688-restart"].status = "queued";
 duplicateRestartSeed["ozon1688Job:1688-restart"].completedAt = "";
 duplicateRestartSeed["ozon1688Job:1688-restart-2"] = { ...duplicateRestartSeed["ozon1688Job:1688-restart"], jobId: "1688-restart-2", taskId: "ozon-1004", startedAt: "2030-01-01T00:00:00.000Z" };
 delete duplicateRestartSeed.ozon1688ActiveJobV1;
-const duplicateRestartDriver = createDriver({ storageSeed: duplicateRestartSeed });
+const duplicateRestartDriver = createDriver({ storageSeed: duplicateRestartSeed, search: { ...searchFixture, pageUrl: 'https://s.1688.com/selloffer/offer_search.html?keywords=%B2%E2%CA%D4' } });
 await duplicateRestartDriver.api.__test.restoreJobs();
 await new Promise((resolve) => setTimeout(resolve, 700));
 assert.ok(duplicateRestartDriver.calls.filter((call) => call.create).length <= 1);

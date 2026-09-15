@@ -632,3 +632,16 @@ try {
 }
 
 console.log("1688 sourcing safety tests passed");
+
+// Exercise the real terminal-strategy handler, not a duplicate cleanup function.
+const strategyHandlerText = agentAppSource.slice(agentAppSource.indexOf('async function runSearchStrategy('), agentAppSource.indexOf('async function ensureKeywords('));
+for (const [status, activeId, clears] of [['stage_timeout','job-1',true], ['failed','job-1',true], ['stage_timeout','new-job',false]]) {
+  const state = { activeJob: { jobId: activeId, status: 'running' }, strategyCandidates: { keyword: {} } };
+  const handler = new Function('run1688BridgeJob','contextIsCurrent','automaticContextCanAdvance','sourcingState','mergeJobCandidates','recordSearchAttempt','sourcingFlow','persistQueue','render', strategyHandlerText + '; return runSearchStrategy;')(
+    async () => ({status, jobId:'job-1'}), () => true, () => true, () => state,
+    () => ({usableCount:0,lightweight:[]}), () => {}, automaticFlowModule, () => {}, () => {});
+  await handler({task:{}}, {type:'keyword'});
+  assert.equal(state.activeJob === null, clears, 'terminal cleanup must clear only the matching job');
+}
+const searchAudit = sourcingJobAudit({searchDiagnostics:{pageHost:'s.1688.com',pagePath:'/selloffer/offer_search.html',keywordQueryMatched:true,resultsChanged:true,searchImageId:'1559308840031054249',candidateCount:12,token:'private',pageUrl:'https://s.1688.com/?secret=private'}});
+assert.deepEqual(searchAudit.searchDiagnostics,{candidateCount:12,keywordQueryMatched:true,resultsChanged:true,searchImageId:'1559308840031054249',pageHost:'s.1688.com',pagePath:'/selloffer/offer_search.html'});

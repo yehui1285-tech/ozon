@@ -574,6 +574,22 @@
     }
   }
 
+  // Only an exact search-route query is a keyword receipt; an input value is not.
+  function keywordQueryMatches(page, expected) {
+    try {
+      const url = new URL(page.pageUrl);
+      if (url.protocol !== "https:" || url.hostname !== "s.1688.com" || url.pathname !== "/selloffer/offer_search.html" || url.username || url.password) return false;
+      const values = url.searchParams.getAll("keywords");
+      if (values.length !== 1) return false;
+      if (s(values[0]) === s(expected)) return true;
+      // Older 1688 search forms may submit percent-encoded GBK rather than UTF-8.
+      const raw = url.search.slice(1).split("&").find(part => part.startsWith("keywords="))?.slice(9);
+      if (!raw || !/^(?:%[a-f0-9]{2}|[a-z0-9_.~+*-])*$/i.test(raw)) return false;
+      const bytes = raw.match(/%[a-f0-9]{2}|./gi).map(part => part[0] === "%" ? parseInt(part.slice(1), 16) : part === "+" ? 32 : part.charCodeAt(0));
+      return s(new TextDecoder("gb18030", { fatal: true }).decode(new Uint8Array(bytes))) === s(expected);
+    } catch { return false; }
+  }
+
   async function stable(generationRef, binding = {}) {
     let previous = "";
     let lastPage = null;
@@ -582,6 +598,9 @@
     const previousResultSignature = s(binding.previousResultSignature);
     const previousExplicitEmpty = binding.previousExplicitEmpty === true;
     const requireFreshImageId = binding.requireFreshImageId === true;
+    const keywordQuery = s(binding.keywordQuery);
+    let keywordQueryMatched = false;
+    let resultsChanged = false;
     while (Date.now() < deadline) {
       const page = snap(await command(generationRef, "read_search_results"));
       lastPage = page;
@@ -595,7 +614,9 @@
         && explicitEmpty(page)
         && currentResultSignature !== previousResultSignature
       );
-      const resultBound = !requireFreshImageId || freshExplicitEmptyWithoutId || Boolean(
+      keywordQueryMatched = Boolean(keywordQuery && keywordQueryMatches(page, keywordQuery));
+      resultsChanged = currentResultSignature !== previousResultSignature;
+      const resultBound = keywordQuery ? (keywordQueryMatched && resultsChanged) : !requireFreshImageId || freshExplicitEmptyWithoutId || Boolean(
         currentImageId
         && currentImageId !== previousImageId
         && currentResultSignature !== previousResultSignature
@@ -604,13 +625,14 @@
       const ready = verify(page) || (resultBound && (explicitEmpty(page) || candidates.length > 0));
       if (ready && signature && signature === previous) {
         if (freshExplicitEmptyWithoutId) page.emptyResultBinding = "fresh_transition_without_image_id";
+        if (keywordQuery) page.keywordBinding = { keywordQueryMatched, resultsChanged };
         return page;
       }
-      previous = signature;
+      previous = ready ? signature : "";
       await sleep(50);
     }
     const error = Error("搜索结果未稳定");
-    error.pageDiagnostics = searchPageDiagnostics(lastPage || {});
+    error.pageDiagnostics = { ...searchPageDiagnostics(lastPage || {}), ...(keywordQuery ? { keywordQueryMatched, resultsChanged } : {}) };
     throw error;
   }
 
@@ -663,7 +685,7 @@
 
       const usesImageSearch = job.strategy.type === "image" || job.strategy.type === "similar_supplier";
       const previousImageId = usesImageSearch ? imageSearchId(probe) : "";
-      const previousResultSignature = usesImageSearch ? resultSignature(probe) : "";
+      const previousResultSignature = resultSignature(probe);
       const previousExplicitEmpty = usesImageSearch ? explicitEmpty(probe) : false;
       if (usesImageSearch) {
         await mutate(generationRef, (current) => ({ ...current, phase: "downloading_image" }));
@@ -675,8 +697,9 @@
         await command(generationRef, "submit_keyword_search", { query: job.strategy.query });
       }
 
-      const page = await stable(generationRef, { requireFreshImageId: usesImageSearch, previousImageId, previousResultSignature, previousExplicitEmpty });
+      const page = await stable(generationRef, { requireFreshImageId: usesImageSearch, previousImageId, previousResultSignature, previousExplicitEmpty, keywordQuery: usesImageSearch ? "" : job.strategy.query });
       observedPage = page;
+      await mutate(generationRef, current => ({ ...current, searchDiagnostics: { ...searchPageDiagnostics(page), ...page.keywordBinding } }));
       if (verify(page)) return transition(generationRef, "paused_platform_verification");
       if (usesImageSearch) {
         await mutate(generationRef, (current) => ({ ...current, searchImageId: imageSearchId(page) || null }));
@@ -729,6 +752,7 @@
       try {
         return await transition(generationRef, "failed", {
           error: s(error.message),
+          searchDiagnostics: error.pageDiagnostics || searchPageDiagnostics(observedPage || {}),
           ...(error.uploadDiagnostics ? { uploadDiagnostics: error.uploadDiagnostics } : {}),
           diagnostics: { code: "driver_error", message: s(error.message), ...(error.pageDiagnostics || searchPageDiagnostics(observedPage || {})) },
         });
