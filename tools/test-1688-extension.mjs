@@ -5,7 +5,7 @@ import vm from "node:vm";
 
 const manifest = JSON.parse(fs.readFileSync(new URL("../ozon-erp-collector-extension/manifest.json", import.meta.url), "utf8"));
 const packageJson = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
-assert.equal(manifest.version, "0.6.39");
+assert.equal(manifest.version, "0.6.40");
 const popupHtml = fs.readFileSync(new URL("../ozon-erp-collector-extension/popup.html", import.meta.url), "utf8");
 const enrichmentHtml = fs.readFileSync(new URL("../ozon-erp-collector-extension/sourcing-enrichment.html", import.meta.url), "utf8");
 const popupVersion = popupHtml.match(/<span class="version">\s*v([0-9.]+)\s*<\/span>/i)?.[1];
@@ -208,7 +208,7 @@ function createDriver({ probe = blankImageSearchProbe, search = boundSearchFixtu
       local: storageArea(storageData, calls),
       ...(sessionSeed ? { session: storageArea(sessionSeed, calls) } : {}),
     },
-    runtime: { getManifest: () => ({ version: "0.6.39" }), onMessage: { addListener: (listener) => listeners.messages.push(listener) } },
+    runtime: { getManifest: () => ({ version: "0.6.40" }), onMessage: { addListener: (listener) => listeners.messages.push(listener) } },
     tabs: {
       async query() { return []; },
       async create(args) {
@@ -266,7 +266,7 @@ function createDriver({ probe = blankImageSearchProbe, search = boundSearchFixtu
   context.globalThis = context;
   vm.runInContext(coreSource, context, { filename: "1688-core.js" });
   vm.runInContext(driverSource, context, { filename: "1688-background.js" });
-  return { api: context.Ozon1688Background, storageData, sessionData: sessionSeed, browserState: browser, calls, fetchCalls };
+  return { api: { ...context.Ozon1688Background, __test: { ...context.Ozon1688Background.__test, parseObservedDetail: context.Ozon1688Core.parseDetailSnapshot } }, storageData, sessionData: sessionSeed, browserState: browser, calls, fetchCalls };
 }
 
 const validImageRequest = { requestId: "lifecycle", sku: "1001", strategy: { type: "image", sourceUrl: "https://cdn.ozone.ru/images/1.jpg" } };
@@ -340,7 +340,7 @@ const auditedQueued = await auditedDriver.api.startJob({ ...validImageRequest, r
 await waitForDriver();
 const auditedCompleted = await auditedDriver.api.getJob(auditedQueued.jobId);
 assert.equal(auditedCompleted.status, "completed");
-assert.equal(auditedCompleted.extensionVersion, "0.6.39");
+assert.equal(auditedCompleted.extensionVersion, "0.6.40");
 assert.deepEqual(plain(auditedCompleted.uploadDiagnostics), uploadAuditFixture);
 const uploadFailedDriver = createDriver({ commandError: { submit_image_search: "preview missing" },
   uploadResult: { uploadDiagnostics: { ...uploadAuditFixture, stage: "awaiting_preview", previewConfirmed: false, searchSubmitted: false } } });
@@ -1210,3 +1210,55 @@ assert.match(driverSource, /chrome\.runtime\.onStartup/);
 assert.match(packageJson.scripts.test, /test-1688-extension/);
 
 console.log("1688 extension tests passed");
+
+// Observed 1688 industry-pro detail DOM shape. These are page elements, not
+// synthetic data.field nodes; exercise the content command through the parser.
+async function observedDetail(mode = 'normal') {
+  const listeners = [];
+  const el = (text = '', map = {}, attrs = {}) => ({ innerText:text, textContent:text,
+    getClientRects:() => [1], getAttribute:k => attrs[k] || null,
+    querySelectorAll:q => map[q] || [], querySelector:q => (map[q] || [])[0] || null });
+  const rows = Array.from({length:mode === 'virtual' ? 12 : 13}, (_,i) => el('', {
+    '.gyp-pro-table-title p':[el('规格' + (i+1))],
+    '.gyp-pro-table-price > span:first-child':[el(i === 0 ? '¥9.51' : '¥14.50')],
+  }, {'data-row-key':mode === 'duplicate' ? '100' : String(100+i)}));
+  const sku=el('', {'.gyp-pro-table .ant-table-tbody > tr.ant-table-row[data-row-key]':rows,
+    '.industry-pro-sku-selection-count':[el('匹配到13个规格型号')],
+    '.sku-filter-button.active':[el(mode === 'filtered' ? '某规格' : '全部')]});
+  const price=el('', {'.price-component:not(.onhand-price) > p':[el('1套起批60天老客价')],
+    '.price-component:not(.onhand-price)':[el('¥9.51 ¥14.50 1套起批60天老客价')]});
+  const shipping=el('', {'.service-item.split-border':[el(mode === 'return_shipping' ? '退货包运费' : '包邮')]});
+  const doc=el('', {'#skuSelection':[sku], '#mainPrice .module-od-main-price':[price],
+    '#shopNavigation .shop-company-name h1':[el('测试工具有限公司')],
+    '#shippingServices .module-od-shipping-services':[shipping]});
+  doc.title='测试扳手 - 阿里巴巴';doc.body=el('推荐商品 ¥0.01 新人价 ¥7.51 退货包运费');
+  const context=vm.createContext({document:doc,location:{href:'https://detail.1688.com/offer/705455488262.html'},chrome:{runtime:{onMessage:{addListener:f=>listeners.push(f)}}},console,URL,setTimeout});
+  context.globalThis=context;vm.runInContext(contentSource,context);
+  const reply=await new Promise(resolve=>listeners[0]({type:'OZON_1688_PAGE_COMMAND_V1',command:'read_product_detail'},null,resolve));
+  assert.equal(reply.ok,true);
+  return {page:reply.result, parsed:plain(createDriver().api.__test.parseObservedDetail(reply.result))};
+}
+const observed = await observedDetail();
+assert.equal(observed.parsed.minimumOrderQuantity,1,'native detail MOQ must cross the actual content-to-parser boundary');
+assert.equal(observed.parsed.supplierName,'测试工具有限公司');
+assert.equal(observed.parsed.pricing.displayedPrice,9.51,'do not read newcomer or recommended prices, or concatenate inventory');
+assert.equal(observed.parsed.pricing.selectedSkuPrice,null);
+assert.equal(observed.parsed.pricing.onePiecePrice,null);
+assert.equal(observed.parsed.shipping.status,'free');
+assert.equal(observed.parsed.sku.options.length,13);
+assert.equal(observed.parsed.sku.optionsComplete,true);
+assert.equal(observed.parsed.sku.selectionVerified,false);
+assert.equal(observed.parsed.detailStatus,'partial','read-only enumeration must not certify a selected SKU');
+assert.match(observed.parsed.evidence.text,/60天老客价/);
+assert.equal((await observedDetail('virtual')).parsed.sku.optionsComplete,false);
+assert.equal((await observedDetail('filtered')).parsed.sku.optionsComplete,false);
+assert.equal((await observedDetail('duplicate')).parsed.sku.optionsComplete,false);
+assert.equal((await observedDetail('return_shipping')).parsed.shipping.status,'unknown');
+
+const detailBoundaryDriver=createDriver({detail:observed.page});
+const detailBoundaryJob=await detailBoundaryDriver.api.startJob({...validImageRequest,requestId:'native-detail-evidence'});
+await waitForJobStatus(detailBoundaryDriver.api,detailBoundaryJob.jobId,'completed');
+const savedNativeDetail=(await detailBoundaryDriver.api.getJob(detailBoundaryJob.jobId)).detailCandidates[0];
+assert.match(savedNativeDetail.evidence.text,/60天老客价/,'capture evidence must not overwrite native price conditions');
+assert.equal(savedNativeDetail.detailStatus,'partial');
+assert.equal(savedNativeDetail.pricing.selectedSkuPrice,null);

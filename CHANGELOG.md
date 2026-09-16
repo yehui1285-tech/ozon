@@ -5,6 +5,14 @@
 - `当前文件怎么用.md`
 - `OZON项目复现交接文档.md`
 
+## 2026-09-16 - 0.6.40 真实详情字段只读适配
+
+- 依据用户保存的绿林详情HTML确认字段存在；旧通用快照仅生成data.offerId，详情解析器需要的data.field未生成。新增真实页面形状回归先得到MOQ null，验证缺口后修复。
+- read_product_detail专用适配仅在精确1688商品详情URL执行；店铺限定#shopNavigation，MOQ限定#mainPrice非新人价格组件，包邮限定#shippingServices官方模块精确服务文本，规格限定#skuSelection表格有数字data-row-key的行。每行只取第一个金额span，避免拼接库存；不读取AiPrice、优惠券、退货包运费或其他商品推荐价格。
+- 规格数量必须与真实行数一致、ID唯一、全部筛选明确，才标记列表齐全；虚拟/不完整/筛选列表不补造。只读列表无已选回执，始终不生成selectedSkuPrice、onePiecePrice或selectionVerified；保持partial和最终采购闸门。SKU行价及老客价等条件保留为文字证据，不当作无条件采购成本。
+- 本次 npm.cmd test 全量测试、build-release.ps1 发布构建及 Luna 独立复核通过；安装包 19 个文件逐字节匹配源码。ZIP SHA256：FAE77A027C2E1D4991F14ECC8F167AB1B58C4CE1668DD2C0433F7C2D3067F3B9。真实页面运行验收仍待完成，截图失败、图片轮无候选、搜索诊断摘要缺失均未声称修复。
+- 备份_备份_20260916_1688_detail_adapter_before；最旧常规备份完整移入_旧文件备份_20260916_detail_adapter_rotation，不删除内容。需要重新加载0.6.40、刷新Agent；无需网页上传或Worker部署。GitHub推送继续等待用户明确确认，本次只交付本地版本。
+
 ## 2026-09-16 - 0.6.39 兼容关键词实际 .htm 跳转
 
 - 新单件诊断(15)确认0.6.38桥接恢复，实际关键词页面为 /selloffer/offer_search.htm，标题对应扳手套装，12个候选链接可解析、resultsChanged=true，但上一版仅接受.html导致keywordQueryMatched=false。本次只兼容.htm/.html两个精确路径，保持HTTPS、精确主机、单一查询词、UTF-8/GBK完全匹配与新结果校验。

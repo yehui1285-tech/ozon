@@ -324,6 +324,7 @@
     const optionCount = Number.isInteger(optionCountValue) && optionCountValue > 0 ? optionCountValue : null;
     const candidate = normalizeCandidate({
       sourceUrl: snapshot.pageUrl,
+      supplierName: field("supplier")?.text,
       title: snapshot.title || titleNode?.text,
       minimumOrderQuantity: moqNode?.data?.value ?? toFiniteNumber((clean(moqNode?.text).match(/(\d+)\s*件起批/) || [])[1]),
       supportsOnePiece: Boolean(dropshippingNode),
@@ -334,7 +335,7 @@
         samplePrice: null,
         tiers: tierNode?.data?.tiers || [],
         selectedSkuPrice,
-        priceSource: dropshippingNode ? "one_piece" : selectedSkuPrice !== null ? "selected_sku" : "tier",
+        priceSource: dropshippingNode ? "one_piece" : selectedSkuPrice !== null ? "selected_sku" : tierNode?.data?.source === "displayed" ? "displayed" : "tier",
       },
       shipping,
       sku: skuNode ? {
@@ -348,7 +349,7 @@
         selectionVerified: optionData.selectionVerified === true,
       } : null,
       detailStatus: "complete",
-      evidence: { capturedAt: snapshot.capturedAt || null },
+      evidence: { capturedAt: snapshot.capturedAt || null, text: clean(field("detailEvidence")?.text).slice(0, 12000) },
     });
 
     const hasDisplayedPrice = positiveNumber(candidate.pricing.displayedPrice) !== null;

@@ -737,7 +737,7 @@
         const detail = snap(await command(generationRef, "read_product_detail"));
         const capturedEvidence = await evidence(generationRef, candidate, detail, entry.controller?.signal);
         const parsed = root.Ozon1688Core.parseDetailSnapshot(detail);
-        if (parsed.identityValid) details.push({ ...parsed, evidence: capturedEvidence });
+        if (parsed.identityValid) details.push({ ...parsed, evidence: { ...parsed.evidence, ...capturedEvidence, text: [parsed.evidence?.text, capturedEvidence?.text].filter(Boolean).join(" ").slice(0, 16000) } });
         await mutate(generationRef, (current) => ({ ...current, detailCandidates: details }));
       }
 

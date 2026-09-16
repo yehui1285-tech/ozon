@@ -102,6 +102,65 @@
     return { pageUrl: location.href, title: document.title, capturedAt: new Date().toISOString(), nodes, controls: visibleControlSnapshot() };
   }
 
+  // Read-only adapter for the observed industry-pro product page. Scope every
+  // field to the primary product modules; never infer a selected SKU or cost.
+  function detailSnapshot() {
+    const page = snapshot();
+    if (!/^https:\/\/detail\.1688\.com\/offer\/\d+\.html(?:[?#]|$)/.test(location.href)) return page;
+    const visible = node => Boolean(node?.getClientRects?.().length);
+    const one = (parent, selector) => {
+      const matches = [...parent.querySelectorAll(selector)].filter(visible);
+      return matches.length === 1 ? matches[0] : null;
+    };
+    const value = node => clean(node?.innerText || node?.textContent).slice(0, 500);
+    const add = (field, text, data = {}) => page.nodes.unshift({ visible:true, text, data:{...data, field} });
+    const shop = one(document, '#shopNavigation .shop-company-name h1');
+    if (shop) add('supplier', value(shop));
+    const priceModule = one(document, '#mainPrice .module-od-main-price');
+    let condition = '';
+    if (priceModule) {
+      const priceText = one(priceModule, '.price-component:not(.onhand-price)');
+      condition = value(priceText);
+      const moq = one(priceModule, '.price-component:not(.onhand-price) > p');
+      const match = value(moq).match(/^(\d+)\s*(件|套|个|把)起批/);
+      if (match && Number(match[1]) > 0) add('moq', match[0], {value:Number(match[1]), unit:match[2]});
+    }
+    const shipping = one(document, '#shippingServices .module-od-shipping-services');
+    if (shipping) {
+      const services = [...shipping.querySelectorAll('.service-item.split-border')].filter(visible).map(value);
+      if (services.includes('包邮')) add('shipping', '包邮');
+    }
+    const skuModule = one(document, '#skuSelection');
+    if (skuModule) {
+      const rows = [...skuModule.querySelectorAll('.gyp-pro-table .ant-table-tbody > tr.ant-table-row[data-row-key]')].filter(visible);
+      const countMatch = value(one(skuModule, '.industry-pro-sku-selection-count')).match(/^匹配到\s*(\d+)\s*个规格型号$/);
+      const optionCount = countMatch ? Number(countMatch[1]) : null;
+      const options = [];
+      const quotes = [];
+      const seen = new Set();
+      let validRows = rows.length > 0 && rows.length <= 200;
+      for (const row of rows.slice(0, 200)) {
+        const id = clean(row.getAttribute('data-row-key'));
+        const label = value(one(row, '.gyp-pro-table-title p'));
+        const amount = value(one(row, '.gyp-pro-table-price > span:first-child')).match(/^[¥￥]\s*(\d+(?:\.\d{1,2})?)$/);
+        if (!/^\d{1,30}$/.test(id) || !label || !amount || Number(amount[1]) <= 0 || seen.has(id)) { validRows = false; continue; }
+        seen.add(id);
+        options.push({id, label});
+        quotes.push({id, label, displayedPrice:Number(amount[1])});
+      }
+      const activeFilters = [...skuModule.querySelectorAll('.sku-filter-button.active')].filter(visible).map(value);
+      const allFilter = activeFilters.length > 0 && activeFilters.every(text => text === '全部');
+      const complete = validRows && allFilter && optionCount > 0 && optionCount === rows.length && options.length === optionCount;
+      add('sku', '规格表（只读，未确认选择）', { options, optionCount, optionsComplete:complete,
+        singleSpec:false, selectedOptionId:null, selectionVerified:false });
+      if (quotes.length) {
+        add('priceTiers', '¥' + Math.min(...quotes.map(q => q.displayedPrice)), {source:'displayed'});
+        add('detailEvidence', ('页面价格条件：' + (condition || '未明确，需复核') + '；只读规格展示价：' + JSON.stringify(quotes)).slice(0, 12000));
+      }
+    }
+    return page;
+  }
+
   async function submitImageSearch(payload = {}) {
     const imageBase64 = clean(payload.imageBase64);
     const mimeType = clean(payload.mimeType);
@@ -244,7 +303,8 @@
   async function handleCommand(message) {
     const command = clean(message?.command);
     if (!ALLOWED_COMMANDS.has(command)) throw new Error("不允许的 1688 页面命令。");
-    if (command === "probe" || command === "read_search_results" || command === "read_product_detail") return snapshot();
+    if (command === "read_product_detail") return detailSnapshot();
+    if (command === "probe" || command === "read_search_results") return snapshot();
     if (command === "submit_image_search") return submitImageSearch(message.payload);
     if (command === "submit_keyword_search") return submitKeywordSearch(message.payload);
     if (command === "read_sku_options") return readSkuOptions();
