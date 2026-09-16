@@ -5,7 +5,7 @@ import vm from "node:vm";
 
 const manifest = JSON.parse(fs.readFileSync(new URL("../ozon-erp-collector-extension/manifest.json", import.meta.url), "utf8"));
 const packageJson = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
-assert.equal(manifest.version, "0.6.38");
+assert.equal(manifest.version, "0.6.39");
 const popupHtml = fs.readFileSync(new URL("../ozon-erp-collector-extension/popup.html", import.meta.url), "utf8");
 const enrichmentHtml = fs.readFileSync(new URL("../ozon-erp-collector-extension/sourcing-enrichment.html", import.meta.url), "utf8");
 const popupVersion = popupHtml.match(/<span class="version">\s*v([0-9.]+)\s*<\/span>/i)?.[1];
@@ -208,7 +208,7 @@ function createDriver({ probe = blankImageSearchProbe, search = boundSearchFixtu
       local: storageArea(storageData, calls),
       ...(sessionSeed ? { session: storageArea(sessionSeed, calls) } : {}),
     },
-    runtime: { getManifest: () => ({ version: "0.6.38" }), onMessage: { addListener: (listener) => listeners.messages.push(listener) } },
+    runtime: { getManifest: () => ({ version: "0.6.39" }), onMessage: { addListener: (listener) => listeners.messages.push(listener) } },
     tabs: {
       async query() { return []; },
       async create(args) {
@@ -340,7 +340,7 @@ const auditedQueued = await auditedDriver.api.startJob({ ...validImageRequest, r
 await waitForDriver();
 const auditedCompleted = await auditedDriver.api.getJob(auditedQueued.jobId);
 assert.equal(auditedCompleted.status, "completed");
-assert.equal(auditedCompleted.extensionVersion, "0.6.38");
+assert.equal(auditedCompleted.extensionVersion, "0.6.39");
 assert.deepEqual(plain(auditedCompleted.uploadDiagnostics), uploadAuditFixture);
 const uploadFailedDriver = createDriver({ commandError: { submit_image_search: "preview missing" },
   uploadResult: { uploadDiagnostics: { ...uploadAuditFixture, stage: "awaiting_preview", previewConfirmed: false, searchSubmitted: false } } });
@@ -457,6 +457,10 @@ const identityDriver = createDriver({ search: () => {
 const identityJob = await identityDriver.api.startJob({ requestId:'keyword-identity-regression', sku:'1001', strategy:{type:'keyword',query:'蓝色女装'} });
 await waitForJobStatus(identityDriver.api, identityJob.jobId, 'completed');
 assert.ok(identityReads >= 8, 'foreign hosts, wrong keywords and ambiguous duplicate queries must not authorize candidates');
+const htmDriver = createDriver({ search: { ...freshKeywordPage, pageUrl: keywordUrl.replace('offer_search.html', 'offer_search.htm') } });
+const htmJob = await htmDriver.api.startJob({requestId:'observed-htm-route',sku:'1001',strategy:{type:'keyword',query:'蓝色女装'}});
+await waitForJobStatus(htmDriver.api, htmJob.jobId, "completed");
+assert.equal((await htmDriver.api.getJob(htmJob.jobId)).status, 'completed', 'observed exact .htm search route must accept matching keywords and fresh results');
 const keywordRouteDriver = createDriver({ search: freshKeywordPage });
 const keywordRouteQueued = await keywordRouteDriver.api.startJob({
   requestId: "keyword-route",

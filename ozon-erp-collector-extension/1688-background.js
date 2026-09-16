@@ -578,7 +578,7 @@
   function keywordQueryMatches(page, expected) {
     try {
       const url = new URL(page.pageUrl);
-      if (url.protocol !== "https:" || url.hostname !== "s.1688.com" || url.pathname !== "/selloffer/offer_search.html" || url.username || url.password) return false;
+      if (url.protocol !== "https:" || url.hostname !== "s.1688.com" || !["/selloffer/offer_search.html", "/selloffer/offer_search.htm"].includes(url.pathname) || url.username || url.password) return false;
       const values = url.searchParams.getAll("keywords");
       if (values.length !== 1) return false;
       if (s(values[0]) === s(expected)) return true;

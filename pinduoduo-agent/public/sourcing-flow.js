@@ -47,7 +47,7 @@ export function sourcingJobAudit(job = {}) {
     }
     if (/^\d{1,100}$/.test(search.searchImageId || "")) audit.searchDiagnostics.searchImageId = search.searchImageId;
     if (["s.1688.com", "air.1688.com"].includes(search.pageHost)) audit.searchDiagnostics.pageHost = search.pageHost;
-    if (["/selloffer/offer_search.html", "/kapp/1688-search/pc-image-search/"].includes(search.pagePath)) audit.searchDiagnostics.pagePath = search.pagePath;
+    if (["/selloffer/offer_search.html", "/selloffer/offer_search.htm", "/kapp/1688-search/pc-image-search/"].includes(search.pagePath)) audit.searchDiagnostics.pagePath = search.pagePath;
   }
   return audit;
 }

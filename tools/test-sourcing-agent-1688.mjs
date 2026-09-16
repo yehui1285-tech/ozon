@@ -645,3 +645,6 @@ for (const [status, activeId, clears] of [['stage_timeout','job-1',true], ['fail
 }
 const searchAudit = sourcingJobAudit({searchDiagnostics:{pageHost:'s.1688.com',pagePath:'/selloffer/offer_search.html',keywordQueryMatched:true,resultsChanged:true,searchImageId:'1559308840031054249',candidateCount:12,token:'private',pageUrl:'https://s.1688.com/?secret=private'}});
 assert.deepEqual(searchAudit.searchDiagnostics,{candidateCount:12,keywordQueryMatched:true,resultsChanged:true,searchImageId:'1559308840031054249',pageHost:'s.1688.com',pagePath:'/selloffer/offer_search.html'});
+
+assert.equal(sourcingJobAudit({searchDiagnostics:{pagePath:'/selloffer/offer_search.htm'}}).searchDiagnostics.pagePath, '/selloffer/offer_search.htm');
+assert.equal(sourcingJobAudit({searchDiagnostics:{pagePath:'/selloffer/offer_search.htm/extra'}}).searchDiagnostics.pagePath, undefined);
