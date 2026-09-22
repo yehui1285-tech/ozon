@@ -1629,7 +1629,7 @@ assert.match(qwenSource, /selectSkuOptionWithQwen/);
 assert.match(bridgeSource, /OZON_FINAL_REPRICE_REQUEST_V1/);
 assert.match(bridgeSource, /http:\/\/127\.0\.0\.1:17628/);
 assert.match(bridgeSource, /validTask/);
-assert.equal(extensionManifest.version, "0.6.40");
+assert.equal(extensionManifest.version, "0.6.41");
 assert.ok(extensionManifest.content_scripts.some((entry) => entry.matches?.includes("http://127.0.0.1:17628/*") && entry.js?.includes("pinduoduo-bridge.js")));
 assert.doesNotMatch(qwenSource, /sk-[A-Za-z0-9]{12,}/);
 console.log("Pinduoduo agent core tests passed.");

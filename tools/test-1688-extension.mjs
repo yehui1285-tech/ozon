@@ -5,7 +5,7 @@ import vm from "node:vm";
 
 const manifest = JSON.parse(fs.readFileSync(new URL("../ozon-erp-collector-extension/manifest.json", import.meta.url), "utf8"));
 const packageJson = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
-assert.equal(manifest.version, "0.6.40");
+assert.equal(manifest.version, "0.6.41");
 const popupHtml = fs.readFileSync(new URL("../ozon-erp-collector-extension/popup.html", import.meta.url), "utf8");
 const enrichmentHtml = fs.readFileSync(new URL("../ozon-erp-collector-extension/sourcing-enrichment.html", import.meta.url), "utf8");
 const popupVersion = popupHtml.match(/<span class="version">\s*v([0-9.]+)\s*<\/span>/i)?.[1];
@@ -208,7 +208,7 @@ function createDriver({ probe = blankImageSearchProbe, search = boundSearchFixtu
       local: storageArea(storageData, calls),
       ...(sessionSeed ? { session: storageArea(sessionSeed, calls) } : {}),
     },
-    runtime: { getManifest: () => ({ version: "0.6.40" }), onMessage: { addListener: (listener) => listeners.messages.push(listener) } },
+    runtime: { getManifest: () => ({ version: "0.6.41" }), onMessage: { addListener: (listener) => listeners.messages.push(listener) } },
     tabs: {
       async query() { return []; },
       async create(args) {
@@ -340,7 +340,7 @@ const auditedQueued = await auditedDriver.api.startJob({ ...validImageRequest, r
 await waitForDriver();
 const auditedCompleted = await auditedDriver.api.getJob(auditedQueued.jobId);
 assert.equal(auditedCompleted.status, "completed");
-assert.equal(auditedCompleted.extensionVersion, "0.6.40");
+assert.equal(auditedCompleted.extensionVersion, "0.6.41");
 assert.deepEqual(plain(auditedCompleted.uploadDiagnostics), uploadAuditFixture);
 const uploadFailedDriver = createDriver({ commandError: { submit_image_search: "preview missing" },
   uploadResult: { uploadDiagnostics: { ...uploadAuditFixture, stage: "awaiting_preview", previewConfirmed: false, searchSubmitted: false } } });

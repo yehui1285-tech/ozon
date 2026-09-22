@@ -50,10 +50,10 @@ function normalizeText(text) {
 }
 
 function parsePercents(raw) {
-  const line = first(raw, /rFBS[^0-9]*([0-9%％\s-]+)/i);
+  const line = first(raw, /rFBS[^0-9]*([0-9.,%％\s-]+)/i);
   return {
     line,
-    values: [...line.matchAll(/(\d+(?:[.,]\d+)?)\s*%/g)].map((m) => num(m[1])),
+    values: [...line.matchAll(/(\d+(?:[.,]\d+)?)\s*[%％]/g)].map((m) => num(m[1])),
   };
 }
 

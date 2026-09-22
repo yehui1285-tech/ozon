@@ -65,6 +65,9 @@ const fixtures = [
   { fn: "normalizeText", input: "  a\t b\n c ", expect: "a b c", note: "空白折叠" },
 
   // ── parsePercents：rFBS 佣金档位 ──
+  { fn: "parsePercents", input: "rFBS佣金：12% 14.5% 14.5% SKU:5381457356", expect: { values: [12, 14.5, 14.5] }, note: "截图中的小数佣金" },
+  { fn: "parsePercents", input: "rFBS佣金：12,5% 14,5% 18,25%", expect: { values: [12.5, 14.5, 18.25] }, note: "逗号小数佣金" },
+  { fn: "parsePercents", input: "rFBS佣金：12％ 14.5％ 14.5％", expect: { values: [12, 14.5, 14.5] }, note: "全角百分号佣金" },
   { fn: "parsePercents", input: "rFBS佣金：\n12%\n14%\n18%", expect: { values: [12, 14, 18] }, note: "三档换行格式" },
   { fn: "parsePercents", input: "rFBS佣金：\n12%\n17%\n17%", expect: { values: [12, 17, 17] }, note: "低价商品三档" },
   { fn: "parsePercents", input: "rFBS 佣金: 12% 17% 17%", expect: { values: [12, 17, 17] }, note: "空格分隔英文冒号" },
