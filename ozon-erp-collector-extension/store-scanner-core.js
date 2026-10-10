@@ -312,6 +312,32 @@
     return lines.join("\r\n");
   }
 
+  function buildManualSourcingCsv({ batch, stores = {} }) {
+    const header = [
+      "批次编号", "店铺序号", "店铺名称", "店铺地址", "扫描状态", "商品序号", "商品名称", "类目", "SKU",
+      "Ozon价格（采集值）", "rFBS佣金（采集值）", "月销量（采集值）", "发货模式", "长宽高", "重量",
+      "跟卖最低价（采集值）", "运输风险", "运输复核状态", "命中规则", "Ozon商品链接",
+      "人工找品状态", "负责人", "候选平台", "候选货源链接", "目标规格", "规格实价（人民币）",
+      "起订量MOQ", "国内运费（人民币）", "同款核对", "复核人", "复核时间", "备注",
+    ];
+    const lines = [header.map(csvCell).join(",")];
+    batchProductRows(batch, stores)
+      .filter(({ product }) => product && productAllowedForTaskQueue(product))
+      .forEach(({ task, saved, storeIndex, productIndex, product }) => {
+        const risk = productShippingRisk(product);
+        const collected = [
+          batch?.id, storeIndex + 1, saved.storeName || task.sellerKey, task.url, batchStatusLabel(task.status),
+          productIndex + 1, product.name, product.category, product.sku, product.price,
+          (product.commissions || []).join(" / "), product.monthlySales, product.fulfillment, product.dimensions,
+          product.weight, product.competitor, risk.label || "正常", shippingReviewLabel(product),
+          risk.matchedKeyword, canonicalProductLink(product.link),
+        ];
+        const manual = ["待找品", "", "", "", "", "", "", "", "", "", "", ""];
+        lines.push([...collected, ...manual].map(csvCell).join(","));
+      });
+    return lines.join("\r\n");
+  }
+
   function buildBatchTaskQueue({ batch, stores = {}, exportedAt, createdAt = new Date().toISOString() }) {
     const tasks = batchProductRows(batch, stores)
       .filter((entry) => entry.product && productAllowedForTaskQueue(entry.product))
@@ -492,6 +518,7 @@
     assessViewportReadiness,
     autoSkipDisposition,
     buildBatchCsv,
+    buildManualSourcingCsv,
     buildBatchMarkdown,
     buildBatchTaskQueue,
     buildMarkdown,

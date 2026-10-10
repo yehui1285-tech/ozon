@@ -188,6 +188,15 @@ assert.match(batchMarkdown, /汽车\\\|扰流板/);
 const batchCsv = core.buildBatchCsv({ batch, stores: batchStores });
 assert.match(batchCsv, /"'=HJ\|025"/);
 assert.match(batchCsv, /"327,28"/);
+assert.doesNotMatch(batchCsv, /人工找品状态/, "original summary CSV must keep its existing format");
+const manualCsv = core.buildManualSourcingCsv({ batch, stores: batchStores });
+const manualRows = manualCsv.split("\r\n");
+assert.equal(manualRows.length, 2, "manual handoff should contain one row per eligible product, without empty-store placeholders");
+assert.equal(manualRows[0].split('","').length, manualRows[1].split('","').length, "handoff header and product row must have matching columns");
+assert.match(manualRows[0], /"人工找品状态","负责人","候选平台","候选货源链接","目标规格","规格实价（人民币）","起订量MOQ","国内运费（人民币）","同款核对"/);
+assert.match(manualRows[1], /"'=HJ\|025"/);
+assert.match(manualRows[1], /"batch-test"/);
+assert.match(manualRows[1], /"待找品","","","","","","","",""/, "candidate, actual price, MOQ and same-product fields must remain unconfirmed");
 const batchQueue = core.buildBatchTaskQueue({ batch, stores: batchStores, exportedAt: "2026-08-15 12:00:00", createdAt: "2026-08-15T04:00:00.000Z" });
 assert.equal(batchQueue.tasks.length, 1);
 assert.equal(batchQueue.batch.declaredProductCount, 1);
@@ -220,6 +229,11 @@ assert.equal(riskQueue.tasks.find((entry) => entry.ozon.sku === "land").ozon.shi
 assert.equal(riskQueue.tasks.find((entry) => entry.ozon.sku === "allowed").ozon.shippingRestriction, null);
 assert.match(core.buildBatchMarkdown({ batch, stores: riskBatchStores, exportedAt: "2026-08-28 12:00:00" }), /待人工复核/);
 assert.match(core.buildBatchCsv({ batch, stores: riskBatchStores }), /仅限陆运/);
+const manualRiskCsv = core.buildManualSourcingCsv({ batch, stores: riskBatchStores });
+assert.equal(manualRiskCsv.split("\r\n").length, 4, "manual handoff must exclude pending and rejected prohibited goods");
+assert.match(manualRiskCsv, /"仅限陆运"/);
+assert.match(manualRiskCsv, /"已允许找品"/);
+assert.doesNotMatch(manualRiskCsv, /"pending"|"excluded"/);
 
 const scannerSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/store-scanner.js", import.meta.url), "utf8");
 assert.match(scannerSource, /const SETTLE_DELAY_MS = 1500/);
@@ -322,6 +336,7 @@ const batchSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/bat
 const batchHtmlSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/batch.html", import.meta.url), "utf8");
 assert.match(batchSource, /buildBatchMarkdown/);
 assert.match(batchSource, /buildBatchCsv/);
+assert.match(batchSource, /buildManualSourcingCsv/);
 assert.match(batchSource, /buildBatchTaskQueue/);
 assert.match(batchSource, /Ozon找品任务_/);
 assert.match(batchSource, /application\/json;charset=utf-8/);
@@ -342,12 +357,13 @@ assert.match(batchHtmlSource, /<th>操作<\/th>/);
 assert.match(batchHtmlSource, /<th>扫描动态<\/th>/);
 assert.match(batchHtmlSource, /row-delete/);
 assert.match(batchHtmlSource, /id="clearBatch">清空当前批次/);
-assert.match(batchHtmlSource, /id="exportJson">导出找品任务 JSON/);
+assert.match(batchHtmlSource, /class="primary" id="exportManualCsv">导出人工找品表 CSV/);
+assert.match(batchHtmlSource, /id="exportJson">导出 Agent 任务 JSON（备用）/);
 assert.match(batchHtmlSource, /id="shippingRisks"/);
 assert.match(batchHtmlSource, /禁运与运输限制复核/);
 
 const manifest = JSON.parse(fs.readFileSync(new URL("../ozon-erp-collector-extension/manifest.json", import.meta.url), "utf8"));
-assert.equal(manifest.version, "0.6.42");
+assert.equal(manifest.version, "0.6.43");
 assert.ok(manifest.permissions.includes("alarms"));
 assert.ok(manifest.permissions.includes("unlimitedStorage"));
 

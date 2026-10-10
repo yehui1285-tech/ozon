@@ -22,12 +22,13 @@
       <section class="card">
         <div class="summary"><div class="metric">任务状态<strong id="batchStatus">未创建</strong></div><div class="metric">店铺进度<strong id="storeProgress">0 / 0</strong></div><div class="metric">已查看商品<strong id="observedTotal">0</strong></div><div class="metric">符合要求<strong id="qualifiedTotal">0</strong></div></div>
         <p class="message" id="message">粘贴店铺地址后开始任务。</p>
-        <div class="buttons" style="margin:0 0 12px"><button class="primary" id="exportJson">导出找品任务 JSON</button><button id="exportMd">导出汇总 Markdown</button><button id="exportCsv">导出汇总 CSV</button><button id="retryFailed">重试失败店铺</button></div>
+        <p class="copy">当前由人工接手找品：优先导出人工找品表；疑似禁运且未允许的商品不会进入交接表。原始汇总和备用 Agent JSON 仍可导出。</p>
+        <div class="buttons" style="margin:0 0 12px"><button class="primary" id="exportManualCsv">导出人工找品表 CSV</button><button id="exportCsv">导出原始汇总 CSV</button><button id="exportMd">导出汇总 Markdown</button><button id="exportJson">导出 Agent 任务 JSON（备用）</button><button id="retryFailed">重试失败店铺</button></div>
         <div class="table-wrap"><table><thead><tr><th>#</th><th>店铺</th><th>状态</th><th>尝试</th><th>已查看</th><th>符合</th><th>待复查</th><th>扫描动态</th><th>说明</th><th>操作</th></tr></thead><tbody id="tasks"><tr><td colspan="10" class="empty">尚未创建批量任务</td></tr></tbody></table></div>
       </section>
       <section class="card review-card">
         <h2>禁运与运输限制复核</h2>
-        <p class="copy">命中禁运关键词的商品会即时列在这里，扫描继续运行，不会等待人工处理。待复核和已确认排除的商品默认不进入找品任务 JSON；点击“允许找品”后才会进入。仅限陆运商品仍可导出，但任务中会保留运输限制。</p>
+        <p class="copy">命中禁运关键词的商品会即时列在这里，扫描继续运行，不会等待人工处理。待复核和已确认排除的商品默认不进入人工交接表或找品任务 JSON；点击“允许找品”后才会进入。仅限陆运商品仍可导出，表中会保留运输限制。</p>
         <div class="risk-summary"><div class="metric">待人工复核<strong id="riskPendingTotal">0</strong></div><div class="metric">已允许找品<strong id="riskAllowedTotal">0</strong></div><div class="metric">已确认排除<strong id="riskExcludedTotal">0</strong></div><div class="metric">仅限陆运<strong id="landOnlyTotal">0</strong></div></div>
         <div class="table-wrap"><table><thead><tr><th>#</th><th>类型</th><th>商品</th><th>SKU</th><th>店铺</th><th>命中规则</th><th>商品链接</th><th>处理</th></tr></thead><tbody id="shippingRisks"><tr><td colspan="8" class="empty">尚未识别到禁运或运输限制商品</td></tr></tbody></table></div>
       </section>

@@ -114,6 +114,7 @@ function render(batch) {
   $("retryFailed").disabled = !tasks.some((task) => ["failed", "partial"].includes(task.status));
   $("exportMd").disabled = !tasks.length;
   $("exportCsv").disabled = !tasks.length;
+  $("exportManualCsv").disabled = !tasks.length;
   $("exportJson").disabled = !tasks.length;
   if (!tasks.length) {
     $("tasks").innerHTML = '<tr><td colspan="10" class="empty">尚未创建批量任务</td></tr>';
@@ -220,7 +221,7 @@ $("shippingRisks").addEventListener("click", async (event) => {
   try {
     await send({ type: "setStoreProductShippingDecision", sellerKey, sku, decision });
     await refreshRiskReview();
-    setMessage(decision === "allowed" ? `SKU ${sku} 已允许进入找品任务JSON。` : `SKU ${sku} 已确认排除，不会进入找品任务JSON。`);
+    setMessage(decision === "allowed" ? `SKU ${sku} 已允许进入人工交接表和备用找品任务 JSON。` : `SKU ${sku} 已确认排除，不会进入人工交接表或备用找品任务 JSON。`);
   } catch (error) {
     button.disabled = false;
     setMessage(error.message, true);
@@ -245,17 +246,26 @@ async function exportBatch(format) {
   const stores = response.stores || {};
   const date = new Date().toISOString().slice(0, 10);
   const exportedAt = new Date().toLocaleString("zh-CN", { hour12: false });
-  if (format === "md") download(`Ozon批量店铺符合要求_${date}.md`, core.buildBatchMarkdown({ batch: currentBatch, stores, exportedAt }), "text/markdown;charset=utf-8");
+  if (format === "manual") {
+    const csv = core.buildManualSourcingCsv({ batch: currentBatch, stores });
+    const count = csv.split("\r\n").length - 1;
+    if (!count) throw new Error("当前批次没有可交给人工找品的商品；请先检查扫描结果和运输风险复核。");
+    download(`Ozon人工找品交接_${date}.csv`, csv, "text/csv;charset=utf-8");
+    const incomplete = currentBatch.status !== "completed" ? "；扫描尚未完成，后续请重新导出" : "";
+    setMessage(`已导出人工找品表，共${count}件；候选链接、规格实价、MOQ和同款结论均待人工填写${incomplete}。`);
+  }
+  else if (format === "md") download(`Ozon批量店铺符合要求_${date}.md`, core.buildBatchMarkdown({ batch: currentBatch, stores, exportedAt }), "text/markdown;charset=utf-8");
   else if (format === "csv") download(`Ozon批量店铺符合要求_${date}.csv`, core.buildBatchCsv({ batch: currentBatch, stores }), "text/csv;charset=utf-8");
   else {
     const queue = core.buildBatchTaskQueue({ batch: currentBatch, stores, exportedAt });
     if (!queue.tasks.length) throw new Error("当前批次没有可导出的符合要求商品。");
     download(`Ozon找品任务_${date}.json`, `${JSON.stringify(queue, null, 2)}\n`, "application/json;charset=utf-8", false);
     const excluded = Number(queue.summary?.excludedShippingRiskCount) || 0;
-    setMessage(`已导出找品任务JSON，共${queue.tasks.length}件${excluded ? `；另有${excluded}件疑似禁运商品待复核或已排除` : ""}，可直接进入主图与核价补全。`);
+    setMessage(`已导出备用 Agent 任务 JSON，共${queue.tasks.length}件${excluded ? `；另有${excluded}件疑似禁运商品待复核或已排除` : ""}。当前人工流程无需导入补全页。`);
   }
 }
 
+$("exportManualCsv").addEventListener("click", () => exportBatch("manual").catch((error) => setMessage(error.message, true)));
 $("exportJson").addEventListener("click", () => exportBatch("json").catch((error) => setMessage(error.message, true)));
 $("exportMd").addEventListener("click", () => exportBatch("md").catch((error) => setMessage(error.message, true)));
 $("exportCsv").addEventListener("click", () => exportBatch("csv").catch((error) => setMessage(error.message, true)));
