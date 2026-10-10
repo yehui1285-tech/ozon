@@ -30,7 +30,9 @@ npm.cmd run build:sourcing-queue -- --input "C:\Users\Microsoft\Downloads\Ozon�
 
 `sourcing-agent\data\`已加入`.gitignore`。扫描原文件、生成队列、后续候选链接、采购成本和AI判断都属于本地业务数据，不提交GitHub。
 
-## 自动补齐Ozon主图与核价字段
+## 自动补齐Ozon主图与核价字段（历史流程，当前暂停）
+
+扩展 0.6.42 已按采集后人工处理的流程隐藏弹窗入口；补全页面及已有任务数据保留。以下旧版步骤仅供未来恢复参考。
 
 1. 在扩展管理页重新加载0.6.26。
 2. 点击扩展图标 → “打开任务批量核价补全”。

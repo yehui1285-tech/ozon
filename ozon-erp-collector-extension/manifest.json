@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "OZON ERP Detail Sender",
-  "version": "0.6.41",
-  "description": "Collect OZON data, scan stores, and batch-complete sourcing tasks with pricing thresholds.",
+  "version": "0.6.42",
+  "description": "Collect OZON product data, scan stores, and send product details to the pricing page.",
   "permissions": ["storage", "unlimitedStorage", "activeTab", "tabs", "scripting", "alarms"],
   "host_permissions": [
     "https://www.ozon.ru/*",
