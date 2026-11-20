@@ -675,7 +675,17 @@ async function getStoreScanState(message = {}) {
 }
 
 async function saveStoreScanState(message = {}) {
-  const state = await enqueueStoreOperation(() => writeStoreResult(String(message.sellerKey || ""), message.state || {}, message.mode));
+  const state = await enqueueStoreOperation(async () => {
+    const sellerKey = String(message.sellerKey || "");
+    const { batchCapture, ...snapshot } = message.state || {};
+    if (batchCapture) {
+      const batch = await getBatch();
+      if (batch?.id === batchCapture.batchId && batch.stores.some((task) => task.sellerKey === sellerKey && task.startedAt)) {
+        snapshot.batchCapture = batchCapture;
+      }
+    }
+    return writeStoreResult(sellerKey, snapshot, message.mode);
+  });
   return { ok: true, state };
 }
 
@@ -827,7 +837,7 @@ async function runCurrentBatchStore() {
   }
   batch.currentIndex = index;
   const task = batch.stores[index];
-  if (batch.options?.clearExisting !== false && task.attempts === 0) await clearStoreResult(task.sellerKey);
+  if (batch.options?.clearExisting !== false && !task.startedAt && task.attempts === 0) await clearStoreResult(task.sellerKey);
   task.status = "loading";
   task.phase = "loading";
   task.attempts += 1;

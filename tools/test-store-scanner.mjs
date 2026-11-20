@@ -189,6 +189,8 @@ const batchCsv = core.buildBatchCsv({ batch, stores: batchStores });
 assert.match(batchCsv, /"'=HJ\|025"/);
 assert.match(batchCsv, /"327,28"/);
 assert.doesNotMatch(batchCsv, /人工找品状态/, "original summary CSV must keep its existing format");
+assert.equal(core.buildManualSourcingCsv({ batch, stores: batchStores }).split("\r\n").length, 1, "legacy data without batch evidence cannot be handed off");
+batchStores.hj025.batchCapture = { batchId: batch.id, skus: ["3258064058"] };
 const manualCsv = core.buildManualSourcingCsv({ batch, stores: batchStores });
 const manualRows = manualCsv.split("\r\n");
 assert.equal(manualRows.length, 2, "manual handoff should contain one row per eligible product, without empty-store placeholders");
@@ -229,6 +231,7 @@ assert.equal(riskQueue.tasks.find((entry) => entry.ozon.sku === "land").ozon.shi
 assert.equal(riskQueue.tasks.find((entry) => entry.ozon.sku === "allowed").ozon.shippingRestriction, null);
 assert.match(core.buildBatchMarkdown({ batch, stores: riskBatchStores, exportedAt: "2026-08-28 12:00:00" }), /待人工复核/);
 assert.match(core.buildBatchCsv({ batch, stores: riskBatchStores }), /仅限陆运/);
+riskBatchStores.hj025.batchCapture = { batchId: batch.id, skus: ["pending", "allowed", "excluded", "land", "clear"] };
 const manualRiskCsv = core.buildManualSourcingCsv({ batch, stores: riskBatchStores });
 assert.equal(manualRiskCsv.split("\r\n").length, 4, "manual handoff must exclude pending and rejected prohibited goods");
 assert.match(manualRiskCsv, /"仅限陆运"/);
@@ -363,7 +366,7 @@ assert.match(batchHtmlSource, /id="shippingRisks"/);
 assert.match(batchHtmlSource, /禁运与运输限制复核/);
 
 const manifest = JSON.parse(fs.readFileSync(new URL("../ozon-erp-collector-extension/manifest.json", import.meta.url), "utf8"));
-assert.equal(manifest.version, "0.6.43");
+assert.equal(manifest.version, "0.6.44");
 assert.ok(manifest.permissions.includes("alarms"));
 assert.ok(manifest.permissions.includes("unlimitedStorage"));
 

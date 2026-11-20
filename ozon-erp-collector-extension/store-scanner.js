@@ -24,6 +24,7 @@
   const records = new Map();
   const observedSkus = new Set();
   const attemptObservedSkus = new Set();
+  const batchQualifiedSkus = new Set();
   const acknowledgedAttemptSkus = new Set();
   const pendingLinks = new Set();
   const productAnchors = new Set();
@@ -280,6 +281,7 @@
 
   function storeState() {
     return {
+        ...(activeBatchId ? { batchCapture: { batchId: activeBatchId, skus: [...batchQualifiedSkus] } } : {}),
         storeName: storeName(),
         storeUrl,
         observedCount: observedSkus.size,
@@ -475,6 +477,10 @@
   function applyFoundProducts(found) {
     let changed = false;
     found.forEach((product) => {
+      if (activeBatchId && !batchQualifiedSkus.has(product.sku)) {
+        batchQualifiedSkus.add(product.sku);
+        changed = true;
+      }
       const previous = records.get(product.sku);
       const next = { ...previous, ...product, foundAt: previous?.foundAt || product.foundAt };
       if (!product.competitor && previous?.competitor) {
@@ -734,6 +740,7 @@
     if (autoTimer) clearTimeout(autoTimer);
     if (options.batchId) {
       activeBatchId = String(options.batchId);
+      batchQualifiedSkus.clear();
       activeAttemptId = String(options.attemptId || "");
       attemptObservedSkus.clear();
       acknowledgedAttemptSkus.clear();
@@ -743,6 +750,7 @@
       });
       window.scrollTo({ top: 0, left: 0, behavior: "auto" });
     } else {
+      batchQualifiedSkus.clear();
       activeAttemptId = "";
       attemptObservedSkus.clear();
       acknowledgedAttemptSkus.clear();

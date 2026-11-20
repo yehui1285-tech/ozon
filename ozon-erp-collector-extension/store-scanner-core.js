@@ -236,6 +236,11 @@
     Object.entries(incomingProducts).forEach(([sku, product]) => {
       const previous = previousProducts[sku] || {};
       const next = { ...previous, ...product };
+      // The background review decision is authoritative over a scanner's older snapshot.
+      if (Object.hasOwn(previous, "shippingReviewDecision")) {
+        next.shippingReviewDecision = previous.shippingReviewDecision;
+        next.shippingReviewedAt = previous.shippingReviewedAt;
+      }
       if (!product?.competitor && previous.competitor) {
         next.competitor = previous.competitor;
         next.competitorReady = previous.competitorReady;
@@ -243,9 +248,15 @@
       products[sku] = next;
     });
     const observedSkus = [...new Set([...(existing?.observedSkus || []), ...(incoming?.observedSkus || [])].map(String).filter(Boolean))];
+    const capture = incoming.batchCapture;
+    const batchCapture = capture?.batchId ? {
+      batchId: capture.batchId,
+      skus: mergeAttemptObservedSkus(existing.batchCapture?.batchId === capture.batchId ? existing.batchCapture.skus : [], capture.skus),
+    } : existing.batchCapture;
     return {
       ...existing,
       ...incoming,
+      ...(batchCapture ? { batchCapture } : {}),
       observedCount: observedSkus.length || Math.max(Number(existing?.observedCount) || 0, Number(incoming?.observedCount) || 0),
       observedSkus,
       pendingLinks: [...new Set((incoming?.pendingLinks || []).map(canonicalProductLink).filter(Boolean))],
@@ -321,8 +332,13 @@
       "起订量MOQ", "国内运费（人民币）", "同款核对", "复核人", "复核时间", "备注",
     ];
     const lines = [header.map(csvCell).join(",")];
+    const capturedSkus = new Map((batch?.stores || []).map(({ sellerKey }) => {
+      const capture = stores[sellerKey]?.batchCapture;
+      return [sellerKey, new Set(capture?.batchId === batch?.id ? capture.skus || [] : [])];
+    }));
     batchProductRows(batch, stores)
-      .filter(({ product }) => product && productAllowedForTaskQueue(product))
+      .filter(({ product, task }) => product && capturedSkus.get(task.sellerKey)?.has(String(product.sku))
+        && productAllowedForTaskQueue(product))
       .forEach(({ task, saved, storeIndex, productIndex, product }) => {
         const risk = productShippingRisk(product);
         const collected = [

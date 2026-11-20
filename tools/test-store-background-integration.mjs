@@ -235,4 +235,65 @@ assert.equal(lateProgressAfterClear.ok, false);
 const clearEmptyResult = await context.clearStoreBatch({});
 assert.equal(clearEmptyResult.cleared, false);
 
+// Two stores: historical records must not be attributed to a new batch.
+for (const sellerKey of ["alpha", "beta"]) {
+  await context.writeStoreResult(sellerKey, { products: { [sellerKey + "-old"]: { sku: sellerKey + "-old" } } }, "replace");
+}
+const urls = ["https://www.ozon.ru/seller/alpha/", "https://www.ozon.ru/seller/beta/"];
+await context.startStoreBatch({ urls, clearExisting: true });
+const batchId = (await context.getBatch()).id;
+async function handoff() {
+  const batch = await context.getBatch();
+  const { stores } = await context.getBatchStoreResults({ sellerKeys: ["alpha", "beta"] });
+  return context.OzonStoreScannerCore.buildManualSourcingCsv({ batch, stores });
+}
+async function capture(sellerKey, sku) {
+  const state = (await context.getStoreScanState({ sellerKey })).state || {};
+  await context.saveStoreScanState({ sellerKey, state: {
+    ...state, products: { ...state.products, [sku]: { sku, name: "无人机" } },
+    batchCapture: { batchId, skus: [sku] },
+  } });
+}
+await capture("alpha", "alpha-new");
+const staleAlphaSnapshot = (await context.getStoreScanState({ sellerKey: "alpha" })).state;
+await context.setStoreProductShippingDecision({ sellerKey: "alpha", sku: "alpha-new", decision: "allowed" });
+await context.saveStoreScanState({ sellerKey: "alpha", state: staleAlphaSnapshot });
+await context.pauseStoreBatch();
+await context.resumeStoreBatch();
+assert.equal((await context.getStoreScanState({ sellerKey: "alpha" })).state?.products?.["alpha-new"]?.shippingReviewDecision, "allowed", "first-attempt pause/resume must preserve the saved product and review");
+assert.match(await handoff(), /"alpha-new"/);
+assert.doesNotMatch(await handoff(), /"beta-old"/, "waiting store's historical capture must not enter the current batch");
+const beforeRetry = await context.getBatch();
+beforeRetry.stores[0].status = "partial";
+beforeRetry.status = "paused";
+await context.saveBatch(beforeRetry);
+await context.retryFailedBatchStores();
+assert.match(await handoff(), /"alpha-new"/, "explicit retry must retain saved product and batch membership");
+const finishing = await context.getBatch();
+await context.finishBatchStore({ batchId, attemptId: finishing.stores[0].attemptId, sellerKey: "alpha", complete: true, observedCount: 1, qualifiedCount: 1 }, { tab: { id: finishing.tabId } });
+storageData.ozonStoreBatchV1.nextRunAt = Date.now() - 1;
+await context.continueBatchAfterCooldown({ batchId, dueAt: storageData.ozonStoreBatchV1.nextRunAt });
+await capture("beta", "beta-new");
+await context.setStoreProductShippingDecision({ sellerKey: "beta", sku: "beta-new", decision: "allowed" });
+const finalHandoff = await handoff();
+assert.match(finalHandoff, /"alpha-new"/);
+assert.match(finalHandoff, /"beta-new"/);
+assert.doesNotMatch(finalHandoff, /"alpha-old"|"beta-old"/);
+assert.equal(finalHandoff.split("\r\n").length, 3);
+
+// A preserved historical SKU is eligible only once actually found in the new batch.
+await context.clearStoreBatch({ batchId });
+const preservedBatch = await context.startStoreBatch({ urls, clearExisting: false });
+const preservedId = preservedBatch.batch.id;
+assert.equal((await handoff()).split("\r\n").length, 1);
+const priorAlpha = (await context.getStoreScanState({ sellerKey: "alpha" })).state;
+assert.ok(priorAlpha.products["alpha-new"]);
+await context.saveStoreScanState({ sellerKey: "alpha", state: {
+  ...priorAlpha, batchCapture: { batchId: preservedId, skus: ["alpha-new"] },
+} });
+assert.match(await handoff(), /"alpha-new"/);
+assert.doesNotMatch(await handoff(), /"beta-new"/);
+await context.saveStoreScanState({ sellerKey: "alpha", state: priorAlpha });
+assert.match(await handoff(), /"alpha-new"/, "late snapshots from a preceding batch must not replace current membership");
+
 console.log("Store background integration tests passed.");

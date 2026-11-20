@@ -242,14 +242,16 @@ function download(name, content, type, includeBom = true) {
 
 async function exportBatch(format) {
   if (!currentBatch) return;
-  const response = await send({ type: "getBatchStoreResults", sellerKeys: currentBatch.stores.map((task) => task.sellerKey) });
+  const batch = currentBatch;
+  const response = await send({ type: "getBatchStoreResults", sellerKeys: batch.stores.map((task) => task.sellerKey) });
+  if (currentBatch?.id !== batch.id) throw new Error("批次已变化，请重新导出。");
   const stores = response.stores || {};
   const date = new Date().toISOString().slice(0, 10);
   const exportedAt = new Date().toLocaleString("zh-CN", { hour12: false });
   if (format === "manual") {
-    const csv = core.buildManualSourcingCsv({ batch: currentBatch, stores });
+    const csv = core.buildManualSourcingCsv({ batch, stores });
     const count = csv.split("\r\n").length - 1;
-    if (!count) throw new Error("当前批次没有可交给人工找品的商品；请先检查扫描结果和运输风险复核。");
+    if (!count) throw new Error("当前批次没有已确认归属且可交接的商品；请检查扫描结果和运输风险复核。旧版批次须重新扫描才能确认归属。");
     download(`Ozon人工找品交接_${date}.csv`, csv, "text/csv;charset=utf-8");
     const incomplete = currentBatch.status !== "completed" ? "；扫描尚未完成，后续请重新导出" : "";
     setMessage(`已导出人工找品表，共${count}件；候选链接、规格实价、MOQ和同款结论均待人工填写${incomplete}。`);
