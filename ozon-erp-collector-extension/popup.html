@@ -90,7 +90,7 @@
   <header class="app-header">
     <div class="app-mark">OZ</div>
     <div>
-      <h1>OZON 采集助手 <span class="version">v0.6.44</span></h1>
+      <h1>OZON 采集助手 <span class="version">v0.6.45</span></h1>
       <p class="subtitle">商品详情采集与店铺选品扫描</p>
     </div>
   </header>
@@ -106,6 +106,13 @@
       <button id="autoStart" class="secondary" type="button">开启本轮自动启动</button>
       <button id="autoStop" class="stop" type="button" hidden>关闭自动启动</button>
     </div>
+    <hr style="border:0;border-top:1px solid #e0e5f7;margin:12px 0">
+    <p class="surface-title">连接 zachary 的工作台</p>
+    <a href="https://deep-breath-design-desk.yehui1285.chatgpt.site/ozon/scans" target="_blank" rel="noopener" class="footer-link">打开工作台 · 获取连接码</a>
+    <input id="wbToken" type="password" autocomplete="off" placeholder="粘贴连接码" style="width:100%;padding:8px;border:1px solid #dce2f4;border-radius:8px">
+    <div class="control-grid"><button id="wbConnect">连接</button><button id="wbDisconnect" class="secondary">断开</button></div>
+    <label style="display:block;margin-top:8px;font-size:12px"><input id="wbAuto" type="checkbox" checked> 自动同步当前扫描批次及待上传批次</label>
+    <p id="wbState" aria-live="polite" class="surface-copy"></p>
     <p id="status" aria-live="polite"></p>
   </main>
 

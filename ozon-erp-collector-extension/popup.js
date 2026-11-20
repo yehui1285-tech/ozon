@@ -80,3 +80,11 @@ autoStopButton.addEventListener("click", () => {
 });
 
 refreshAutoState();
+
+const wbEl=id=>document.getElementById(id);
+function wbMsg(message){return new Promise((resolve,reject)=>chrome.runtime.sendMessage(message,r=>chrome.runtime.lastError||!r?.ok?reject(Error(chrome.runtime.lastError?.message||r?.error||'连接失败')):resolve(r)))}
+async function wbRefresh(){try{const r=await wbMsg({type:'wbStatus'});wbEl('wbState').textContent=r.connected?'已连接工作台'+(r.sync?.at?' · 上次同步 '+new Date(r.sync.at).toLocaleString():''):'尚未连接';wbEl('wbAuto').checked=r.auto;wbEl('wbAuto').disabled=!r.connected;wbEl('wbDisconnect').disabled=!r.connected;}catch(e){wbEl('wbState').textContent=e.message}}
+wbEl('wbConnect').onclick=async()=>{try{wbEl('wbConnect').disabled=true;await wbMsg({type:'wbConnect',token:wbEl('wbToken').value,auto:wbEl('wbAuto').checked});wbEl('wbToken').value='';await wbRefresh()}catch(e){wbEl('wbState').textContent=e.message}finally{wbEl('wbConnect').disabled=false}};
+wbEl('wbDisconnect').onclick=async()=>{try{await wbMsg({type:'wbDisconnect'});await wbRefresh()}catch(e){wbEl('wbState').textContent=e.message}};
+wbEl('wbAuto').onchange=async()=>{try{await wbMsg({type:'wbAuto',enabled:wbEl('wbAuto').checked});await wbRefresh()}catch(e){wbEl('wbState').textContent=e.message}};
+wbRefresh();

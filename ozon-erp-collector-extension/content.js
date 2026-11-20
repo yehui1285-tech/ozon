@@ -759,8 +759,11 @@ function rememberSentProduct(product) {
 
 function sendConfirmedProduct(product) {
   const detailText = `尺寸 ${product.lengthCm || "-"}x${product.widthCm || "-"}x${product.heightCm || "-"}cm，重量 ${product.weightKg || "-"}kg`;
-  setStatus("正在发送到核价页...");
-  chrome.runtime.sendMessage({ type: "sendProductToPricing", product }, (response) => {
+  const destination=document.getElementById("ozon-send-target")?.value||"workbench";
+  const sendButton=document.getElementById("ozon-send-pricing");if(sendButton)sendButton.disabled=true;
+  setStatus("正在发送，请等待保存确认...");
+  chrome.runtime.sendMessage({ type: "sendProductToPricing", product, destination, requestId:crypto.randomUUID() }, (response) => {
+    if(sendButton)sendButton.disabled=false;
     if (chrome.runtime.lastError) {
       const message = chrome.runtime.lastError.message;
       setStatus(`发送失败：${message}`, false);
@@ -774,7 +777,7 @@ function sendConfirmedProduct(product) {
       return;
     }
     rememberSentProduct(product);
-    setStatus(`已发送：SKU ${product.sku || "-"}，绿标 ${product.greenPrice || "-"}，黑标 ${product.blackPrice || "-"}，佣金 ${product.commission || "-"}%，运费 ${product.freight || "-"}；${detailText}`);
+    setStatus(`已发送到 ${(response.destinations||["核价页"]).join("、")}：SKU ${product.sku || "-"}，绿标 ${product.greenPrice || "-"}，黑标 ${product.blackPrice || "-"}，佣金 ${product.commission || "-"}%，运费 ${product.freight || "-"}；${detailText}`);
     addCollectionLog(`发送成功：SKU ${product.sku || "-"}，绿标 ${product.greenPrice || "-"}，黑标 ${product.blackPrice || "-"}`);
   });
 }
@@ -1039,7 +1042,8 @@ function installPanel() {
         </div>
         <div id="ozon-edit-route" style="margin-top:5px;color:#64748b;line-height:1.35;"></div>
       </div>
-      <button id="ozon-send-pricing" style="width:100%;height:34px;margin-top:8px;border:0;border-radius:8px;background:#1768d1;color:#fff;font-weight:800;cursor:pointer;">发送到核价页</button>
+      <label style="display:block;margin-top:8px;">发送目标<select id="ozon-send-target" style="width:100%;height:30px;margin-top:4px;border:1px solid #cbd5e1;border-radius:6px"><option value="workbench">工作台核价表（推荐）</option><option value="original">原核价表</option><option value="both">同时发送到两个表</option></select></label>
+      <button id="ozon-send-pricing" style="width:100%;height:34px;margin-top:8px;border:0;border-radius:8px;background:#1768d1;color:#fff;font-weight:800;cursor:pointer;">发送核价数据</button>
       <div id="ozon-detail-status" style="margin-top:8px;line-height:1.45;color:#334155;">先检查数据，再确认发送</div>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:9px;">
         <strong>最近采集日志</strong>
@@ -1074,6 +1078,7 @@ function installPanel() {
     chrome.storage.local.remove(COLLECTION_LOG_KEY, () => renderCollectionLog([]));
   });
   document.getElementById("ozon-send-pricing").addEventListener("click", sendToPricingPage);
+  const wbTarget=document.getElementById("ozon-send-target");chrome.storage.local.get("ozonWorkbenchDestination",v=>{if(["workbench","original","both"].includes(v.ozonWorkbenchDestination))wbTarget.value=v.ozonWorkbenchDestination});wbTarget.addEventListener("change",()=>chrome.storage.local.set({ozonWorkbenchDestination:wbTarget.value}));
   document.getElementById("ozon-check-detail").addEventListener("click", () => {
     const p = collectProduct();
     fillEditor(p);

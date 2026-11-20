@@ -1,5 +1,6 @@
 importScripts("black-price-core.js", "main-image-core.js", "task-pricing-core.js", "store-scanner-core.js");
 importScripts("1688-core.js", "1688-background.js");
+importScripts("workbench-bridge.js");
 
 const blackPriceCore = globalThis.OzonBlackPriceCore;
 const mainImageCore = globalThis.OzonMainImageCore;
@@ -926,6 +927,7 @@ async function startStoreBatch(message) {
   const parsed = storeScannerCore.parseStoreUrlList((message.urls || []).join("\n"), BATCH_MAX_STORES);
   if (!parsed.urls.length) throw new Error("没有识别到有效的 Ozon 店铺地址。");
   const oldBatch = await getBatch();
+  if(oldBatch) await wbArchiveBeforeReset(oldBatch);
   const oldTask = oldBatch?.stores?.[oldBatch.currentIndex];
   if (oldBatch?.tabId && ["loading", "recovering", "scanning"].includes(oldTask?.status)) {
     await chrome.tabs.sendMessage(oldBatch.tabId, { type: "stopStoreScan", silent: true }).catch(() => null);
@@ -1087,6 +1089,7 @@ async function clearStoreBatch(message = {}) {
   const batch = await getBatch();
   if (!batch) return { ok: true, batch: null, cleared: false };
   if (message.batchId && message.batchId !== batch.id) throw new Error("批量任务已经变化，请刷新页面后重试。");
+  await wbArchiveBeforeReset(batch);
   const task = batch.stores?.[batch.currentIndex];
   const wasActive = batch.status === "running" || ["loading", "recovering", "scanning", "retrying"].includes(task?.status);
   await disarmBatchCooldown();
@@ -1262,7 +1265,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   else if (message?.type === "activateOnCurrentOzonTab") operation = injectCurrentOzonTab();
   else if (message?.type === "setAutoInject") operation = setAutoInject(message.enabled);
   else if (message?.type === "getAutoInject") operation = getAutoInject();
-  else if (message?.type === "sendProductToPricing") operation = sendToPricing(message.product || {});
+  else if (message?.type === "sendProductToPricing") operation = wbSendDetail(message.product || {},message.destination || "original",message.requestId);
+  else if (message?.type === "wbConnect") operation = wbConnect(message);
+  else if (message?.type === "wbDisconnect") operation = wbDisconnect();
+  else if (message?.type === "wbStatus") operation = wbStatus();
+  else if (message?.type === "wbAuto") operation = wbAuto(message.enabled);
+  else if (message?.type === "wbSyncBatch") operation = wbSyncBatch(true);
   else if (message?.type === "readBlackPriceFromProductUrl") operation = readBlackPriceFromProductUrl(message.url);
   else if (message?.type === "readMainImageFromProductUrl") operation = readMainImageFromProductUrl(message.url);
   else if (message?.type === "readOzonTaskPricing") operation = readOzonTaskPricing(message.task);
@@ -1332,6 +1340,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
+  if(alarm.name===WB_ALARM){void wbSyncBatch(false);return;}
   if (alarm.name === BATCH_NEXT_ALARM) {
     batchOperation(() => continueBatchAfterCooldown({ source: "alarm-fallback" })).catch((error) => batchOperation(() => failCurrentBatchStore(error.message || String(error))));
     return;
@@ -1345,10 +1354,12 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 });
 
 chrome.runtime.onStartup.addListener(() => {
+  wbSettings().then(s=>{if(s.token)wbSchedule()}).catch(()=>{});
   enqueueStoreOperation(() => ensureStoreStorageMigrated()).catch(() => null);
   batchOperation(() => resumeInterruptedBatch()).catch(() => null);
 });
 chrome.runtime.onInstalled.addListener(() => {
+  wbSettings().then(s=>{if(s.token)wbSchedule()}).catch(()=>{});
   enqueueStoreOperation(() => ensureStoreStorageMigrated()).catch(() => null);
   batchOperation(() => resumeInterruptedBatch()).catch(() => null);
 });

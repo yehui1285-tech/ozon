@@ -23,8 +23,8 @@
         <div class="summary"><div class="metric">任务状态<strong id="batchStatus">未创建</strong></div><div class="metric">店铺进度<strong id="storeProgress">0 / 0</strong></div><div class="metric">已查看商品<strong id="observedTotal">0</strong></div><div class="metric">符合要求<strong id="qualifiedTotal">0</strong></div></div>
         <p class="message" id="message">粘贴店铺地址后开始任务。</p>
         <p class="copy">当前由人工接手找品：优先导出人工找品表；疑似禁运且未允许的商品不会进入交接表。原始汇总和备用 Agent JSON 仍可导出。</p>
-        <div class="buttons" style="margin:0 0 12px"><button class="primary" id="exportManualCsv">导出人工找品表 CSV</button><button id="exportCsv">导出原始汇总 CSV</button><button id="exportMd">导出汇总 Markdown</button><button id="exportJson">导出 Agent 任务 JSON（备用）</button><button id="retryFailed">重试失败店铺</button></div>
-        <div class="table-wrap"><table><thead><tr><th>#</th><th>店铺</th><th>状态</th><th>尝试</th><th>已查看</th><th>符合</th><th>待复查</th><th>扫描动态</th><th>说明</th><th>操作</th></tr></thead><tbody id="tasks"><tr><td colspan="10" class="empty">尚未创建批量任务</td></tr></tbody></table></div>
+        <div class="buttons" style="margin:0 0 12px"><button class="primary" id="wbSyncNow">同步本批到工作台</button><button class="primary" id="exportManualCsv">导出人工找品表 CSV</button><button id="exportCsv">导出原始汇总 CSV</button><button id="exportMd">导出汇总 Markdown</button><button id="exportJson">导出 Agent 任务 JSON（备用）</button><button id="retryFailed">重试失败店铺</button></div>
+        <p class="copy" id="wbBatchStatus">工作台连接状态待检查</p><div class="table-wrap"><table><thead><tr><th>#</th><th>店铺</th><th>状态</th><th>尝试</th><th>已查看</th><th>符合</th><th>待复查</th><th>扫描动态</th><th>说明</th><th>操作</th></tr></thead><tbody id="tasks"><tr><td colspan="10" class="empty">尚未创建批量任务</td></tr></tbody></table></div>
       </section>
       <section class="card review-card">
         <h2>禁运与运输限制复核</h2>

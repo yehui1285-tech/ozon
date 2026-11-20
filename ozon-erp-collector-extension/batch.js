@@ -282,3 +282,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 });
 
 refresh();
+
+async function wbBatchStatus(){try{const r=await send({type:'wbStatus'}),last=r.sync;$("wbBatchStatus").textContent=r.connected?(r.auto?'工作台自动同步已开启':'工作台自动同步已关闭')+(last?.ok?' · 最近成功：'+last.count+' 件 · '+new Date(last.at).toLocaleString():last?.error?' · 最近失败：'+last.error:''):'尚未连接工作台，请在采集助手弹窗粘贴连接码';}catch(e){$("wbBatchStatus").textContent=e.message}}
+$("wbSyncNow").onclick=async()=>{const button=$("wbSyncNow");button.disabled=true;try{setMessage('正在同步本批已确认商品…');const r=await send({type:'wbSyncBatch'});setMessage('已同步至工作台'+(r.count>=0?' · '+r.count+' 件':''));}catch(e){setMessage(e.message,true)}finally{button.disabled=false;wbBatchStatus()}};
+wbBatchStatus();setInterval(wbBatchStatus,10000);

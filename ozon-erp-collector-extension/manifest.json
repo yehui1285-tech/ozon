@@ -1,16 +1,24 @@
 {
   "manifest_version": 3,
   "name": "OZON ERP Detail Sender",
-  "version": "0.6.44",
+  "version": "0.6.45",
   "description": "Collect OZON product data, scan stores, and send product details to the pricing page.",
-  "permissions": ["storage", "unlimitedStorage", "activeTab", "tabs", "scripting", "alarms"],
+  "permissions": [
+    "storage",
+    "unlimitedStorage",
+    "activeTab",
+    "tabs",
+    "scripting",
+    "alarms"
+  ],
   "host_permissions": [
     "https://www.ozon.ru/*",
     "https://yehui1285-tech.github.io/ozon/*",
     "http://127.0.0.1:17628/*",
     "https://*.1688.com/*",
     "https://*.ozone.ru/*",
-    "https://*.alicdn.com/*"
+    "https://*.alicdn.com/*",
+    "https://deep-breath-design-desk.yehui1285.chatgpt.site/*"
   ],
   "action": {
     "default_title": "OZON ERP Detail Sender",
@@ -24,17 +32,28 @@
       "matches": [
         "https://yehui1285-tech.github.io/ozon/*"
       ],
-      "js": ["content.js"],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_idle"
     },
     {
-      "matches": ["http://127.0.0.1:17628/*"],
-      "js": ["pinduoduo-bridge.js"],
+      "matches": [
+        "http://127.0.0.1:17628/*"
+      ],
+      "js": [
+        "pinduoduo-bridge.js"
+      ],
       "run_at": "document_start"
     },
     {
-      "matches": ["https://*.1688.com/*"],
-      "js": ["1688-core.js", "1688-content.js"],
+      "matches": [
+        "https://*.1688.com/*"
+      ],
+      "js": [
+        "1688-core.js",
+        "1688-content.js"
+      ],
       "run_at": "document_idle"
     }
   ]
