@@ -12,12 +12,19 @@ const replace = (text, before, after) => {
   if (!text.includes(before)) throw new Error("Standalone source anchor missing: " + before.slice(0, 80));
   return text.replace(before, after);
 };
+const localTabs = [["pricing.html","核价表"],["batch.html","批量店铺扫描"],["product-pool.html","商品池"]];
+const withLocalNav = (html,current,anchor) => {
+  const nav = `<nav class="standalone-nav" aria-label="Ozon 功能导航">${localTabs.map(([href,label])=>`<a href="${href}"${href===current?' aria-current="page"':''}>${label}</a>`).join("")}</nav>`;
+  return replace(replace(html,"</head>",'<link rel="stylesheet" href="standalone-nav.css">\n</head>'),anchor,anchor+"\n    "+nav);
+};
+write("standalone-nav.css",`.standalone-nav{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:7px;margin:0 0 18px;background:#fff;border:1px solid #dce2ef;border-radius:12px;box-shadow:0 3px 12px #304b7410}.standalone-nav a{display:flex;align-items:center;justify-content:center;padding:10px 16px;border-radius:8px;text-decoration:none;color:#405071;font-size:14px;font-weight:700;min-height:42px;white-space:nowrap}.standalone-nav a:hover{background:#eef2fd}.standalone-nav a[aria-current=page]{background:#405ec5;color:#fff}.standalone-nav a:focus-visible{outline:2px solid #405ec5;outline-offset:2px}body>.standalone-nav{margin:18px 24px 0}@media(max-width:600px){.standalone-nav a{flex:1;padding:9px 6px;font-size:13px}.standalone-nav{gap:4px}}`);
 const keep = [
   "1688-background.js","1688-content.js","1688-core.js","black-price-core.js","main-image-core.js",
   "task-pricing-core.js","store-scanner-core.js","store-scanner.js","pinduoduo-bridge.js",
   "sourcing-enrichment.html","sourcing-enrichment.js","product-pool-core.js","product-pool.html","product-pool.js","product-pool.css",
 ];
 for (const name of keep) fs.copyFileSync(path.join(extension, name), path.join(dest, name));
+write("product-pool.html",withLocalNav(read("product-pool.html"),"product-pool.html","<main>"));
 const manifest = JSON.parse(read("manifest.json"));
 manifest.name = "OZON 独立选品助手";
 manifest.host_permissions = manifest.host_permissions.filter(url => !url.includes("yehui1285"));
@@ -47,7 +54,7 @@ write("popup.js", read("popup.js").split(/\r?\nconst wbEl=/)[0] + "\n");
 let batch = read("batch.html");
 batch = batch.replace(/<button class="primary" id="wbSyncNow">[^<]+<\/button>/, "")
   .replace(/<p class="copy" id="wbBatchStatus">[^<]+<\/p>/, "");
-write("batch.html", batch);
+write("batch.html", withLocalNav(batch,"batch.html",'<div class="wrap">'));
 write("batch.js", read("batch.js").split(/\r?\nasync function wbBatchStatus\(/)[0] + "\n");
 
 // Reuse the exact local pricing code and freight rules; extension pages need external JS under MV3 CSP.
@@ -57,7 +64,7 @@ html = replace(html, "<style>\n__OZON_STYLES__\n</style>", '<link rel="styleshee
 html = replace(html, "<script>\n__OZON_APP__\n</script>", '<script src="pricing-core.js"></script><script src="pricing-app.js"></script>');
 html = html.replace(/<section class="panel">\s*<div class="toolbar">\s*<h2>云端同步/, '<section class="panel" hidden><div class="toolbar"><h2>云端同步');
 html = html.replace(/\s*<div id="syncStatus" class="sync-status">[^<]*<\/div>\s*<\/section>/, '</section><div id="syncStatus" class="sync-status">核价数据仅保存于当前浏览器。</div>');
-write("pricing.html", html);
+write("pricing.html", withLocalNav(html,"pricing.html","<body>"));
 write("pricing.css", web("styles.css") + "\n[hidden] { display: none !important; }\n");
 write("pricing-core.js", web("pricing-core.js"));
 let app = web("app.js").replace(/^\s*const FEISHU_DETAIL_TABLE_URL = .*?;$/m, '    const FEISHU_DETAIL_TABLE_URL = "";');

@@ -18,5 +18,13 @@ assert.match(read("background.js"),/chrome\.runtime\.getURL\("pricing\.html"\)/)
 assert.match(read("pricing-app.js"),/deliverProductToPricing/);
 assert.match(read("pricing.html"),/src="pricing-app\.js"/);
 assert.doesNotMatch(read("pricing.html"),/<script>/);
+for (const current of ["pricing.html","batch.html","product-pool.html"]) {
+  const nav=read(current).match(/<nav class="standalone-nav"[^>]*>([\s\S]*?)<\/nav>/)?.[1];
+  assert.ok(nav, `${current} must have shared local navigation`);
+  for (const target of ["pricing.html","batch.html","product-pool.html"]) {
+    assert.ok(nav.includes(`href="${target}"`), `${current} links to ${target}`);
+    assert.equal(nav.includes(`href="${target}" aria-current="page"`), current===target);
+  }
+}
 assert.equal(read("product-pool-core.js"),fs.readFileSync("ozon-erp-collector-extension/product-pool-core.js","utf8"));
 console.log("Standalone build: local pricing, shared pool and account isolation passed.");
