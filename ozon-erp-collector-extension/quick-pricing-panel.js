@@ -24,7 +24,7 @@
     }
     function setBase(row){base=row?{...row}:null;for(const [key] of fields)inputs[key].value=String(row?.[key]??'');updateResult()}
     function updateChoices(matches,preferred){rows=matches;const list=q('row');list.replaceChildren();if(matches.length!==1){const o=document.createElement('option');o.value='';o.textContent=matches.length?'请选择具体核价记录':'未找到匹配核价记录';list.append(o)}for(const row of matches){const o=document.createElement('option');o.value=row.id;o.textContent=`绿标 ${row.green||'—'} / 黑标 ${row.black||'—'} · ${row.id.slice(0,10)}`;list.append(o)}list.value=matches.some(r=>r.id===preferred)?preferred:matches.length===1?matches[0].id:'';}
-    function showProduct(){q('title').textContent=product?`${product.sku} · ${product.title||'商品'}`:'请在左侧选择商品';const link=q('link');link.hidden=true;link.removeAttribute('href');try{const u=new URL(product?.link||'');if(u.protocol==='https:'&&u.hostname==='www.ozon.ru'&&u.pathname.startsWith('/product/')&&!u.username&&!u.password){link.href=u.href;link.hidden=false}}catch{};updateResult()}
+    function showProduct(){q('title').textContent=product?`${product.sku} · ${product.title||'商品'}`:'请点击左侧商品名称';const link=q('link');link.hidden=true;link.removeAttribute('href');try{const u=new URL(product?.link||'');if(u.protocol==='https:'&&u.hostname==='www.ozon.ru'&&u.pathname.startsWith('/product/')&&!u.username&&!u.password){link.href=u.href;link.hidden=false}}catch{};updateResult()}
     async function refresh(manual=false){
       if(!product||busy||disposed)return;if(dirty()){if(manual)notify('有未保存修改，先保存或切换后重新读取。',true);return}
       const token=++seq,sku=product.sku,previous=base?.id;

@@ -33,4 +33,12 @@ assert.throws(()=>patchRow(rows,{sku:'12',id:'id-a',base:original,patch:{cost:'5
 assert.throws(()=>patchRow(rows,{sku:'0012',id:'id-a',base:{...original,cost:'49'},patch:{cost:'58'}}),/冲突|变化/);
 assert.throws(()=>patchRow(rows,{sku:'0012',id:'id-a',base:original,patch:{sku:'12'}}),/字段/);
 assert.throws(()=>patchRow(rows,{sku:'0012',id:'id-a',base:{},patch:{cost:'58'}}),/冲突|变化/);
+const navigate=context.OzonQuickPricingCore.selectBeforeOpen;
+let selected=0,prevented=0;
+assert.equal(navigate({button:0,preventDefault:()=>prevented++},()=>{selected++;return true}),true);
+assert.equal(selected,1);assert.equal(prevented,0);
+assert.equal(navigate({button:1,preventDefault:()=>prevented++},()=>false),false);
+assert.equal(prevented,1);
+assert.equal(navigate({button:2,preventDefault:()=>prevented++},()=>{selected++;return true}),true);
+assert.equal(selected,1,'right click must not select a different SKU');
 console.log('Quick pricing: exact SKU and row identity, original formula, target cost, incomplete inputs, conflict-safe patch passed.');

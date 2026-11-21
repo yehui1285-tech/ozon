@@ -51,7 +51,7 @@ function render() {
     link.textContent = p.title || "商品";
     if (/^https:\/\/www\.ozon\.ru\/product\//i.test(p.link)) {link.href = p.link; link.target = "_blank"; link.rel = "noopener noreferrer";}
     name.append(link);
-    if(globalThis.ozonLocalQuick){const b=document.createElement('button');b.type='button';b.textContent='快速核价';b.addEventListener('click',()=>globalThis.ozonLocalQuick.select(p));name.append(document.createElement('br'),b)}
+    if(globalThis.ozonLocalQuick){const select=e=>globalThis.OzonQuickPricingCore.selectBeforeOpen(e,()=>globalThis.ozonLocalQuick.select(p));link.addEventListener('click',select);link.addEventListener('auxclick',select);link.title='选中此 SKU 并打开 Ozon 商品页';}
     cell(row,p.category); cell(row,p.price);
     const risk = cell(row,p.shippingRisk);
     if (p.blocked) risk.className = "blocked";

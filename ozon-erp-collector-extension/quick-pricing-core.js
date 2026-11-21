@@ -54,5 +54,10 @@
     return rows.map(row=>row===current?{...current,...updates}:row);
   }
 
-  scope.OzonQuickPricingCore=Object.freeze({rowsForSku,evaluate,patchRow});
+  function selectBeforeOpen(event,select){
+    if(event.button!==undefined&&event.button!==0&&event.button!==1)return true;
+    if(select()===true)return true;
+    event.preventDefault();return false;
+  }
+  scope.OzonQuickPricingCore=Object.freeze({rowsForSku,evaluate,patchRow,selectBeforeOpen});
 })(globalThis);
