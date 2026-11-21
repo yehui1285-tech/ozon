@@ -24,7 +24,13 @@ const keep = [
   "sourcing-enrichment.html","sourcing-enrichment.js","product-pool-core.js","product-pool.html","product-pool.js","product-pool.css",
 ];
 for (const name of keep) fs.copyFileSync(path.join(extension, name), path.join(dest, name));
-write("product-pool.html",withLocalNav(read("product-pool.html"),"product-pool.html","<main>"));
+let poolHtml = withLocalNav(read("product-pool.html"),"product-pool.html","<main>");
+poolHtml = replace(poolHtml,"</head>",'<link rel="stylesheet" href="quick-pricing-panel.css">\n</head>');
+poolHtml = replace(poolHtml,'    <section class="panel">','    <div class="qp-layout"><div><section class="panel">');
+poolHtml = replace(poolHtml,'  </main>','    </div><aside id="quick-pricing-panel" aria-label="单品快速核价"></aside></div>\n  </main>');
+poolHtml = replace(poolHtml,'</body>','<script src="pricing-core.js"></script><script src="quick-pricing-core.js"></script><script src="quick-pricing-panel.js"></script><script src="quick-pricing-local.js"></script>\n</body>');
+write("product-pool.html",poolHtml);
+for (const name of ['quick-pricing-core.js','quick-pricing-panel.js','quick-pricing-panel.css','quick-pricing-local.js']) fs.copyFileSync(path.join(extension,name),path.join(dest,name));
 const manifest = JSON.parse(read("manifest.json"));
 manifest.name = "OZON 独立选品助手";
 manifest.host_permissions = manifest.host_permissions.filter(url => !url.includes("yehui1285"));
@@ -61,12 +67,13 @@ write("batch.js", read("batch.js").split(/\r?\nasync function wbBatchStatus\(/)[
 const web = name => fs.readFileSync(path.join(root,"web-src",name),"utf8");
 let html = web("index.template.html");
 html = replace(html, "<style>\n__OZON_STYLES__\n</style>", '<link rel="stylesheet" href="pricing.css">');
-html = replace(html, "<script>\n__OZON_APP__\n</script>", '<script src="pricing-core.js"></script><script src="pricing-app.js"></script>');
+html = replace(html, "<script>\n__OZON_APP__\n</script>", '<script src="pricing-core.js"></script><script src="quick-pricing-core.js"></script><script src="pricing-app.js"></script>');
 html = html.replace(/<section class="panel">\s*<div class="toolbar">\s*<h2>云端同步/, '<section class="panel" hidden><div class="toolbar"><h2>云端同步');
 html = html.replace(/\s*<div id="syncStatus" class="sync-status">[^<]*<\/div>\s*<\/section>/, '</section><div id="syncStatus" class="sync-status">核价数据仅保存于当前浏览器。</div>');
 write("pricing.html", withLocalNav(html,"pricing.html","<body>"));
 write("pricing.css", web("styles.css") + "\n[hidden] { display: none !important; }\n");
 write("pricing-core.js", web("pricing-core.js"));
+write("quick-pricing-core.js", read("quick-pricing-core.js"));
 let app = web("app.js").replace(/^\s*const FEISHU_DETAIL_TABLE_URL = .*?;$/m, '    const FEISHU_DETAIL_TABLE_URL = "";');
 app = app.replace(/window\.addEventListener\("message", \(event\) => \{[\s\S]*?applyErpDetailToRow\(data\.product \|\| \{\}\);\s*\}\);/, `chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (message?.type !== "deliverProductToPricing" || sender.id !== chrome.runtime.id) return false;
@@ -74,12 +81,55 @@ app = app.replace(/window\.addEventListener\("message", \(event\) => \{[\s\S]*?a
         const before = rows.length;
         const blank = before === 1 && isBlankOrLegacyDefaultRow(rows[0]);
         if (!blank && before >= MAX_DRAFT_ROWS) throw new Error("核价表已达到行数上限");
+        if(quickPricingConflict || localStorage.getItem(PRICING_DRAFT_KEY)!==quickPricingBaseline)throw Error('核价已在另一页面变化，请刷新核价页后重试');
         applyErpDetailToRow(message.product || {});
-        savePricingDraft();
+        if(!savePricingDraft())throw Error('核价保存未确认，请重新读取核对');
         sendResponse({ok:true,destinations:["本地核价表"]});
       } catch (error) { sendResponse({ok:false,error:error.message}); }
       return false;
     });`);
+app += `
+// The pricing page remains the sole writer of its existing local draft.
+let quickPricingBaseline = localStorage.getItem(PRICING_DRAFT_KEY);
+let quickPricingConflict = false;
+const quickPricingOriginalSave = savePricingDraft;
+savePricingDraft = function () {
+  if (quickPricingConflict || localStorage.getItem(PRICING_DRAFT_KEY) !== quickPricingBaseline) {
+    if ($("syncStatus")) $("syncStatus").textContent="本地核价记录已在另一页面修改。请刷新核价页后继续。";
+    return false;
+  }
+  quickPricingOriginalSave();
+  quickPricingBaseline = localStorage.getItem(PRICING_DRAFT_KEY);
+  try {const actual=JSON.parse(quickPricingBaseline||'null');return Array.isArray(actual?.rows)&&actual.rows.length===rows.length&&actual.rows.every((r,i)=>r.id===rows[i].id&&PRICING_ROW_KEYS.every(k=>String(r[k]??'')===String(rows[i][k]??'')));}catch{return false;}
+};
+window.addEventListener("storage", event => {
+  if (event.storageArea === localStorage && event.key === PRICING_DRAFT_KEY && event.newValue !== quickPricingBaseline) quickPricingConflict = true;
+});
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (!message?.type?.startsWith("quickPricing") || sender.id !== chrome.runtime.id || sender.url !== chrome.runtime.getURL("product-pool.html")) return false;
+  try {
+    const stored = localStorage.getItem(PRICING_DRAFT_KEY);
+    if (quickPricingConflict || stored !== quickPricingBaseline) throw new Error("核价页数据已在其他页面变化。请先检查并刷新核价页，再返回商品池。");
+    if (message.type === "quickPricingRead") {
+      sendResponse({ok:true,rows:OzonQuickPricingCore.rowsForSku(rows,message.sku)});
+      return false;
+    }
+    if (message.type === "quickPricingPatch") {
+      const before=rows;
+      rows = OzonQuickPricingCore.patchRow(rows,{sku:message.sku,id:message.id,base:message.base,patch:message.patch});
+      renderRows();
+      if(!savePricingDraft()){rows=before;renderRows();throw Error("核价写入未确认，请刷新核价页");}
+      const saved = JSON.parse(localStorage.getItem(PRICING_DRAFT_KEY) || "null");
+      const persisted = saved?.rows?.find(row => row.id === message.id && row.sku === String(message.sku));
+      const updated=rows.find(row=>row.id===message.id&&row.sku===String(message.sku));
+      if (!persisted || !updated || PRICING_ROW_KEYS.some(key=>String(persisted[key]??'')!==String(updated[key]??''))) {rows=before;renderRows();throw new Error("核价已更新但本地保存未确认，请刷新核对。");}
+      sendResponse({ok:true,rows:OzonQuickPricingCore.rowsForSku(saved.rows,message.sku)});
+      return false;
+    }
+    throw new Error("不支持的核价操作");
+  } catch (error) { sendResponse({ok:false,error:error.message || String(error)}); return false; }
+});
+`;
 write("pricing-app.js",app);
 write("安装说明.txt", `OZON 独立选品助手 ${manifest.version}
 

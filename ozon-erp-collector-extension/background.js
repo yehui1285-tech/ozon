@@ -1310,7 +1310,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   else if (message?.type === "getProductPool") operation = enqueuePoolOperation(() => getProductPool());
   else if (message?.type === "addBatchToProductPool") operation = batchOperation(() => addBatchToProductPool(message));
   else if (message?.type === "importProductPoolHistory") operation = changeProductPool(pool => productPoolCore.importHistory(pool, message.text));
-  else if (message?.type === "updateProductPoolItem") operation = changeProductPool(pool => ({ state: productPoolCore.updateProduct(pool, message.sku, message.patch) }));
+  else if (message?.type === "updateProductPoolItem") operation = changeProductPool(pool => {
+    if(message.expected){const item=pool.products[message.sku];if(!item||item.status!==message.expected.status||item.notes!==message.expected.notes||item.blocked!==message.expected.blocked)throw Error('商品状态或备注已变化，请刷新后重试');}
+    return { state: productPoolCore.updateProduct(pool, message.sku, message.patch) };
+  });
   else if (message?.type === "openBatchManager") operation = chrome.tabs.create({ url: chrome.runtime.getURL("batch.html") }).then(() => ({ ok: true }));
   else if (message?.type === "openSourcingEnrichment") operation = chrome.tabs.create({ url: chrome.runtime.getURL("sourcing-enrichment.html") }).then(() => ({ ok: true }));
   else if (message?.type === "getStoreBatchState") operation = batchOperation(() => getBatch().then((batch) => ({ ok: true, batch })));

@@ -43,12 +43,15 @@ function render() {
   for (const p of filtered.slice(offset, offset + pageSize)) {
     const row = $("rows").insertRow();
     row.dataset.status = p.status;
+    row.dataset.sku = p.sku;
+    if (globalThis.ozonLocalQuick?.selectedSku === p.sku) row.classList.add('qp-selected');
     const name = cell(row, p.sku);
     name.append(document.createElement("br"));
     const link = document.createElement("a");
     link.textContent = p.title || "商品";
     if (/^https:\/\/www\.ozon\.ru\/product\//i.test(p.link)) {link.href = p.link; link.target = "_blank"; link.rel = "noopener noreferrer";}
     name.append(link);
+    if(globalThis.ozonLocalQuick){const b=document.createElement('button');b.type='button';b.textContent='快速核价';b.addEventListener('click',()=>globalThis.ozonLocalQuick.select(p));name.append(document.createElement('br'),b)}
     cell(row,p.category); cell(row,p.price);
     const risk = cell(row,p.shippingRisk);
     if (p.blocked) risk.className = "blocked";
@@ -103,6 +106,7 @@ function render() {
   $("page").textContent = filtered.length ? `${offset+1}–${Math.min(offset+pageSize,filtered.length)} / ${filtered.length}` : "0 件";
   $("previous").disabled = offset === 0;
   $("next").disabled = offset + pageSize >= filtered.length;
+  globalThis.ozonLocalQuick?.sync(filtered);
 }
 async function refresh() {try {pool=(await send({type:"getProductPool"})).pool;render();}catch(e){feedback(e.message,true);}}
 function download(name,text,type) {

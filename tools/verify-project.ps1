@@ -15,6 +15,8 @@ try {
   node tools/test-store-background-integration.mjs
   node tools/test-product-pool.mjs
   if ($LASTEXITCODE -ne 0) { throw "Product pool tests failed" }
+  node tools/test-quick-pricing.mjs
+  if ($LASTEXITCODE -ne 0) { throw "Quick pricing tests failed" }
   node tools/test-standalone.mjs
   if ($LASTEXITCODE -ne 0) { throw "Standalone tests failed" }
   node tools/test-pricing-core.mjs

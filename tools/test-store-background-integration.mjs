@@ -306,5 +306,13 @@ const pooled = await context.addBatchToProductPool({ batchId: poolBatch.id });
 assert.equal(pooled.added, 1);
 await context.clearStoreBatch({ batchId: poolBatch.id });
 assert.deepEqual(Object.keys((await context.getProductPool()).pool.products), ["111"]);
+const initial=(await context.getProductPool()).pool.products['111'];
+const poolMessage=message=>new Promise(resolve=>{for(const listener of listeners.messages){if(listener(message,{},resolve)===true)return}resolve({ok:false,error:'no listener'})});
+const expected={status:initial.status,notes:initial.notes,blocked:initial.blocked};
+const confirmed=await poolMessage({type:'updateProductPoolItem',sku:'111',patch:{status:'review',notes:'人工记录'},expected});
+assert.equal(confirmed.ok,true);
+const conflicting=await poolMessage({type:'updateProductPoolItem',sku:'111',patch:{status:'approved',notes:initial.notes},expected});
+assert.equal(conflicting.ok,false);
+assert.equal((await context.getProductPool()).pool.products['111'].notes,'人工记录');
 
 console.log("Store background integration tests passed.");
