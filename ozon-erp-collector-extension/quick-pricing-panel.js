@@ -7,7 +7,7 @@
     root.classList.add('qp-panel');
     root.innerHTML='<div class="qp-header"><h2>单品快速核价</h2><button type="button" data-qp="refresh">刷新核价</button></div><div class="qp-current" data-qp="title">请在左侧选择商品</div><a data-qp="link" target="_blank" rel="noopener noreferrer" hidden>打开 Ozon 商品页</a><p data-qp="message" role="status" class="qp-message">请选择待处理商品</p><label class="qp-choice">核价记录<select data-qp="row" aria-label="核价记录"></select></label><div class="qp-fields"></div><div class="qp-result" data-qp="result"></div><p class="qp-hint">使用原核价规则；调整定价或系数后，请重新确认运费。实际采购成本和货源由人工核实。</p><div class="qp-actions"><button data-qp="save" type="button">保存核价</button><button data-qp="approve" type="button" class="qp-primary">保存并标记已复核</button><button data-qp="reject" type="button" class="qp-reject">淘汰</button><button data-qp="next" type="button">下一件</button></div>';
     const q=key=>root.querySelector(`[data-qp="${key}"]`), inputs={};
-    for(const [key,label] of fields){const l=document.createElement('label');l.textContent=label;const el=document.createElement(key==='note'?'textarea':'input');el.dataset.field=key;el.setAttribute('aria-label',label);el.maxLength=key==='source'||key==='note'?4000:240;if(key!=='source'&&key!=='note')el.inputMode='decimal';l.append(el);root.querySelector('.qp-fields').append(l);inputs[key]=el;el.addEventListener('input',updateResult)}
+    for(const [key,label] of fields){const l=document.createElement('label');l.textContent=label;const el=document.createElement(key==='note'?'textarea':'input');el.dataset.field=key;el.setAttribute('aria-label',label);el.maxLength=key==='source'||key==='note'?4000:240;if(key!=='source'&&key!=='note')el.inputMode='decimal';l.append(el);root.querySelector('.qp-fields').append(l);inputs[key]=el;el.addEventListener('input',updateResult);if(key==='quoteOverride'){const box=document.createElement('div');box.className='qp-price';box.dataset.qp='price';box.setAttribute('aria-live','polite');root.querySelector('.qp-fields').append(box)}}
     let product=null,base=null,rows=[],busy=false,seq=0,disposed=false;
     const draft=()=>Object.fromEntries(fields.map(([key])=>[key,inputs[key].value]));
     const patch=()=>base?Object.fromEntries(Object.entries(draft()).filter(([k,v])=>v!==String(base[k]??''))):{};
@@ -15,6 +15,12 @@
     function notify(text,error=false){q('message').textContent=text;q('message').classList.toggle('qp-error',error)}
     function updateResult(){
       const value=base?core.evaluate({...base,...draft()},adapter.math):null;
+      const price=q('price'),summary=value?.price;
+      const label=document.createElement('span');label.className='qp-price-label';label.textContent='定价';
+      const amount=document.createElement('strong');amount.className='qp-price-amount';amount.textContent=summary?money(summary.quote):'—';
+      const details=document.createElement('div');details.className='qp-price-detail';details.textContent=summary?'真实售价 '+money(summary.trueSale):'待补齐有效绿标、黑标及定价参数';
+      const badge=document.createElement('span');badge.className='qp-price-badge';badge.textContent=summary?({below:'低于真实售价',equal:'等于真实售价',above:'高于真实售价'})[summary.relation]:'待计算';
+      price.dataset.relation=summary?.relation||'unknown';price.replaceChildren(label,amount,badge,details);
       const parts=[];if(value?.maxCost!==null&&value?.maxCost!==undefined)parts.push('18% 目标采购上限 '+money(value.maxCost));
       if(value?.complete){parts.push('利润 '+money(value.result.profit));parts.push('利润率 '+(value.result.margin*100).toFixed(2)+'% '+(value.meetsTarget?'✓ 达标':'· 未达标'))}
       else if(base)parts.push('待补齐有效核价字段');else parts.push('等待插件推送本 SKU 核价数据');

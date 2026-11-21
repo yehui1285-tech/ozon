@@ -19,6 +19,17 @@ assert.ok(Math.abs(value.result.margin-0.9115542857142857)<1e-7);
 assert.equal(value.maxCost,93.39);
 const incomplete=evaluate({...original,cost:''},context.math);
 assert.equal(incomplete.complete,false);assert.equal(incomplete.result,null);assert.equal(incomplete.maxCost,93.39);
+// Pricing must be available independently from freight, commission and procurement cost.
+const priceOnly=evaluate({...original,green:'111.52',black:'117.38',commission:'',freight:'',cost:''},context.math);
+assert.equal(priceOnly.result,null);
+assert.equal(priceOnly.price.quote.toFixed(2),'126.36');
+assert.equal(priceOnly.price.trueSale.toFixed(2),'130.27');
+assert.equal(priceOnly.price.relation,'below');
+assert.equal(evaluate({...original,quoteOverride:'164'},context.math).price.relation,'equal');
+assert.equal(evaluate({...original,quoteOverride:'165'},context.math).price.relation,'above');
+assert.equal(evaluate({...original,factorOverride:'0.90'},context.math).price.quote.toFixed(2),'147.60');
+assert.equal(evaluate({...original,green:''},context.math).price,null);
+assert.equal(evaluate({...original,quoteOverride:'invalid'},context.math).price,null);
 assert.equal(evaluate({...original,freight:''},context.math).maxCost,null);
 assert.equal(evaluate({...original,commission:'120'},context.math).complete,false);
 assert.equal(evaluate({...original,cost:'not a price'},context.math).complete,false);

@@ -26,7 +26,14 @@
     row = row || {};
     const missing = required.filter(key => !validNumber(row,key,math));
     for (const key of ['factorOverride','quoteOverride']) if (text(row[key]) && !validNumber(row,key,math)) missing.push(key);
-    let result=null, maxCost=null;
+    let result=null, maxCost=null,price=null;
+    if(!missing.some(key=>['green','black','factorOverride','quoteOverride'].includes(key))){
+      const {quote,trueSale}=math.calc(row);
+      if(Number.isFinite(quote)&&Number.isFinite(trueSale)&&quote>0&&trueSale>0){
+        const centsQuote=Number(quote.toFixed(2)),centsSale=Number(trueSale.toFixed(2));
+        price={quote,trueSale,relation:centsQuote<centsSale?'below':centsQuote>centsSale?'above':'equal'};
+      }
+    }
     // Procurement is the one field that can be absent while displaying the target ceiling.
     if (!missing.some(key => key !== 'cost')) {
       const calc=math.calc(row);
@@ -36,7 +43,7 @@
       }
       if (!missing.length && calc.quote>0 && Number.isFinite(calc.profit) && Number.isFinite(calc.margin)) result=calc;
     }
-    return {complete:!!result,missing,result,maxCost,meetsTarget:!!result && result.margin>=target};
+    return {complete:!!result,missing,result,maxCost,price,meetsTarget:!!result && result.margin>=target};
   }
 
   function patchRow(rows, {sku,id,base,patch}) {
