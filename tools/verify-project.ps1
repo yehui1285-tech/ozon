@@ -13,6 +13,10 @@ try {
   node tools/test-sourcing-queue.mjs
   node tools/test-store-scanner.mjs
   node tools/test-store-background-integration.mjs
+  node tools/test-product-pool.mjs
+  if ($LASTEXITCODE -ne 0) { throw "Product pool tests failed" }
+  node tools/test-standalone.mjs
+  if ($LASTEXITCODE -ne 0) { throw "Standalone tests failed" }
   node tools/test-pricing-core.mjs
   node tools/test-worker-security.mjs
   node tools/test-parsing-fixtures.mjs
@@ -24,6 +28,7 @@ try {
   node --check ozon-erp-collector-extension/store-scanner-core.js
   node --check ozon-erp-collector-extension/store-scanner.js
   node --check ozon-erp-collector-extension/batch.js
+  node --check ozon-erp-collector-extension/product-pool.js
   node --check ozon-erp-collector-extension/popup.js
   node --check ozon-erp-collector-extension/sourcing-enrichment.js
   node --check ozon-feishu-sync/worker/worker.js

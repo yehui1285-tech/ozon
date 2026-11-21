@@ -115,6 +115,7 @@ function render(batch) {
   $("exportMd").disabled = !tasks.length;
   $("exportCsv").disabled = !tasks.length;
   $("exportManualCsv").disabled = !tasks.length;
+  $("addToProductPool").disabled = !tasks.length;
   $("exportJson").disabled = !tasks.length;
   if (!tasks.length) {
     $("tasks").innerHTML = '<tr><td colspan="10" class="empty">尚未创建批量任务</td></tr>';
@@ -268,6 +269,16 @@ async function exportBatch(format) {
 }
 
 $("exportManualCsv").addEventListener("click", () => exportBatch("manual").catch((error) => setMessage(error.message, true)));
+$("addToProductPool").addEventListener("click", async () => {
+  if (!currentBatch) return;
+  const button = $("addToProductPool");
+  button.disabled = true;
+  try {
+    const result = await send({ type: "addBatchToProductPool", batchId: currentBatch.id });
+    setMessage(`商品池新增 ${result.added} 件，历史重复 ${result.duplicates} 件，历史 SKU 排除 ${result.historySkipped} 件，运输待复核/排除 ${result.riskSkipped} 件。`);
+  } catch (error) { setMessage(error.message, true); }
+  finally { button.disabled = !currentBatch?.stores?.length; }
+});
 $("exportJson").addEventListener("click", () => exportBatch("json").catch((error) => setMessage(error.message, true)));
 $("exportMd").addEventListener("click", () => exportBatch("md").catch((error) => setMessage(error.message, true)));
 $("exportCsv").addEventListener("click", () => exportBatch("csv").catch((error) => setMessage(error.message, true)));

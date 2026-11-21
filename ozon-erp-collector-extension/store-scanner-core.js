@@ -323,6 +323,15 @@
     return lines.join("\r\n");
   }
 
+  function batchCapturedRows(batch, stores = {}) {
+    const capturedSkus = new Map((batch?.stores || []).map(({ sellerKey }) => {
+      const capture = stores[sellerKey]?.batchCapture;
+      return [sellerKey, new Set(capture?.batchId === batch?.id ? capture.skus || [] : [])];
+    }));
+    return batchProductRows(batch, stores).filter(({ product, task }) =>
+      product && capturedSkus.get(task.sellerKey)?.has(String(product.sku)));
+  }
+
   function buildManualSourcingCsv({ batch, stores = {} }) {
     const header = [
       "批次编号", "店铺序号", "店铺名称", "店铺地址", "扫描状态", "商品序号", "商品名称", "类目", "SKU",
@@ -332,13 +341,8 @@
       "起订量MOQ", "国内运费（人民币）", "同款核对", "复核人", "复核时间", "备注",
     ];
     const lines = [header.map(csvCell).join(",")];
-    const capturedSkus = new Map((batch?.stores || []).map(({ sellerKey }) => {
-      const capture = stores[sellerKey]?.batchCapture;
-      return [sellerKey, new Set(capture?.batchId === batch?.id ? capture.skus || [] : [])];
-    }));
-    batchProductRows(batch, stores)
-      .filter(({ product, task }) => product && capturedSkus.get(task.sellerKey)?.has(String(product.sku))
-        && productAllowedForTaskQueue(product))
+    batchCapturedRows(batch, stores)
+      .filter(({ product }) => productAllowedForTaskQueue(product))
       .forEach(({ task, saved, storeIndex, productIndex, product }) => {
         const risk = productShippingRisk(product);
         const collected = [
@@ -534,6 +538,7 @@
     assessViewportReadiness,
     autoSkipDisposition,
     buildBatchCsv,
+    batchCapturedRows,
     buildManualSourcingCsv,
     buildBatchMarkdown,
     buildBatchTaskQueue,

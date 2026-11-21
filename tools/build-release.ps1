@@ -11,6 +11,13 @@ try {
   $extensionFiles = (Get-ChildItem -LiteralPath "ozon-erp-collector-extension" -File).FullName
   Compress-Archive -LiteralPath $extensionFiles -DestinationPath $extensionZip -Force
 
+  $standaloneDir = Join-Path ([IO.Path]::GetTempPath()) ("ozon-standalone-" + [guid]::NewGuid().ToString("N"))
+  New-Item -ItemType Directory -Path $standaloneDir | Out-Null
+  node tools/build-standalone.mjs $standaloneDir
+  if ($LASTEXITCODE -ne 0) { throw "Standalone build failed" }
+  $standaloneZip = Join-Path $root "ozon-standalone-extension.zip"
+  Compress-Archive -LiteralPath (Get-ChildItem -LiteralPath $standaloneDir -File).FullName -DestinationPath $standaloneZip -Force
+
   $cropZip = Join-Path $root "local-crop-tool.zip"
   Compress-Archive -LiteralPath @(
     "local-crop-tool/index.html",
@@ -18,7 +25,7 @@ try {
     "local-crop-tool/start-local-crop-tool.bat"
   ) -DestinationPath $cropZip -Force
 
-  Write-Host "Release artifacts generated: feishu.html, extension zip, crop-tool zip."
+  Write-Host "Release artifacts generated: feishu.html, extension zip, standalone extension zip, crop-tool zip."
 } finally {
   Pop-Location
 }

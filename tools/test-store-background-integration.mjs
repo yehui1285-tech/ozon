@@ -296,4 +296,15 @@ assert.doesNotMatch(await handoff(), /"beta-new"/);
 await context.saveStoreScanState({ sellerKey: "alpha", state: priorAlpha });
 assert.match(await handoff(), /"alpha-new"/, "late snapshots from a preceding batch must not replace current membership");
 
+// Local pool survives clearing a batch and excludes the waiting store's historical rows.
+const poolBatch = await context.getBatch();
+await context.saveStoreScanState({ sellerKey: "alpha", state: {
+  products: { "111": { sku: "111", name: "工具", price: "120", link: "https://www.ozon.ru/product/test-111/" } },
+  batchCapture: { batchId: poolBatch.id, skus: ["111"] },
+} });
+const pooled = await context.addBatchToProductPool({ batchId: poolBatch.id });
+assert.equal(pooled.added, 1);
+await context.clearStoreBatch({ batchId: poolBatch.id });
+assert.deepEqual(Object.keys((await context.getProductPool()).pool.products), ["111"]);
+
 console.log("Store background integration tests passed.");
