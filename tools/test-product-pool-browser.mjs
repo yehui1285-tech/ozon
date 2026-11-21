@@ -17,6 +17,7 @@ try{
   await page.addInitScript(()=>{
     const products={};
     for(let n=100;n<151;n++){const sku=String(n);products[sku]={sku,title:'测试商品 '+sku,category:'工具',link:'https://www.ozon.ru/product/test-'+sku+'/',price:'100',shippingRisk:'正常',blocked:false,storeName:'测试店铺',batchIds:['fixture'],firstSeenAt:'2026-11-21T00:00:00Z',lastSeenAt:'2026-11-21T00:00:00Z',status:'new',notes:'',manualSavedAt:''};}
+    products['100'].weight='800g';products['101'].weight='1.2 kg';products['105'].weight='2 kg';products['105'].blocked=true;products['105'].shippingRisk='运输待复核';
     window.fixturePool={schemaVersion:1,products,history:{}};window.fixtureWrites=[];window.fixtureFail=false;
     Object.defineProperty(window,'chrome',{configurable:true,value:{runtime:{getURL:p=>p,sendMessage:async m=>{
       if(m.type==='getProductPool')return {ok:true,pool:structuredClone(window.fixturePool)};
@@ -30,6 +31,12 @@ try{
   await page.goto(pathToFileURL(path.join(dir,'product-pool.html')).href);
   await page.locator('#rows tr[data-sku="100"]').waitFor();
   const row=sku=>page.locator(`#rows tr[data-sku="${sku}"]`);
+  assert.equal(await page.getByRole('columnheader',{name:'重量',exact:true}).count(),1);
+  assert.equal(await page.getByRole('columnheader',{name:'运输复核',exact:true}).count(),0);
+  assert.equal(await row('100').locator('td').nth(4).innerText(),'800g');
+  assert.equal(await row('101').locator('td').nth(4).innerText(),'1.2 kg');
+  assert.equal(await row('102').locator('td').nth(4).innerText(),'—');
+  assert.match(await row('105').locator('td').nth(4).innerText(),/2 kg[\s\S]*运输待复核/);
   const selectedCount=()=>page.locator('#selectionCount').innerText();
   const waitMessage=pattern=>page.waitForFunction(s=>document.querySelector('#message').textContent.includes(s),pattern);
   await row('100').locator('input[type=checkbox]').check();

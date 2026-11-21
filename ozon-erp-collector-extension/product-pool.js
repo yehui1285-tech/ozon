@@ -69,8 +69,8 @@ function render() {
     name.append(link);
     if(globalThis.ozonLocalQuick){const select=e=>globalThis.OzonQuickPricingCore.selectBeforeOpen(e,()=>globalThis.ozonLocalQuick.select(p));link.addEventListener('click',select);link.addEventListener('auxclick',select);link.title='选中此 SKU 并打开 Ozon 商品页';}
     cell(row,p.category); cell(row,p.price);
-    const risk = cell(row,p.shippingRisk);
-    if (p.blocked) risk.className = "blocked";
+    const weight = cell(row,String(p.weight||"").trim());
+    if (p.blocked) {const warning=document.createElement("small");warning.className="weight-warning";warning.textContent="运输待复核";warning.title=p.shippingRisk||"";weight.append(warning);}
     cell(row, `${p.storeName} · ${String(p.lastSeenAt || "").slice(0,10)}`);
     const select = document.createElement("select");
     for (const [value,text] of Object.entries(core.statuses)) option(select,value,text);

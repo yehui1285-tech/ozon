@@ -38,5 +38,6 @@ tr[data-status="rejected"] {background:#f7edea;color:#805a52;}
 td small.receipt-ok {color:#226247;font-weight:600;}
 td small.receipt-dirty,td small.receipt-pending {color:#94641d;}
 td small.receipt-error {color:#a52e1b;}
+td small.weight-warning {color:#a52e1b;}
 #message {position:sticky;top:0;z-index:2;background:#fff;padding:5px 0;font-weight:600;}
 @media(max-width: 640px) {main {padding: 12px;} header {align-items: flex-start; gap: 8px;} .summary {grid-template-columns: 1fr;}}
