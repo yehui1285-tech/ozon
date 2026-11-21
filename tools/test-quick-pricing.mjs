@@ -52,4 +52,27 @@ assert.equal(navigate({button:1,preventDefault:()=>prevented++},()=>false),false
 assert.equal(prevented,1);
 assert.equal(navigate({button:2,preventDefault:()=>prevented++},()=>{selected++;return true}),true);
 assert.equal(selected,1,'right click must not select a different SKU');
+// Render the real panel into a small DOM fixture and exercise the displayed pricing and margin states.
+class Element {
+  constructor(tag='div'){this.tag=tag;this.children=[];this.dataset={};this.value='';this.textContent='';this.className='';this.events={};this.classList={add:()=>{},toggle:()=>{}};}
+  set innerHTML(html){this.children=[];for(const match of html.matchAll(/data-qp="([^"]+)"/g)){const el=new Element();el.dataset.qp=match[1];this.append(el)}const fields=new Element();fields.className='qp-fields';this.append(fields)}
+  append(...els){this.children.push(...els)}replaceChildren(...els){this.children=els}setAttribute(){}removeAttribute(){}addEventListener(name,fn){this.events[name]=fn}
+  querySelector(selector){const qp=selector.match(/^\[data-qp="([^"]+)"\]$/)?.[1],field=selector.match(/^\[data-field="([^"]+)"\]$/)?.[1];for(const c of this.children){if(qp&&c.dataset.qp===qp||field&&c.dataset.field===field||selector==='.'+c.className)return c;const found=c.querySelector(selector);if(found)return found}return null}
+  text(){return this.textContent+' '+this.children.map(c=>c.text()).join(' ')}
+}
+Object.assign(context,{document:{createElement:tag=>new Element(tag),addEventListener(){},removeEventListener(){},visibilityState:'visible'},window:{addEventListener(){},removeEventListener(){}},setInterval:()=>0,clearInterval(){},URL,confirm:()=>true});
+vm.runInContext(fs.readFileSync('ozon-erp-collector-extension/quick-pricing-panel.js','utf8'),context);
+const fixture=new Element(),sample={...original,sku:'6078237717',green:'88.71',black:'92.05',commission:'10',freight:'54.55',cost:'10'};
+const panel=context.OzonQuickPricingPanel.create(fixture,{math:context.math,load:async()=>[sample]});
+panel.select({sku:sample.sku,title:'还剩8件',link:'https://www.ozon.ru/product/test-6078237717/'});await new Promise(resolve=>setImmediate(resolve));
+const margin=fixture.querySelector('[data-qp="margin"]'),resultBox=fixture.querySelector('[data-qp="result"]');
+assert.ok(margin,'利润率必须具有独立卡片');
+assert.match(margin.text(),/23\.81%/);assert.match(margin.text(),/达标/);assert.equal(margin.dataset.tone,'pass');
+assert.doesNotMatch(resultBox.text(),/利润率/);assert.match(resultBox.text(),/利润 ¥15\.37/);
+const costInput=fixture.querySelector('[data-field="cost"]');costInput.value='80';costInput.events.input();assert.equal(margin.dataset.tone,'under');assert.match(margin.text(),/未达标/);
+costInput.value='';costInput.events.input();assert.equal(margin.dataset.tone,'pending');assert.match(margin.text(),/待计算/);panel.dispose();
+const styles=fs.readFileSync('ozon-erp-collector-extension/quick-pricing-panel.css','utf8');
+for(const selector of ['qp-price-label','qp-price-badge','qp-price-detail'])assert.match(styles,new RegExp(`\\.${selector}\\{[^}]*color:#000000(?:;|})`));
+assert.match(styles,/\.qp-price-amount\{[^}]*color:#a92323/);
+assert.match(styles,/\.qp-panel input\[data-field="green"\]\{[^}]*background:#e4f4e8/);
 console.log('Quick pricing: exact SKU and row identity, original formula, target cost, incomplete inputs, conflict-safe patch passed.');
