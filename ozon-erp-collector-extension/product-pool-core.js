@@ -2,6 +2,10 @@
   "use strict";
   const scanner = scope.OzonStoreScannerCore;
   const statuses = Object.freeze({ new: "待找品", sourcing: "找品中", review: "待复核", approved: "人工已复核", rejected: "淘汰" });
+  function matchesStatus(product, filter) {
+    if (filter === "pending") return !["approved", "rejected"].includes(product.status);
+    return !filter || product.status === filter;
+  }
   const normalizeSku = (value) => /^\d+$/.test(String(value ?? "").trim()) ? String(value).trim() : "";
   const emptyPool = () => ({ schemaVersion: 1, products: {}, history: {} });
 
@@ -63,28 +67,29 @@
         batchIds,
         firstSeenAt: previous?.firstSeenAt || now, lastSeenAt: observedAt,
         status: previous?.status || "new", notes: previous?.notes || "",
+        ...(previous?.manualSavedAt ? { manualSavedAt: previous.manualSavedAt } : {}),
       };
     }
     return result;
   }
 
-  function updateProduct(state, sku, patch) {
+  function updateProduct(state, sku, patch, now = new Date().toISOString()) {
     const next = copyPool(state);
     if (!Object.hasOwn(next.products, sku)) throw new Error("商品不存在");
     if (!Object.hasOwn(statuses, patch.status)) throw new Error("无效的处理状态");
-    next.products[sku] = { ...next.products[sku], status: patch.status, notes: String(patch.notes ?? "").slice(0, 4000) };
+    next.products[sku] = { ...next.products[sku], status: patch.status, notes: String(patch.notes ?? "").slice(0, 4000), manualSavedAt: now };
     return next;
   }
 
   function exportPoolCsv(state) {
-    const header = ["SKU", "商品名称", "类目", "Ozon链接", "采集价格", "佣金", "月销量", "发货模式", "尺寸", "重量", "跟卖价", "运输复核", "处理状态", "来源店铺", "来源批次", "首次入池", "最近发现", "备注"];
+    const header = ["SKU", "商品名称", "类目", "Ozon链接", "采集价格", "佣金", "月销量", "发货模式", "尺寸", "重量", "跟卖价", "运输复核", "处理状态", "来源店铺", "来源批次", "首次入池", "最近发现", "备注", "人工保存时间"];
     const rows = Object.values(state.products || {}).map(p => [
       p.sku, p.title, p.category, p.link, p.price, p.commissions, p.monthlySales, p.fulfillment,
       p.dimensions, p.weight, p.competitor, p.shippingRisk, p.blocked ? "运输待复核" : statuses[p.status],
-      p.storeName, p.batchIds.join(" / "), p.firstSeenAt, p.lastSeenAt, p.notes,
+      p.storeName, p.batchIds.join(" / "), p.firstSeenAt, p.lastSeenAt, p.notes, p.manualSavedAt || "",
     ]);
     return [header, ...rows].map(row => row.map(scanner.csvCell).join(",")).join("\r\n");
   }
 
-  scope.OzonProductPoolCore = Object.freeze({ emptyPool, statuses, importHistory, addBatch, updateProduct, exportPoolCsv });
+  scope.OzonProductPoolCore = Object.freeze({ emptyPool, statuses, matchesStatus, importHistory, addBatch, updateProduct, exportPoolCsv });
 })(globalThis);

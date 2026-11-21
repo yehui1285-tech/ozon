@@ -19,4 +19,13 @@ a {color: #2855c5; font-weight: 600;}
 th, td {text-align: left; border-bottom: 1px solid #e2e7ef; padding: 11px 8px; vertical-align: top;}
 th {color: #52627a; background: #f6f8fa; font-size: 14px;} td small {display: block; color: #56677c;}
 td textarea {min-width: 140px; max-width: 240px;} .blocked {color: #a52e1b;}
+tr[data-status="sourcing"] {background:#fff9e8;}
+tr[data-status="review"] {background:#eef5ff;}
+tr[data-status="approved"] {background:#eaf5ec;}
+tr[data-status="rejected"] {background:#f7edea;color:#805a52;}
+.saved-status {margin-top:4px;font-weight:600;}
+td small.receipt-ok {color:#226247;font-weight:600;}
+td small.receipt-dirty,td small.receipt-pending {color:#94641d;}
+td small.receipt-error {color:#a52e1b;}
+#message {position:sticky;top:0;z-index:2;background:#fff;padding:5px 0;font-weight:600;}
 @media(max-width: 640px) {main {padding: 12px;} header {align-items: flex-start; gap: 8px;} .summary {grid-template-columns: 1fr;}}

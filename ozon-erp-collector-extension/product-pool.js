@@ -3,6 +3,10 @@ const $ = id => document.getElementById(id);
 let pool = core.emptyPool();
 let offset = 0;
 const pageSize = 50;
+const drafts = new Map();
+const saving = new Set();
+const saveErrors = new Map();
+const saveTime = value => new Date(value).toLocaleString("zh-CN", { hour12: false });
 
 async function send(message) {
   const result = await chrome.runtime.sendMessage(message);
@@ -31,13 +35,14 @@ function render() {
   $("newCount").textContent = all.filter(p => p.status === "new" && !p.blocked).length;
   $("historyCount").textContent = Object.keys(pool.history).length;
   const query = $("query").value.trim().toLowerCase();
-  const filtered = all.filter(p => (!$("filter").value || p.status === $("filter").value)
+  const filtered = all.filter(p => core.matchesStatus(p, $("filter").value)
     && [p.sku,p.title,p.category,p.storeName].some(s => String(s || "").toLowerCase().includes(query)))
     .sort((a,b) => String(b.lastSeenAt).localeCompare(String(a.lastSeenAt)));
   offset = Math.min(offset, Math.max(0, Math.floor((filtered.length - 1) / pageSize) * pageSize));
   $("rows").replaceChildren();
   for (const p of filtered.slice(offset, offset + pageSize)) {
     const row = $("rows").insertRow();
+    row.dataset.status = p.status;
     const name = cell(row, p.sku);
     name.append(document.createElement("br"));
     const link = document.createElement("a");
@@ -50,18 +55,49 @@ function render() {
     cell(row, `${p.storeName} · ${String(p.lastSeenAt || "").slice(0,10)}`);
     const select = document.createElement("select");
     for (const [value,text] of Object.entries(core.statuses)) option(select,value,text);
-    select.value = p.status;
-    row.insertCell().append(select);
-    const notes = document.createElement("textarea"); notes.rows = 2; notes.value = p.notes;
+    const draft = drafts.get(p.sku);
+    select.value = draft?.status ?? p.status;
+    const statusCell = row.insertCell();
+    const badge = document.createElement("small");
+    badge.className = "saved-status";
+    badge.textContent = core.statuses[p.status] || "待找品";
+    statusCell.append(select, badge);
+    const notes = document.createElement("textarea"); notes.rows = 2; notes.maxLength = 4000; notes.value = draft?.notes ?? p.notes;
     notes.setAttribute("aria-label", `${p.sku} 备注`);
     row.insertCell().append(notes);
-    const save = document.createElement("button"); save.textContent = "保存";
+    const save = document.createElement("button");
+    const receipt = document.createElement("small"); receipt.setAttribute("role","status");
+    function showReceipt() {
+      const pending = saving.has(p.sku), error = saveErrors.get(p.sku);
+      select.disabled = notes.disabled = save.disabled = pending;
+      save.textContent = pending ? "保存中…" : "保存";
+      receipt.className = pending ? "receipt-pending" : error ? "receipt-error" : drafts.has(p.sku) ? "receipt-dirty" : p.manualSavedAt ? "receipt-ok" : "";
+      receipt.textContent = pending ? "正在写入本机…" : error ? error : drafts.has(p.sku) ? "有未保存修改" : p.manualSavedAt ? "✓ 已保存 " + saveTime(p.manualSavedAt) : "未记录人工保存时间";
+    }
+    function editDraft() {
+      if (select.value === p.status && notes.value === p.notes) drafts.delete(p.sku);
+      else drafts.set(p.sku, {status:select.value, notes:notes.value});
+      saveErrors.delete(p.sku);
+      showReceipt();
+    }
+    select.addEventListener("change",editDraft);
+    notes.addEventListener("input",editDraft);
     save.addEventListener("click", async () => {
-      save.disabled = true;
-      try {pool = (await send({ type:"updateProductPoolItem",sku:p.sku,patch:{status:select.value,notes:notes.value} })).state;feedback("已保存");render();}
-      catch(e) {feedback(e.message,true);save.disabled=false;}
+      saving.add(p.sku); saveErrors.delete(p.sku); showReceipt();
+      const patch = {status:select.value,notes:notes.value};
+      try {
+        const result = await send({type:"updateProductPoolItem",sku:p.sku,patch});
+        pool = result.state;
+        const saved = pool.products[p.sku];
+        if (!saved?.manualSavedAt || saved.status !== patch.status || saved.notes !== patch.notes) throw Error("保存结果未确认，请刷新核对。");
+        drafts.delete(p.sku);
+        feedback(`SKU ${p.sku} · 已保存到本机 · ${core.statuses[saved.status]}${core.matchesStatus(saved,$("filter").value) ? "" : "（已从当前筛选视图移出）"}`);
+      } catch(e) {
+        drafts.set(p.sku,patch);saveErrors.set(p.sku,e.message);feedback(`SKU ${p.sku} · 保存未确认：${e.message}`,true);
+      } finally { saving.delete(p.sku); render(); }
     });
-    row.insertCell().append(save);
+    row.insertCell().append(save,receipt);
+    showReceipt();
   }
   if (!filtered.length) {const c = $("rows").insertRow().insertCell();c.colSpan=8;c.textContent="暂无符合条件的商品。请先在批量扫描页加入本批商品。";}
   $("page").textContent = filtered.length ? `${offset+1}–${Math.min(offset+pageSize,filtered.length)} / ${filtered.length}` : "0 件";
