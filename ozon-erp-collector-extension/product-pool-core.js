@@ -81,6 +81,30 @@
     return next;
   }
 
+  function productExpectation(product) {
+    return {status:product.status, notes:product.notes, blocked:product.blocked, manualSavedAt:product.manualSavedAt || ""};
+  }
+
+  // A batch is all-or-nothing. Never promote an item to reviewed through bulk editing.
+  function updateProducts(state, changes, now = new Date().toISOString()) {
+    if (!Array.isArray(changes) || !changes.length || changes.length > 50) throw Error("请选择 1–50 件商品");
+    const seen = new Set();
+    for (const change of changes) {
+      const {sku, patch, expected} = change || {};
+      if (typeof sku !== "string" || !normalizeSku(sku) || !Object.hasOwn(state.products, sku)) throw Error("商品不存在");
+      if (seen.has(sku)) throw Error("商品重复");
+      seen.add(sku);
+      const current = state.products[sku];
+      if (!expected || Object.entries(productExpectation(current)).some(([k,v])=>expected[k] !== v)) throw Error("商品状态已变化，请刷新核对后重试");
+      if (!patch || typeof patch.status !== "string" || !Object.hasOwn(statuses, patch.status)) throw Error("无效的处理状态");
+      if (typeof patch.notes !== "string" || patch.notes.length > 4000) throw Error("备注无效或过长");
+      if (patch.status === "approved" && current.status !== "approved") throw Error("请逐件核价并人工复核，不能批量标记已复核");
+    }
+    const next = copyPool(state);
+    for (const {sku,patch} of changes) next.products[sku] = {...next.products[sku],status:patch.status,notes:patch.notes,manualSavedAt:now};
+    return next;
+  }
+
   function exportPoolCsv(state) {
     const header = ["SKU", "商品名称", "类目", "Ozon链接", "采集价格", "佣金", "月销量", "发货模式", "尺寸", "重量", "跟卖价", "运输复核", "处理状态", "来源店铺", "来源批次", "首次入池", "最近发现", "备注", "人工保存时间"];
     const rows = Object.values(state.products || {}).map(p => [
@@ -91,5 +115,5 @@
     return [header, ...rows].map(row => row.map(scanner.csvCell).join(",")).join("\r\n");
   }
 
-  scope.OzonProductPoolCore = Object.freeze({ emptyPool, statuses, matchesStatus, importHistory, addBatch, updateProduct, exportPoolCsv });
+  scope.OzonProductPoolCore = Object.freeze({ emptyPool, statuses, matchesStatus, importHistory, addBatch, updateProduct, updateProducts, productExpectation, exportPoolCsv });
 })(globalThis);

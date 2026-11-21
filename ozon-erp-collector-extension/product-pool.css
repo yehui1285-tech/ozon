@@ -15,9 +15,20 @@ input[type=search] {flex: 1; min-width: 240px;} textarea {width: 100%; resize: v
 button {cursor: pointer;} button:disabled {opacity: .5; cursor: default;}
 button.primary {background: #2855c5; border-color: #2855c5; color: white;}
 a {color: #2855c5; font-weight: 600;}
-.table {overflow: auto;} table {width: 100%; border-collapse: collapse; min-width: 1000px;}
+.table {overflow: auto; max-height: min(72vh, 900px); scroll-behavior: auto;} table {width: 100%; border-collapse: separate; border-spacing: 0; min-width: 1160px;}
 th, td {text-align: left; border-bottom: 1px solid #e2e7ef; padding: 11px 8px; vertical-align: top;}
-th {color: #52627a; background: #f6f8fa; font-size: 14px;} td small {display: block; color: #56677c;}
+th {color: #52627a; background: #f6f8fa; font-size: 14px; position: sticky; top: 0; z-index: 3;} td small {display: block; color: #56677c;}
+.check-col {width: 42px; min-width:42px; max-width:42px; position:sticky; left:0; z-index:2; background:#fff;}
+thead .check-col {z-index:5;background:#f6f8fa;}
+tbody td:nth-child(2) {position:sticky;left:42px;z-index:2;min-width:220px;}
+thead th:nth-child(2) {position:sticky;left:42px;z-index:5;min-width:220px;}
+.operation-col,tbody td:last-child {position:sticky;right:0;z-index:2;background:#fff;min-width:140px;box-shadow:-4px 0 8px #18263812;}
+thead .operation-col {z-index:5;background:#f6f8fa;}
+tbody tr[data-status="sourcing"] td.check-col,tbody tr[data-status="sourcing"] td:nth-child(2){background:#fff9e8;}
+tbody tr[data-status="review"] td.check-col,tbody tr[data-status="review"] td:nth-child(2){background:#eef5ff;}
+tbody tr[data-status="approved"] td.check-col,tbody tr[data-status="approved"] td:nth-child(2){background:#eaf5ec;}
+tbody tr[data-status="rejected"] td.check-col,tbody tr[data-status="rejected"] td:nth-child(2){background:#f7edea;}
+.batch-tools label {display:flex;align-items:center;gap:6px;}
 td textarea {min-width: 140px; max-width: 240px;} .blocked {color: #a52e1b;}
 tr[data-status="sourcing"] {background:#fff9e8;}
 tr[data-status="review"] {background:#eef5ff;}

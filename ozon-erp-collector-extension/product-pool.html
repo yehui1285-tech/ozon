@@ -15,7 +15,8 @@
         <select id="filter" aria-label="处理状态"><option value="pending" selected>待处理（隐藏已复核、淘汰）</option><option value="">全部状态</option></select><button id="refresh">刷新</button><button id="export" class="primary">导出商品池 CSV</button><button id="backup">下载数据备份</button></div>
       <p>保存状态与备注后会保存在当前浏览器。切换为“全部状态”可以查看已经处理的商品。</p>
       <p id="message" role="status"></p>
-      <div class="table"><table><thead><tr><th>SKU / 商品</th><th>类目</th><th>采集价格</th><th>运输复核</th><th>来源 / 最近发现</th><th>处理状态</th><th>备注</th><th>操作</th></tr></thead><tbody id="rows"></tbody></table></div>
+      <div class="toolbar batch-tools"><label><input id="selectPage" type="checkbox"> 全选本页</label><span id="selectionCount">已选 0 件</span><button id="saveSelected" class="primary">批量保存已修改项</button><button id="rejectSelected">批量淘汰所选</button></div>
+      <div class="table"><table><thead><tr><th class="check-col"></th><th>SKU / 商品</th><th>类目</th><th>采集价格</th><th>运输复核</th><th>来源 / 最近发现</th><th>处理状态</th><th>备注</th><th class="operation-col">操作</th></tr></thead><tbody id="rows"></tbody></table></div>
       <div class="toolbar"><button id="previous">上一页</button><span id="page"></span><button id="next">下一页</button></div>
     </section>
     <section class="panel"><h2>历史 SKU 查重</h2><p>粘贴已处理或已上架商品 SKU，按行或逗号分隔。命中历史 SKU 的新商品不会重复入池。</p>

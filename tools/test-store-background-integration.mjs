@@ -8,6 +8,7 @@ const storageData = {
     beta: { observedSkus: ["2"], products: { "2": { sku: "2" } } },
   },
 };
+let productPoolStorageSets = 0;
 const scheduledTimers = new Map();
 const alarmCreates = [];
 const tabMessages = [];
@@ -26,7 +27,7 @@ function storageArea(data) {
       const list = Array.isArray(keys) ? keys : typeof keys === "string" ? [keys] : Object.keys(keys);
       return Object.fromEntries(list.filter((key) => Object.prototype.hasOwnProperty.call(data, key)).map((key) => [key, data[key]]));
     },
-    async set(values) { Object.assign(data, values); },
+    async set(values) { if (Object.hasOwn(values,"ozonProductPoolV1")) productPoolStorageSets += 1; Object.assign(data, values); },
     async remove(keys) { (Array.isArray(keys) ? keys : [keys]).forEach((key) => delete data[key]); },
   };
 }
@@ -307,6 +308,7 @@ assert.equal(pooled.added, 1);
 await context.clearStoreBatch({ batchId: poolBatch.id });
 assert.deepEqual(Object.keys((await context.getProductPool()).pool.products), ["111"]);
 const initial=(await context.getProductPool()).pool.products['111'];
+storageData.ozonProductPoolV1.products['222']={...initial,sku:'222',status:'new',notes:'第二件'};
 const poolMessage=message=>new Promise(resolve=>{for(const listener of listeners.messages){if(listener(message,{},resolve)===true)return}resolve({ok:false,error:'no listener'})});
 const expected={status:initial.status,notes:initial.notes,blocked:initial.blocked};
 const confirmed=await poolMessage({type:'updateProductPoolItem',sku:'111',patch:{status:'review',notes:'人工记录'},expected});
@@ -314,5 +316,21 @@ assert.equal(confirmed.ok,true);
 const conflicting=await poolMessage({type:'updateProductPoolItem',sku:'111',patch:{status:'approved',notes:initial.notes},expected});
 assert.equal(conflicting.ok,false);
 assert.equal((await context.getProductPool()).pool.products['111'].notes,'人工记录');
+const batchPool=(await context.getProductPool()).pool;
+const batchExpected=context.OzonProductPoolCore.productExpectation(batchPool.products['111']);
+const secondExpected=context.OzonProductPoolCore.productExpectation(batchPool.products['222']);
+const setCountBeforeBulk=productPoolStorageSets;
+const bulk=await poolMessage({type:'updateProductPoolItems',changes:[{sku:'111',patch:{status:'rejected',notes:'淘汰备注保留'},expected:batchExpected},{sku:'222',patch:{status:'sourcing',notes:'第二件已保存'},expected:secondExpected}]});
+assert.equal(bulk.ok,true);
+assert.equal(productPoolStorageSets-setCountBeforeBulk,1,'a batch must persist with one atomic storage.set');
+assert.equal(bulk.state.products['111'].status,'rejected');
+assert.equal(bulk.state.products['111'].notes,'淘汰备注保留');
+assert.equal(bulk.state.products['222'].status,'sourcing');
+assert.equal(bulk.state.products['222'].notes,'第二件已保存');
+const bulkBefore=JSON.stringify((await context.getProductPool()).pool);
+const afterBulk=(await context.getProductPool()).pool;
+const bulkConflict=await poolMessage({type:'updateProductPoolItems',changes:[{sku:'111',patch:{status:'review',notes:'覆盖'},expected:context.OzonProductPoolCore.productExpectation(afterBulk.products['111'])},{sku:'222',patch:{status:'review',notes:'覆盖第二件'},expected:secondExpected}]});
+assert.equal(bulkConflict.ok,false);
+assert.equal(JSON.stringify((await context.getProductPool()).pool),bulkBefore,'a rejected batch must not partially write');
 
 console.log("Store background integration tests passed.");
