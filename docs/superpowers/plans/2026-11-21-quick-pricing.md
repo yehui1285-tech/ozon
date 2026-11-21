@@ -27,4 +27,4 @@
 - [x] 测试先行：`node tools/test-quick-pricing.mjs` 初次应失败；新增 `ozon-erp-collector-extension/quick-pricing-core.js` 的 `rowsForSku`、`evaluate`、`patchRow`；复跑通过。
 - [x] 工作台：复用原 `/api/ozon` 核价 API，实现数据读取、右侧面板编辑、冲突及确认反馈；运行相关 Ozon 集成用例及构建。
 - [x] 独立版：本地共享核价记录，生成相同工作流面板；测试独立包隔离、完整本地测试与构建。
-- [ ] 复核两版共同逻辑及版本，准备备份后发布工作台，分别记录真实验收边界和 ZIP 交付。
+- [x] 复核两版共同逻辑及版本，按用户随后指令先发布已保存工作台 V1.30，分别记录真实验收边界和 ZIP 交付。
