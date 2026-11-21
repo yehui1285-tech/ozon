@@ -27,6 +27,7 @@ assert.doesNotMatch(read("pricing.html"),/<script>/);
 for (const current of ["pricing.html","batch.html","product-pool.html"]) {
   const nav=read(current).match(/<nav class="standalone-nav"[^>]*>([\s\S]*?)<\/nav>/)?.[1];
   assert.ok(nav, `${current} must have shared local navigation`);
+  assert.deepEqual([...nav.matchAll(/href="([^"]+)"/g)].map(m=>m[1]), ["product-pool.html","batch.html","pricing.html"], `${current}: product pool comes first`);
   for (const target of ["pricing.html","batch.html","product-pool.html"]) {
     assert.ok(nav.includes(`href="${target}"`), `${current} links to ${target}`);
     assert.equal(nav.includes(`href="${target}" aria-current="page"`), current===target);

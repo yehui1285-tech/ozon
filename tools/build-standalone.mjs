@@ -12,7 +12,7 @@ const replace = (text, before, after) => {
   if (!text.includes(before)) throw new Error("Standalone source anchor missing: " + before.slice(0, 80));
   return text.replace(before, after);
 };
-const localTabs = [["pricing.html","核价表"],["batch.html","批量店铺扫描"],["product-pool.html","商品池"]];
+const localTabs = [["product-pool.html","商品池"],["batch.html","批量店铺扫描"],["pricing.html","核价表"]];
 const withLocalNav = (html,current,anchor) => {
   const nav = `<nav class="standalone-nav" aria-label="Ozon 功能导航">${localTabs.map(([href,label])=>`<a href="${href}"${href===current?' aria-current="page"':''}>${label}</a>`).join("")}</nav>`;
   return replace(replace(html,"</head>",'<link rel="stylesheet" href="standalone-nav.css">\n</head>'),anchor,anchor+"\n    "+nav);
