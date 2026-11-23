@@ -10,6 +10,8 @@
     '[data-widget="searchResultsV2"]', '[data-widget="searchResults"]',
   ];
   const forbidden = /recommend|suggest|similar|related|recommendation|header/i;
+  const recommendationHeading = /^(您可能喜欢|猜你喜欢|你可能喜欢|Вам может понравиться|Возможно, вам понравится|Рекомендуем также|You may also like)$/i;
+  const headingSelector = 'h1,h2,h3,h4,[role="heading"],.tsHeadline600Large';
 
   function textOf(el) { return String(el?.innerText || el?.textContent || '').trim(); }
   function verificationDetail(doc) {
@@ -44,8 +46,21 @@
   function pickList(doc) {
     const candidates = new Set();
     for (const selector of SELECTORS) for (const el of doc.querySelectorAll(selector)) {
-      if (visible(el) && !isForbidden(el)) candidates.add(el);
+      if (!visible(el) || isForbidden(el)) continue;
+      // China-zone recommendations reuse the catalog grid widget. The real
+      // page labels a separate island with a headline span before its cards.
+      const island = el.closest?.('[data-widget="island"]');
+      if (island) {
+        const firstProduct = [...island.querySelectorAll('a[href*="/product/"]')].find(visible);
+        const heading = [...island.querySelectorAll(headingSelector)].find(h => visible(h) && recommendationHeading.test(textOf(h)));
+        if (heading && firstProduct && (heading.compareDocumentPosition(firstProduct) & 4)) continue;
+      }
+      candidates.add(el);
     }
+    // The explicit paginator owns virtual rows even when later rows do not
+    // repeat the tileGridDesktop marker. Do not expand to an arbitrary parent.
+    const paginators = [...candidates].filter(el => el.getAttribute?.('data-widget') === 'infiniteVirtualPaginator');
+    if (paginators.length === 1 && [...candidates].every(el => el.contains(paginators[0]) || paginators[0].contains(el))) return paginators[0];
     const lists = [...candidates].filter((el) => [...candidates].every((other) => other === el || !el.contains(other)));
     if (lists.length === 1) return lists[0];
     // A catalog may virtualize its results into several sibling grids. Only
@@ -63,7 +78,7 @@
   function readCards(list, core, categoryUrl, options = {}) {
     if (!list) return { products: [], observedSkus: [], pendingSkus: [], pendingCount: 0, available: false };
     const products = [], observed = new Set(),pending=new Set();
-    const boundary=[...(list.querySelectorAll?.('h1,h2,h3,h4,[role="heading"]')||[])].find(el=>/^(您可能喜欢|猜你喜欢|你可能喜欢|Вам может понравиться|Возможно, вам понравится|Рекомендуем также|You may also like)$/i.test(textOf(el))&&visible(el));
+    const boundary=[...(list.querySelectorAll?.(headingSelector)||[])].find(el=>recommendationHeading.test(textOf(el))&&visible(el));
     const productSku=href=>{try{const u=new URL(href);return u.origin==='https://www.ozon.ru'&&!u.username&&!u.password?u.pathname.match(/^\/product\/(?:[^/]+-)?(\d+)\/?$/)?.[1]||'':''}catch{return ''}};
     const findCard=(anchor,sku)=>{
       let card=anchor;for(let depth=0;card&&card!==list&&depth<11;depth++,card=card.parentElement){

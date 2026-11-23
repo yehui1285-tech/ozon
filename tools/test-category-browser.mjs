@@ -112,6 +112,21 @@ try{
  await cn.evaluate(url=>startListener({type:'categoryScanStart',batchId:'fixture',attemptId:'china',categoryUrl:url,options:{targetCount:3}},{},()=>{}),chinaUrl);
  await cn.waitForFunction(()=>messages.some(x=>x.type==='categorySample'||x.type==='categoryPageDone'));
  const chinaSample=await cn.evaluate(()=>messages[0]);assert.equal(chinaSample.type,'categorySample');assert.equal(chinaSample.categoryUrl,chinaUrl);assert.deepEqual(chinaSample.products.map(p=>p.sku),['850001']);
+ // Saved China-zone DOM: one paginator containing a marked grid and unmarked
+ // virtual rows, then a sibling recommendation island reusing tileGridDesktop.
+ await cn.evaluate(({first,second,recommended})=>{
+   document.body.innerHTML=`<div data-widget="column"><div data-widget="resultsHeader">汽车用品</div><div data-widget="infiniteVirtualPaginator"><div><div data-widget="tileGridDesktop">${first}</div></div><div>${second}</div></div><div data-widget="island"><div data-widget="tileGridDesktop"><span class="tsHeadline600Large">您可能喜欢</span>${recommended}</div></div></div>`;
+   messages.length=0;
+ },{first:card('850002','主列表第一组'),second:card('850003','主列表第二组'),recommended:card('850004','推荐商品')});
+ const chinaRead=()=>cn.evaluate(url=>OzonCategoryScanner.createReader(document,OzonCategoryCore).read(url,{}),chinaUrl);
+ const scopedChina=await chinaRead();assert.deepEqual(scopedChina.observedSkus,['850002','850003']);assert.deepEqual(scopedChina.products.map(p=>p.sku),['850002','850003']);assert.equal(scopedChina.pendingCount,0);
+ await cn.evaluate(url=>startListener({type:'categoryScanStart',batchId:'fixture',attemptId:'china-real-layout',categoryUrl:url,options:{targetCount:3}},{},()=>{}),chinaUrl);
+ await cn.waitForFunction(()=>messages.some(x=>x.type==='categorySample'));
+ assert.deepEqual((await cn.evaluate(()=>messages.find(m=>m.type==='categorySample'))).products.map(p=>p.sku),['850002','850003']);
+ await cn.evaluate(()=>{document.querySelector('.tsHeadline600Large').textContent='另一个商品列表'});
+ assert.equal((await chinaRead()).available,false,'unidentified sibling grids remain ambiguous');
+ await cn.evaluate(()=>{document.querySelector('.tsHeadline600Large').textContent='您可能喜欢';document.querySelector('[data-widget="infiniteVirtualPaginator"]').remove()});
+ assert.equal((await chinaRead()).available,false,'recommendation-only page must not be scanned');
  assert.deepEqual(errors,[]);
  console.log('Isolated Chromium category manager and actual main-list card reading passed.');
 }finally{await browser.close()}
