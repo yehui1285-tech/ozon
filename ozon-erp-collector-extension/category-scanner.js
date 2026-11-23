@@ -1,6 +1,9 @@
 (function installOzonCategoryScanner(globalScope) {
-  const MAX_SAMPLES = 100;
-  const MAX_SCROLLS = 120;
+  const MAX_SAMPLES = 400;
+  const MAX_SCROLLS = 400;
+  const LIST_WAIT_POLLS = 30;
+  const LIST_WAIT_MS = 1000;
+  const MAX_REVIEW_PASSES = 2;
   const SELECTORS = [
     '[data-widget="tileGridDesktop"]', '.tileGridDesktop',
     '[data-widget="infiniteVirtualPaginator"]', '.infiniteVirtualPaginator',
@@ -30,7 +33,18 @@
       if (visible(el) && !isForbidden(el)) candidates.add(el);
     }
     const lists = [...candidates].filter((el) => [...candidates].every((other) => other === el || !el.contains(other)));
-    return lists.length === 1 ? lists[0] : null;
+    if (lists.length === 1) return lists[0];
+    // A catalog may virtualize its results into several sibling grids. Only
+    // accept them together inside a single explicit catalog/paginator wrapper.
+    if(lists.length>1){
+      const wrappers=[...candidates].filter(el=>
+        /^(searchResultsV2|searchResults|infiniteVirtualPaginator)$/.test(el.getAttribute?.('data-widget')||'')||
+        String(el.className||'').split(/\s+/).includes('infiniteVirtualPaginator'));
+      const containing=wrappers.filter(el=>lists.every(child=>el.contains(child)));
+      const innermost=containing.filter(el=>!containing.some(other=>other!==el&&el.contains(other)));
+      if(innermost.length===1)return innermost[0];
+    }
+    return null;
   }
   function readCards(list, core, categoryUrl, options = {}) {
     if (!list) return { products: [], observedSkus: [], pendingSkus: [], pendingCount: 0, available: false };
@@ -81,7 +95,7 @@
     const href = links.map((a) => core.paginationUrl?.(a.href, categoryUrl)).find(url=>url&&Number(new URL(url).searchParams.get('page'))===page+1);
     return href || '';
   }
-  function createReader(doc, core) { return { read: (url, options) => readCards(pickList(doc), core, url, options), next: (url) => pagination(doc, core, url), pickList: () => pickList(doc) }; }
+  function createReader(doc, core) { return { read: (url, options, list=pickList(doc)) => readCards(list, core, url, options), next: (url) => pagination(doc, core, url), pickList: () => pickList(doc) }; }
   globalScope.OzonCategoryScanner = Object.freeze({ createReader, readCards, pickList, MAX_SAMPLES, MAX_SCROLLS });
 
   const core = globalScope.OzonCategoryCore;
@@ -101,21 +115,29 @@
     const baseUrl = core.normalizeUrl(msg.categoryUrl);
     const url = core.paginationUrl?.(globalScope.location.href, baseUrl) || baseUrl;
     if (!core.samePage(globalScope.location.href, baseUrl) || url!==msg.categoryUrl||globalScope.location.href!==url) return done(msg, false, 'wrong_category_page');
-    const reader = createReader(globalScope.document, core), sent=new Set(),observed = new Set(),pending=new Set();
-    let scrolls = 0, stable = 0, bottomStable = 0, lastHeight = -1, noListPolls = 0;
+    const reader = createReader(globalScope.document, core), sent=new Set(),observed = new Set(msg.observedSkus||[]),pending=new Set(msg.pendingSkus||[]);
+    let scrolls = 0, stable = 0, bottomStable = 0, lastHeight = -1, noListPolls = 0,reviewPasses=0;
+    if(msg.recheckFromTop)globalScope.scrollTo(0,0);
+    const wait=ms=>new Promise(resolve=>globalScope.setTimeout(resolve,ms));
+    const reportWait=reason=>new Promise(resolve=>globalScope.chrome.runtime.sendMessage({type:'categoryWait',batchId:msg.batchId,attemptId:msg.attemptId,categoryUrl:url,reason},response=>resolve(response||{})));
     for (let sample = 0; sample < MAX_SAMPLES && scrolls <= MAX_SCROLLS; sample++) {
       if (activeRun!==run) return;
       if (/403|доступ ограничен|access denied|проверка безопасности|captcha/i.test(`${globalScope.document.title} ${textOf(globalScope.document.body).slice(0, 3000)}`)) return done(msg, false, 'manual-verification');
       let list = reader.pickList();
-      if (!list && noListPolls++ < 3) { await new Promise((resolve) => globalScope.setTimeout(resolve, 600)); sample--; continue; }
-      if (!list) return done(msg, false, 'catalog_list_unavailable');
+      const result=reader.read(url,msg.options||{},list);
+      const endMarker = list?.querySelector?.('[data-testid*="no-more"], [data-testid="end-of-list"], [data-testid="catalog-list-end"]');
+      if(!list||(!result.available&&!visible(endMarker))){
+        if(noListPolls>=LIST_WAIT_POLLS)return done(msg,false,'catalog_list_unavailable');
+        if(noListPolls%5===0){const ack=await reportWait('catalog_loading');if(ack.ok!==true||activeRun!==run)return;}
+        noListPolls++;stable=0;bottomStable=0;lastHeight=-1;
+        await wait(LIST_WAIT_MS);sample--;continue;
+      }
       noListPolls = 0;
-      const result = reader.read(url, msg.options || {});
       for(const sku of result.pendingSkus)if(!observed.has(sku))pending.add(sku);
       for(const sku of result.observedSkus){observed.add(sku);pending.delete(sku)}
       const products=result.products.filter(p=>!sent.has(p.sku));
       const categoryName=textOf(globalScope.document.querySelector?.('h1')).slice(0,120);
-      const ack = await new Promise((resolve) => globalScope.chrome.runtime.sendMessage({ type: 'categorySample', batchId: msg.batchId, attemptId: msg.attemptId, categoryUrl: url,categoryName,products,observedSkus: result.observedSkus, pendingCount:pending.size }, (response) => resolve(response || {})));
+      const ack = await new Promise((resolve) => globalScope.chrome.runtime.sendMessage({ type: 'categorySample', batchId: msg.batchId, attemptId: msg.attemptId, categoryUrl: url,categoryName,products,observedSkus: result.observedSkus, pendingSkus:[...pending],pendingCount:pending.size }, (response) => resolve(response || {})));
       if (ack.ok !== true) return done(msg, false, 'sample_not_persisted');
       if(ack.stop===true||ack.stopped===true||activeRun!==run)return;
       for(const p of products)sent.add(p.sku);
@@ -123,11 +145,16 @@
       const atBottom = globalScope.innerHeight + globalScope.scrollY >= height - 8;
       if (atBottom && height === lastHeight) { stable++; bottomStable++; } else { stable = 0; bottomStable = 0; }
       lastHeight = height;
-      const endMarker = list.querySelector?.('[data-testid*="no-more"], [data-testid="end-of-list"], [data-testid="catalog-list-end"]');
       const nextUrl = atBottom && bottomStable >= 3 ? reader.next(url) : '';
-      if (nextUrl) return pending.size?done(msg,false,'pending_cards'):done(msg, false, 'next_page_available', nextUrl);
-      if (atBottom && stable >= 2 && bottomStable >= 3 && visible(endMarker)) {
-        return pending.size?done(msg,false,'pending_cards'):done(msg, true, 'visible_catalog_end');
+      const reachedEnd = atBottom && stable >= 2 && bottomStable >= 3 && visible(endMarker);
+      if(nextUrl||reachedEnd){
+        if(pending.size&&reviewPasses<MAX_REVIEW_PASSES){
+          reviewPasses++;const reviewAck=await reportWait('review_pending');if(reviewAck.ok!==true||activeRun!==run)return;
+          globalScope.scrollTo(0,0);stable=0;bottomStable=0;lastHeight=-1;
+          await wait(1600);continue;
+        }
+        if(pending.size)return done(msg,false,'pending_cards');
+        return nextUrl?done(msg,false,'next_page_available',nextUrl):done(msg,true,'visible_catalog_end');
       }
       if (sample === MAX_SAMPLES - 1 || scrolls >= MAX_SCROLLS) break;
       globalScope.scrollBy(0, Math.max(200, Math.floor(globalScope.innerHeight * 0.65))); scrolls++;

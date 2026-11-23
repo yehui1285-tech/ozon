@@ -3,17 +3,17 @@ import fs from "node:fs";
 import vm from "node:vm";
 
 const data = {};
-let created = [];
+let created = [], reloads=0, sentMessages=[], nextTabId=71;
 const storage = { async get(k) { return k ? { ...(data[k] ? { [k]: data[k] } : {}) } : { ...data }; }, async set(v) { Object.assign(data, v); } };
 const chrome = {
   storage: { local: storage },
   tabs: {
-    async create(o) { const t = { id: 71, ...o }; created.push(t); return t; },
+    async create(o) { const t = { id: nextTabId++, ...o }; created.push(t); return t; },
     async get(id) { return { id, url: created.find(x => x.id === id)?.url || "" }; },
     async update(id, o) { Object.assign(created.find(x => x.id === id), o); return { id, ...o }; },
     async remove(id) { created = created.filter(x => x.id !== id); },
-    async reload() {},
-    async sendMessage() { return { ok: true }; },
+    async reload() { reloads++; },
+    async sendMessage(id,message) { sentMessages.push({id,message});return { ok: true }; },
   },
   scripting: { async executeScript() {} },
 };
@@ -60,6 +60,18 @@ await runner.onRestart();
 assert.equal((await runner.handle({ type: "categoryGet" })).batch.status, "paused");
 await runner.handle({ type: "categoryResume" });
 assert.equal((await runner.handle({ type: "categoryGet" })).batch.status, "running");
+assert.equal(reloads,0,'continue should keep the current page and scroll, not reload it');
+assert.ok(sentMessages.some(x=>x.message.type==='categoryScanStart'),'continue starts the reader on the existing page');
+batch = (await runner.handle({ type: "categoryGet" })).batch;
+await runner.handle({type:'categoryWait',batchId:batch.id,attemptId:batch.attemptId,categoryUrl:batch.stores[0].url,reason:'catalog_loading'},{tab:{id:batch.tabId,url:batch.stores[0].url}});
+assert.equal((await runner.handle({type:'categoryGet'})).batch.status,'running','normal loading is not a manual pause');
+await assert.rejects(()=>runner.handle({type:'categoryWait',batchId:batch.id,attemptId:'stale',categoryUrl:batch.stores[0].url,reason:'catalog_loading'},{tab:{id:batch.tabId,url:batch.stores[0].url}}));
+await runner.handle({type:'categoryPause'});
+await chrome.tabs.update(batch.tabId,{url:'https://www.ozon.ru/login/'});
+const before=created.length;const blockedResume=await runner.handle({type:'categoryResume'});
+assert.equal(blockedResume.batch.status,'paused');assert.equal(created.length,before,'do not navigate away from login/verification or create a replacement tab');
+await chrome.tabs.update(batch.tabId,{url:batch.stores[0].url});
+assert.equal((await runner.handle({type:'categoryResume'})).batch.status,'running');
 batch = (await runner.handle({ type: "categoryGet" })).batch;
 await runner.onRemoved(batch.tabId);
 assert.equal((await runner.handle({ type: "categoryGet" })).batch.status, "paused");

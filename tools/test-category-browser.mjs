@@ -34,5 +34,49 @@ try{
  await reader.evaluate(url=>startListener({type:'categoryScanStart',batchId:'fixture',attemptId:'a',categoryUrl:url,options:{minPrice:20,maxPrice:100,targetCount:3}},{},()=>{}),readerUrl);
  await reader.waitForFunction(()=>messages.some(x=>x.type==='categorySample'));
  const sample=await reader.evaluate(()=>messages.find(m=>m.type==='categorySample'));assert.deepEqual(sample.products.map(x=>x.sku),['100','103']);assert.ok(!sample.products.some(x=>['101','102','999'].includes(x.sku)));assert.equal(sample.categoryName,'工具');assert.deepEqual(errors,[]);
+ // Real DOM: after the first successful sample the catalog disappears for >1.8s.
+ // The same run must recover; multiple grids inside the same unique catalog wrapper are legitimate.
+ await reader.evaluate(({second,third})=>{
+   messages.length=0;
+   const original=document.querySelector('main');
+   const originalSend=chrome.runtime.sendMessage;
+   let first=true;
+   chrome.runtime.sendMessage=(m,cb)=>{
+     if(m.type==='categorySample'&&first){first=false;messages.push(m);original.style.display='none';
+       setTimeout(()=>{original.innerHTML=`<section data-widget="tileGridDesktop">${second}</section><section data-widget="tileGridDesktop">${third}</section>`;original.style.display='';},4500);
+       cb({ok:true});return;
+     }
+     originalSend(m,cb);
+   };
+ },{second:card('200','第二组'),third:card('201','第三组')});
+ await reader.evaluate(url=>startListener({type:'categoryScanStart',batchId:'fixture',attemptId:'transient',categoryUrl:url,options:{minPrice:20,maxPrice:100,targetCount:3}},{},()=>{}),readerUrl);
+ await reader.waitForFunction(()=>messages.some(x=>x.type==='categoryPageDone'||x.type==='categorySample'&&x.products.some(p=>p.sku==='200')),{},{timeout:20000});
+ const recovered=await reader.evaluate(()=>messages);
+ assert.equal(recovered.some(x=>x.type==='categoryPageDone'),false,'temporary list disappearance must not pause');
+ assert.deepEqual(recovered.filter(x=>x.type==='categorySample').at(-1).products.map(p=>p.sku),['200','201'],'read both grids inside one unambiguous main catalog');
+ assert.deepEqual(errors,[]);
+ // A pending card at a confirmed list end must trigger an automatic review.
+ // Its missing fields appear only once the reader begins the review pass.
+ await reader.evaluate(({ready})=>{
+   messages.length=0;const original=document.querySelector('main');
+   original.innerHTML='<section data-widget="tileGridDesktop"><article><a href="/product/tool-301/">待加载</a></article><div data-testid="catalog-list-end">已加载末尾</div></section>';
+   const nativeScroll=window.scrollTo.bind(window);
+   window.scrollTo=(...args)=>{nativeScroll(...args);original.querySelector('article').outerHTML=ready};
+   chrome.runtime.sendMessage=(m,cb)=>{messages.push(m);cb({ok:true,stop:false})};
+   nativeScroll(0,999999);
+ },{ready:card('301','已完成加载')});
+ await reader.evaluate(url=>startListener({type:'categoryScanStart',batchId:'fixture',attemptId:'review',categoryUrl:url,options:{minPrice:20,maxPrice:100,targetCount:3}},{},()=>{}),readerUrl);
+ await reader.waitForFunction(()=>messages.some(x=>x.type==='categoryPageDone'),{},{timeout:25000});
+ const review=await reader.evaluate(()=>messages);
+ assert.ok(review.some(x=>x.type==='categoryWait'&&x.reason==='review_pending'),'pending fields receive an automatic review pass');
+ assert.ok(review.some(x=>x.type==='categorySample'&&x.products.some(p=>p.sku==='301')));
+ assert.equal(review.find(x=>x.type==='categoryPageDone').reason,'visible_catalog_end');
+ assert.equal(review.find(x=>x.type==='categoryPageDone').complete,true);
+ // A platform challenge must pause before any wait or sample; never retry it automatically.
+ await reader.evaluate(()=>{messages.length=0;document.title='captcha';});
+ await reader.evaluate(url=>startListener({type:'categoryScanStart',batchId:'fixture',attemptId:'verification',categoryUrl:url,options:{targetCount:3}},{},()=>{}),readerUrl);
+ await reader.waitForFunction(()=>messages.some(x=>x.type==='categoryPageDone'));
+ const verify=await reader.evaluate(()=>messages);assert.deepEqual(verify.map(x=>x.type),['categoryPageDone']);assert.equal(verify[0].reason,'manual-verification');
+ assert.deepEqual(errors,[]);
  console.log('Isolated Chromium category manager and actual main-list card reading passed.');
 }finally{await browser.close()}
