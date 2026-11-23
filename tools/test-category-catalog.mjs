@@ -1,0 +1,25 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import '../ozon-erp-collector-extension/store-scanner-core.js';
+import '../ozon-erp-collector-extension/category-core.js';
+const data=JSON.parse(fs.readFileSync(new URL('../ozon-erp-collector-extension/category-catalog.json',import.meta.url),'utf8'));
+globalThis.chrome={storage:{local:{async get(){return {}},async set(){}}}};
+await import('../ozon-erp-collector-extension/category-catalog.js');
+const c=globalThis.OzonCategoryCatalog;
+assert.equal(data.ordinary.length,2434);
+assert.equal(data.ordinary.filter(n=>n.parentId===null).length,27);
+assert.equal(data.ordinary.find(n=>n.id==='8678').parentId,'8500');
+assert.equal(data.china.length,1191);
+assert.ok(data.ordinary.every(n=>Object.keys(n).sort().join(',')==='id,nameRu,nameZh,parentId,url'));
+assert.ok(data.china.filter(n=>n.parentId===null).length>0);
+for(const source of ['ordinary','china']) {const nodes=data[source], ids=new Set(nodes.map(n=>n.id)), keys=nodes.map(n=>globalThis.OzonCategoryCore.keyFromUrl(n.url));assert.equal(ids.size,nodes.length);assert.equal(new Set(keys).size,nodes.length);assert.ok(keys.every(k=>k.startsWith(source==='china'?'china-category:':'category:')));assert.ok(nodes.every(n=>n.parentId===null||ids.has(n.parentId)));}
+assert.ok(data.china.every(n=>n.parentId!==data.china[0].id || n.id!==data.china[0].id));
+const sample=[{id:'a',parentId:null,nameZh:'父',nameRu:'Parent',url:'https://www.ozon.ru/category/a-1/'},{id:'b',parentId:'a',nameZh:'子',nameRu:'Child',url:'https://www.ozon.ru/category/b-2/'}];
+const s=c.makeSelection(sample), parent=s.roots[0];
+s.toggle(parent,true);assert.equal(s.selected.size,1);assert.deepEqual(s.urls(),[sample[0].url]);
+s.toggle(parent,false);assert.equal(s.selected.size,0);
+s.addLeaves(parent);assert.deepEqual(s.urls(),[sample[1].url]);s.clear();
+const large=Array.from({length:21},(_,i)=>({id:String(i),parentId:null,nameZh:'x',nameRu:'x',url:`https://www.ozon.ru/category/x-${i}/`}));
+const many=c.makeSelection(large);for(const n of many.roots.slice(0,20))many.add(n);assert.throws(()=>many.add(many.roots[20]),/最多选择 20/);assert.equal(many.selected.size,20);
+assert.equal(c.names({nameZh:'',nameRu:'Русский'}),'Русский');
+console.log('Category catalog counts, shape, hierarchy selection, locale fallback and 20-item bound passed.');

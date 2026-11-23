@@ -22,7 +22,7 @@ const keep = [
   "1688-background.js","1688-content.js","1688-core.js","black-price-core.js","main-image-core.js",
   "task-pricing-core.js","store-scanner-core.js","store-scanner.js","pinduoduo-bridge.js",
   "sourcing-enrichment.html","sourcing-enrichment.js","product-pool-core.js","product-pool.html","product-pool.js","product-pool.css",
-  "category-core.js","category-background.js","category-scanner.js","category.css","category.js",
+  "category-core.js","category-background.js","category-scanner.js","category.css","category.js","category-catalog.js","category-catalog.json",
 ];
 for (const name of keep) fs.copyFileSync(path.join(extension, name), path.join(dest, name));
 let poolHtml = withLocalNav(read("product-pool.html"),"product-pool.html","<main>");

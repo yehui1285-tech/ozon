@@ -16,8 +16,9 @@
   function currentStore(batch) { return batch?.stores?.[batch.currentIndex] || null; }
   function pageUrl(task) { return task?.pageUrl || task?.url || ""; }
   function pageMatches(actual, task) {
-    return !!task && core.samePage(actual || "", task.url) && (actual === pageUrl(task) || core.paginationUrl?.(actual, task.url) === pageUrl(task));
+    return !!task && core.samePage(actual || "", task.url) && core.exactPageUrl(actual)===pageUrl(task);
   }
+  const sourceKind=url=>core.keyFromUrl(url).startsWith('china-category:')?'china':'normal';
   function qualifiedTotal(batch) { return (batch.qualifiedSkuIds || []).length; }
   function finishAtTarget(batch) {
     if (qualifiedTotal(batch) < batch.options.targetCount) return false;
@@ -100,7 +101,7 @@
             await chrome.storage.local.set({ [HISTORY_KEY]: archived.slice(0,HISTORY_LIMIT) });
           }
           const id = `category-${uuid()}`;
-          const stores = urls.map((url, i) => ({ sellerKey: core.keyFromUrl(url), url, pageUrl: url, status: i === 0 ? "scanning" : "pending", observedCount: 0, qualifiedCount: 0, pendingCount: 0, observedSkus: [], visitedPages: [] }));
+          const stores = urls.map((url, i) => {const kind=sourceKind(url),label=m.categoryLabels&&Object.hasOwn(m.categoryLabels,url)&&typeof m.categoryLabels[url]==='string'?m.categoryLabels[url].trim().slice(0,120):'';return { sellerKey: core.keyFromUrl(url), url, pageUrl: url, sourceKind:kind, ...(label?{label,name:(kind==='china'?'中国专区 · ':'普通类目 · ')+label}:{}), status: i === 0 ? "scanning" : "pending", observedCount: 0, qualifiedCount: 0, pendingCount: 0, observedSkus: [], visitedPages: [] }});
           batch = { id, sourceMode: "category", status: "running", currentIndex: 0, tabId: null, attemptId: null, options, stores, results: {}, updatedAt: now(), message: "类目扫描已开始", addedCount: 0 };
           await openCurrent(batch, true);
           return { ok: true, batch: clone(batch) };
@@ -138,8 +139,9 @@
             qualifiedSeen.add(product.sku); products.push(product);
           }
           const title=typeof m.categoryName==='string'?m.categoryName.trim().slice(0,120):'';
-          if(title)task.name=title;
-          const output = batch.results[task.sellerKey] ||= { storeName: `类目 · ${title||task.url.split('/')[4]||core.keyFromUrl(task.url)}`, storeUrl: task.url, products: {}, batchCapture: { batchId: batch.id, skus: [] } };
+          const kind=task.sourceKind||sourceKind(task.url), name=task.label||title||core.keyFromUrl(task.url);
+          if(!task.label)task.name=(kind==='china'?'中国专区 · ':'普通类目 · ')+name;
+          const output = batch.results[task.sellerKey] ||= { storeName: `类目 · ${kind==='china'?'中国专区 · ':''}${name}`, storeUrl: task.url, products: {}, batchCapture: { batchId: batch.id, skus: [] } };
           for (const p of products) if (!output.products[p.sku]) { output.products[p.sku] = p; output.batchCapture.skus.push(p.sku); }
           batch.qualifiedSkuIds = [...qualifiedSeen];
           task.qualifiedCount = Object.keys(output.products).length;
@@ -157,7 +159,7 @@
           const task = assertActive(batch, m, sender);
           if (batch.status !== "running") throw Error("类目批次当前未运行");
           const nextUrl = m.reason === "next_page_available" && m.nextUrl && core.paginationUrl?.(m.nextUrl, task.url);
-          if (nextUrl && nextUrl!==pageUrl(task)&&!task.visitedPages.includes(nextUrl)) {
+          if (nextUrl && Number(new URL(nextUrl).searchParams.get('page'))===Number(new URL(pageUrl(task)).searchParams.get('page')||1)+1 && nextUrl!==pageUrl(task)&&!task.visitedPages.includes(nextUrl)) {
             task.visitedPages.push(pageUrl(task)); task.pageUrl = nextUrl;task.pendingCount=0;task.pendingSkus=[]; batch.message = "继续扫描下一页"; await stopScanner(batch); batch.attemptId=uuid();batch.lastProgressAt=now();await save(batch);await chrome.tabs.update(batch.tabId,{url:nextUrl});return { ok: true, batch: clone(batch) };
           }
           await stopScanner(batch);

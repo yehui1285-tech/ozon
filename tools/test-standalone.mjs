@@ -35,6 +35,8 @@ for (const current of ["pricing.html","batch.html","category.html","product-pool
 }
 assert.ok(fs.existsSync(path.join(dir,'category-scanner.js')));
 assert.ok(fs.existsSync(path.join(dir,'category-background.js')));
+assert.ok(fs.existsSync(path.join(dir,'category-catalog.js')));
+assert.ok(fs.existsSync(path.join(dir,'category-catalog.json')));
 assert.doesNotMatch(read('category.html'),/id="syncWorkbench"/);
 assert.doesNotMatch(read('background.js'),/wbSyncCategory/);
 assert.equal(read("product-pool-core.js"),fs.readFileSync("ozon-erp-collector-extension/product-pool-core.js","utf8"));

@@ -15,6 +15,7 @@ try {
   node tools/test-store-background-integration.mjs
   if ($LASTEXITCODE -ne 0) { throw "Store/background integration failed" }
   node tools/test-category-core.mjs
+  node tools/test-category-catalog.mjs
   if ($LASTEXITCODE -ne 0) { throw "Category data validation failed" }
   node tools/test-category-scanner.mjs
   if ($LASTEXITCODE -ne 0) { throw "Category reader tests failed" }

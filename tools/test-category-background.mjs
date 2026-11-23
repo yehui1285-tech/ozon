@@ -80,4 +80,18 @@ assert.equal((await runner.handle({ type: "categoryGet" })).batch.status, "runni
 batch = (await runner.handle({type:'categoryGet'})).batch;
 let pause=await runner.handle({type:'categoryPageDone',batchId:batch.id,attemptId:batch.attemptId,categoryUrl:batch.stores[0].url,complete:false,reason:'manual-verification',verificationDetail:'http_denied'},{tab:{id:batch.tabId,url:batch.stores[0].url}});
 assert.equal(pause.batch.status,'paused');assert.match(pause.batch.message,/访问受限/);assert.match(pause.batch.stores[0].note,/访问受限/);
+await runner.handle({type:'categoryStop'});
+const regularUrl='https://www.ozon.ru/category/tools-8500/',chinaUrl='https://www.ozon.ru/highlight/tovary-iz-kitaya-935133/?category=8500';
+batch=(await runner.handle({type:'categoryStart',urls:[regularUrl,chinaUrl],categoryLabels:{[regularUrl]:'汽车用品',[chinaUrl]:'中国专区汽车用品'},targetCount:10})).batch;
+assert.deepEqual(Array.from(batch.stores,s=>s.sellerKey),['category:8500','china-category:8500']);
+assert.equal(batch.stores[0].sourceKind,'normal');assert.equal(batch.stores[1].sourceKind,'china');
+await assert.rejects(()=>runner.handle({type:'categorySample',batchId:batch.id,attemptId:batch.attemptId,categoryUrl:chinaUrl,products:[]},{tab:{id:batch.tabId,url:chinaUrl}}));
+batch=(await runner.handle({type:'categoryPageDone',batchId:batch.id,attemptId:batch.attemptId,categoryUrl:regularUrl,complete:true,reason:'visible_catalog_end'},{tab:{id:batch.tabId,url:regularUrl}})).batch;
+assert.equal(batch.currentIndex,1);assert.equal(created.find(t=>t.id===batch.tabId).url,chinaUrl);
+const chineseSku={sku:'850001',name:'配件',qualified:true,price:'90',link:'https://www.ozon.ru/product/part-850001/',shippingRisk:{type:'clear'}};
+batch=(await runner.handle({type:'categorySample',batchId:batch.id,attemptId:batch.attemptId,categoryUrl:chinaUrl,categoryName:'全部商品',observedSkus:['850001'],products:[chineseSku]},{tab:{id:batch.tabId,url:chinaUrl}})).batch;
+assert.match(batch.results['china-category:8500'].storeName,/中国专区/);assert.match(batch.results['china-category:8500'].storeName,/汽车用品/);
+const exportResult=await runner.handle({type:'categoryExport',batchId:batch.id});assert.match(exportResult.csv,/highlight\/tovary-iz-kitaya-935133\/\?category=8500/);
+batch=(await runner.handle({type:'categoryPageDone',batchId:batch.id,attemptId:batch.attemptId,categoryUrl:chinaUrl,complete:false,reason:'next_page_available',nextUrl:chinaUrl+'&page=2'},{tab:{id:batch.tabId,url:chinaUrl}})).batch;
+assert.equal(batch.stores[1].pageUrl,chinaUrl+'&page=2');
 console.log("category background runner tests passed");

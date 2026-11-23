@@ -113,7 +113,7 @@
   globalScope.OzonCategoryScanner = Object.freeze({ createReader, readCards, pickList, MAX_SAMPLES, MAX_SCROLLS });
 
   const core = globalScope.OzonCategoryCore;
-  if (!core || !globalScope.chrome?.runtime?.onMessage || !/^https:\/\/www\.ozon\.ru\/category\//.test(globalScope.location?.href || '') || globalScope.__ozonCategoryListenerInstalled) return;
+  if (!core || !globalScope.chrome?.runtime?.onMessage || !core.exactPageUrl(globalScope.location?.href || '') || globalScope.__ozonCategoryListenerInstalled) return;
   globalScope.__ozonCategoryListenerInstalled = true;
   let activeRun = null;
   globalScope.chrome.runtime.onMessage.addListener((message, _sender, reply) => {
@@ -127,8 +127,8 @@
   });
   async function scan(msg,run) {
     const baseUrl = core.normalizeUrl(msg.categoryUrl);
-    const url = core.paginationUrl?.(globalScope.location.href, baseUrl) || baseUrl;
-    if (!core.samePage(globalScope.location.href, baseUrl) || url!==msg.categoryUrl||globalScope.location.href!==url) return done(msg, false, 'wrong_category_page');
+    const url = core.exactPageUrl(globalScope.location.href);
+    if (!core.samePage(globalScope.location.href, baseUrl) || !url || url!==msg.categoryUrl) return done(msg, false, 'wrong_category_page');
     const reader = createReader(globalScope.document, core), sent=new Set(),observed = new Set(msg.observedSkus||[]),pending=new Set(msg.pendingSkus||[]);
     let scrolls = 0, stable = 0, bottomStable = 0, lastHeight = -1, noListPolls = 0,reviewPasses=0;
     let recheckFromTop=!!msg.recheckFromTop;
@@ -136,6 +136,7 @@
     const reportWait=reason=>new Promise(resolve=>globalScope.chrome.runtime.sendMessage({type:'categoryWait',batchId:msg.batchId,attemptId:msg.attemptId,categoryUrl:url,reason},response=>resolve(response||{})));
     for (let sample = 0; sample < MAX_SAMPLES && scrolls <= MAX_SCROLLS; sample++) {
       if (activeRun!==run) return;
+      if(core.exactPageUrl(globalScope.location.href)!==url)return done(msg,false,'wrong_category_page');
       const verification=verificationDetail(globalScope.document);
       if(verification)return done(msg,false,'manual-verification','',verification);
       if(recheckFromTop){recheckFromTop=false;globalScope.scrollTo(0,0);}
@@ -179,7 +180,7 @@
     return done(msg, false, 'scan_bound_reached');
   }
   function done(msg, complete, reason, nextUrl = '', verification = '') {
-    const requested = core.paginationUrl?.(globalScope.location.href, core.normalizeUrl(msg.categoryUrl)) || core.normalizeUrl(msg.categoryUrl);
+    const requested = core.exactPageUrl(msg.categoryUrl);
     const result = { type: 'categoryPageDone', batchId: msg.batchId, attemptId: msg.attemptId, categoryUrl: requested, ...(nextUrl ? { nextUrl } : {}), ...(verification?{verificationDetail:verification}:{}), complete, reason };
     return new Promise((resolve) => globalScope.chrome.runtime.sendMessage(result, () => resolve(result)));
   }

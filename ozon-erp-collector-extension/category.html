@@ -11,8 +11,17 @@
     <header><div><p class="eyebrow">OZON · 本机任务</p><h1>类目选品</h1><p class="intro">逐类目检查商品。遇到站点验证或登录时，请在当前标签页手动完成。</p></div><a href="product-pool.html">打开本机商品池</a></header>
     <section class="card setup">
       <h2>新建类目任务</h2>
-      <label for="urls">类目链接 <span>每行一个，最多 20 个</span></label>
-      <textarea id="urls" rows="5" placeholder="https://www.ozon.ru/category/..."></textarea>
+      <section class="catalog" aria-labelledby="catalogTitle">
+        <div class="section-head"><h3 id="catalogTitle">类目目录</h3><span id="catalogCount">已选 0 / 20</span></div>
+        <label for="catalogSource">目录来源</label><select id="catalogSource"><option value="ordinary">普通 Ozon 类目</option><option value="china">中国专区</option></select>
+        <p class="catalog-note" id="catalogProvenance"></p>
+        <p class="catalog-note">勾选类目本身可扫描一个大类，展开可选择子类目；“选末级”将该分支下末级类目一起加入（最多 20 个）。</p>
+        <div class="catalog-tools"><input id="catalogSearch" type="search" placeholder="搜索中文或俄文类目" aria-label="搜索类目"><button id="catalogClear" type="button">清空树形选择</button></div>
+        <div id="catalogTree" class="catalog-tree" role="tree" aria-label="Ozon 类目树"></div>
+        <div class="favorite-tools"><input id="favoriteName" maxlength="40" placeholder="组合名称"><button id="saveFavorite" type="button">保存当前树形组合</button><select id="favoriteSelect" aria-label="本机保存的组合"><option value="">选择本机组合</option></select><button id="loadFavorite" type="button">载入</button><button id="deleteFavorite" type="button">删除</button></div>
+      </section>
+      <label for="urls">自定义类目链接（可选） <span>与所选类目合计最多 20 个</span></label>
+      <textarea id="urls" rows="3" placeholder="https://www.ozon.ru/category/..."></textarea>
       <div class="fields">
         <label>本批目标新品数<input id="targetCount" type="number" min="1" max="500" value="20"></label>
         <label>最低价格（可选，CNY ¥）<input id="minPrice" type="number" min="0" step="0.01" placeholder="不限制"></label>
@@ -28,6 +37,6 @@
       <div class="actions"><label>历史批次 <select id="historyBatch" aria-label="历史类目批次"><option value="">选择已结束批次</option></select></label><button id="addHistoryPool" disabled>历史批次加入本机商品池</button><button id="exportHistoryBatch" disabled>导出历史批次 CSV</button></div>
     </section>
   </main>
-  <script src="store-scanner-core.js"></script><script src="category-core.js"></script><script src="category.js"></script>
+  <script src="store-scanner-core.js"></script><script src="category-core.js"></script><script src="category-catalog.js"></script><script src="category.js"></script>
 </body>
 </html>

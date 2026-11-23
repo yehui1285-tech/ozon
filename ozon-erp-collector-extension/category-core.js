@@ -5,19 +5,27 @@
     try{
       const u=new URL(String(url||'').trim());
       if(u.origin!=='https://www.ozon.ru'||u.username||u.password)return null;
+      if(u.pathname==='/highlight/tovary-iz-kitaya-935133/' || u.pathname==='/highlight/tovary-iz-kitaya-935133'){
+        const params=[...u.searchParams],ids=u.searchParams.getAll('category'),pages=u.searchParams.getAll('page');
+        if(u.hash||ids.length!==1||!/^\d{1,16}$/.test(ids[0])||pages.length>1||params.some(([k])=>!['category','page'].includes(k)))return null;
+        if(pages.length&&(!/^\d{1,4}$/.test(pages[0])||Number(pages[0])<1||Number(pages[0])>1000))return null;
+        return {id:ids[0],kind:'china',url:u.origin+'/highlight/tovary-iz-kitaya-935133/?category='+ids[0],parsed:u};
+      }
       const match=u.pathname.match(/^\/category\/(?:[a-z0-9-]+-)?(\d{1,16})\/?$/i);
       if(!match)return null;
-      return {id:match[1],url:u.origin+u.pathname.replace(/\/+$/,'')+'/',parsed:u};
+      return {id:match[1],kind:'normal',url:u.origin+u.pathname.replace(/\/+$/,'')+'/',parsed:u};
     }catch{return null}
   }
-  const keyFromUrl=url=>{const c=category(url);return c?'category:'+c.id:''};
+  const keyFromUrl=url=>{const c=category(url);return c?(c.kind==='china'?'china-category:':'category:')+c.id:''};
   const normalizeUrl=url=>category(url)?.url||'';
   const samePage=(url,expected)=>{const key=keyFromUrl(url);return !!key&&key===keyFromUrl(expected)};
   function paginationUrl(url,expected){
     const c=category(url);if(!c||!samePage(url,expected)||c.parsed.hash)return '';
-    const params=[...c.parsed.searchParams];if(params.length!==1||params[0][0]!=='page'||!/^\d{1,4}$/.test(params[0][1]))return '';
-    const page=Number(params[0][1]);return page>=1&&page<=1000?c.url+'?page='+page:'';
+    const params=[...c.parsed.searchParams],pages=c.parsed.searchParams.getAll('page');
+    if(params.length!==(c.kind==='china'?2:1)||pages.length!==1||!/^\d{1,4}$/.test(pages[0]))return '';
+    const page=Number(pages[0]);return page>=1&&page<=1000?c.url+(c.kind==='china'?'&':'?')+'page='+page:'';
   }
+  function exactPageUrl(url){const c=category(url);if(!c||c.parsed.hash)return '';if(c.kind==='normal')return c.parsed.search?paginationUrl(url,c.url):c.parsed.href===c.url?c.url:'';return c.parsed.searchParams.has('page')?paginationUrl(url,c.url):c.url;}
   function parseUrls(raw,max=20){
     const urls=[],invalid=[],seen=new Set();let duplicateCount=0,overflowCount=0;
     for(const value of (Array.isArray(raw)?raw.map(String):String(raw||'').split(/\r?\n/)).map(s=>s.trim()).filter(Boolean)){
@@ -53,5 +61,5 @@
     if(scanner.classifyShippingRisk([product.name,product.category,product.rawRiskText].filter(Boolean).join('\n')).type==='suspected_prohibited')return false;
     return priceAllowed(product,options);
   }
-  scope.OzonCategoryCore=Object.freeze({keyFromUrl,normalizeUrl,samePage,paginationUrl,parseUrls,validateOptions,priceAllowed,qualifiedProduct,capturedPrice});
+  scope.OzonCategoryCore=Object.freeze({keyFromUrl,normalizeUrl,samePage,paginationUrl,exactPageUrl,parseUrls,validateOptions,priceAllowed,qualifiedProduct,capturedPrice});
 })(globalThis);
