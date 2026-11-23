@@ -34,6 +34,14 @@ try{
  await reader.evaluate(url=>startListener({type:'categoryScanStart',batchId:'fixture',attemptId:'a',categoryUrl:url,options:{minPrice:20,maxPrice:100,targetCount:3}},{},()=>{}),readerUrl);
  await reader.waitForFunction(()=>messages.some(x=>x.type==='categorySample'));
  const sample=await reader.evaluate(()=>messages.find(m=>m.type==='categorySample'));assert.deepEqual(sample.products.map(x=>x.sku),['100','103']);assert.ok(!sample.products.some(x=>['101','102','999'].includes(x.sku)));assert.equal(sample.categoryName,'工具');assert.deepEqual(errors,[]);
+ // Numeric values in ordinary product cards are not HTTP errors.
+ await reader.evaluate(({normal,price})=>{messages.length=0;const section=document.querySelector('main section');window.savedCatalogMarkup=section.innerHTML;section.innerHTML=normal+price;}, {normal:card('5840376192','普通配件'),price:card('105','普通售价').replace('80.50 ¥','403.50 ¥')});
+ await reader.evaluate(url=>startListener({type:'categoryScanStart',batchId:'fixture',attemptId:'ordinary-numbers',categoryUrl:url,options:{minPrice:20,maxPrice:500,targetCount:3}},{},()=>{}),readerUrl);
+ await reader.waitForFunction(()=>messages.some(x=>x.type==='categorySample'||x.type==='categoryPageDone'));
+ const ordinary=await reader.evaluate(()=>messages);
+ assert.equal(ordinary.some(m=>m.type==='categoryPageDone'),false,'ordinary SKU and price numbers must not trigger verification');
+ assert.deepEqual(ordinary[0].products.map(p=>p.sku),['5840376192','105']);
+ await reader.evaluate(()=>{document.querySelector('main section').innerHTML=window.savedCatalogMarkup;messages.length=0;});
  // Real DOM: after the first successful sample the catalog disappears for >1.8s.
  // The same run must recover; multiple grids inside the same unique catalog wrapper are legitimate.
  await reader.evaluate(({second,third})=>{
@@ -76,7 +84,12 @@ try{
  await reader.evaluate(()=>{messages.length=0;document.title='captcha';});
  await reader.evaluate(url=>startListener({type:'categoryScanStart',batchId:'fixture',attemptId:'verification',categoryUrl:url,options:{targetCount:3}},{},()=>{}),readerUrl);
  await reader.waitForFunction(()=>messages.some(x=>x.type==='categoryPageDone'));
- const verify=await reader.evaluate(()=>messages);assert.deepEqual(verify.map(x=>x.type),['categoryPageDone']);assert.equal(verify[0].reason,'manual-verification');
+ const verify=await reader.evaluate(()=>messages);assert.deepEqual(verify.map(x=>x.type),['categoryPageDone']);assert.equal(verify[0].reason,'manual-verification');assert.equal(verify[0].verificationDetail,'security_prompt');
+ // Real page-level denial must still stop immediately, even if catalog markup persists.
+ await reader.evaluate(()=>{messages.length=0;document.title='403 Forbidden';});
+ await reader.evaluate(url=>startListener({type:'categoryScanStart',batchId:'fixture',attemptId:'denied',categoryUrl:url,options:{targetCount:3}},{},()=>{}),readerUrl);
+ await reader.waitForFunction(()=>messages.some(x=>x.type==='categoryPageDone'));
+ const denied=await reader.evaluate(()=>messages);assert.deepEqual(denied.map(x=>x.type),['categoryPageDone']);assert.equal(denied[0].reason,'manual-verification');assert.equal(denied[0].verificationDetail,'http_denied');
  assert.deepEqual(errors,[]);
  console.log('Isolated Chromium category manager and actual main-list card reading passed.');
 }finally{await browser.close()}

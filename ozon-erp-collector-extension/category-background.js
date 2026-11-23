@@ -165,7 +165,8 @@
             task.status = "completed"; batch.message = "当前类目已完成";
             batch.currentIndex++;
             if (currentStore(batch)) { currentStore(batch).status = "scanning";batch.attemptId=uuid();batch.lastProgressAt=now();await save(batch);await chrome.tabs.update(batch.tabId,{url:pageUrl(currentStore(batch))}); } else batch.status = "completed";
-          } else { task.status = "partial";batch.status = "paused";const why={"manual-verification":"需人工完成站点验证或登录","catalog_list_unavailable":"未识别唯一主商品列表","scan_bound_reached":"达到单页扫描上限（非完成）","pending_cards":"仍有商品字段待复查","reader_error":"页面读取失败","sample_not_persisted":"未确认数据已保存"}[m.reason]||"未确认扫描完成";task.note=why;batch.message=why+"，已暂停，检查页面后可继续。"; }
+          } else { task.status = "partial";batch.status = "paused";const verificationWhy={http_denied:'检测到站点访问受限（HTTP 状态提示），需人工检查',access_restricted:'检测到站点访问受限，需人工检查',security_prompt:'检测到站点安全验证，需人工完成'};
+            const why=(m.reason==='manual-verification'&&Object.hasOwn(verificationWhy,m.verificationDetail)?verificationWhy[m.verificationDetail]:null)||{"manual-verification":"需人工完成站点验证或登录","catalog_list_unavailable":"未识别唯一主商品列表","scan_bound_reached":"达到单页扫描上限（非完成）","pending_cards":"仍有商品字段待复查","reader_error":"页面读取失败","sample_not_persisted":"未确认数据已保存"}[m.reason]||"未确认扫描完成";task.note=why;batch.message=why+"，已暂停，检查页面后可继续。"; }
           await save(batch); return { ok: true, batch: clone(batch) };
         }
         case "categoryAddPool": {

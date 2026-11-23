@@ -77,4 +77,7 @@ await runner.onRemoved(batch.tabId);
 assert.equal((await runner.handle({ type: "categoryGet" })).batch.status, "paused");
 await runner.handle({ type: "categoryResume" });
 assert.equal((await runner.handle({ type: "categoryGet" })).batch.status, "running");
+batch = (await runner.handle({type:'categoryGet'})).batch;
+let pause=await runner.handle({type:'categoryPageDone',batchId:batch.id,attemptId:batch.attemptId,categoryUrl:batch.stores[0].url,complete:false,reason:'manual-verification',verificationDetail:'http_denied'},{tab:{id:batch.tabId,url:batch.stores[0].url}});
+assert.equal(pause.batch.status,'paused');assert.match(pause.batch.message,/访问受限/);assert.match(pause.batch.stores[0].note,/访问受限/);
 console.log("category background runner tests passed");

@@ -12,6 +12,20 @@
   const forbidden = /recommend|suggest|similar|related|recommendation|header/i;
 
   function textOf(el) { return String(el?.innerText || el?.textContent || '').trim(); }
+  function verificationDetail(doc) {
+    const title=String(doc?.title||'').trim();
+    const body=textOf(doc?.body).slice(0,3000);
+    const text=`${title}\n${body}`;
+    // Keep explicit access and security prompts authoritative, including
+    // when a previously rendered catalog is still visible underneath.
+    if(/проверка безопасности|captcha/i.test(text))return 'security_prompt';
+    if(/доступ ограничен|access denied/i.test(text))return 'access_restricted';
+    // A product SKU or currency amount is not an HTTP error. Recognize the
+    // numeric status only in page-level or explicit error context.
+    const heading=textOf(doc?.querySelector?.('h1'));
+    if(/\b403\b/.test(title)||/^403(?:\s+(?:forbidden|access denied))?$/i.test(heading)||/^\s*403\s*(?:\r?\n|$)/.test(body)||/\b(?:http(?:\s+error)?|error|status)\s*[:：]?\s*403\b|\b403\s+forbidden\b|ошибка\s*403\b/i.test(body))return 'http_denied';
+    return '';
+  }
   function visible(el) {
     if (!el || el.hidden || el.getAttribute?.('aria-hidden') === 'true') return false;
     const style = globalScope.getComputedStyle?.(el);
@@ -117,12 +131,14 @@
     if (!core.samePage(globalScope.location.href, baseUrl) || url!==msg.categoryUrl||globalScope.location.href!==url) return done(msg, false, 'wrong_category_page');
     const reader = createReader(globalScope.document, core), sent=new Set(),observed = new Set(msg.observedSkus||[]),pending=new Set(msg.pendingSkus||[]);
     let scrolls = 0, stable = 0, bottomStable = 0, lastHeight = -1, noListPolls = 0,reviewPasses=0;
-    if(msg.recheckFromTop)globalScope.scrollTo(0,0);
+    let recheckFromTop=!!msg.recheckFromTop;
     const wait=ms=>new Promise(resolve=>globalScope.setTimeout(resolve,ms));
     const reportWait=reason=>new Promise(resolve=>globalScope.chrome.runtime.sendMessage({type:'categoryWait',batchId:msg.batchId,attemptId:msg.attemptId,categoryUrl:url,reason},response=>resolve(response||{})));
     for (let sample = 0; sample < MAX_SAMPLES && scrolls <= MAX_SCROLLS; sample++) {
       if (activeRun!==run) return;
-      if (/403|доступ ограничен|access denied|проверка безопасности|captcha/i.test(`${globalScope.document.title} ${textOf(globalScope.document.body).slice(0, 3000)}`)) return done(msg, false, 'manual-verification');
+      const verification=verificationDetail(globalScope.document);
+      if(verification)return done(msg,false,'manual-verification','',verification);
+      if(recheckFromTop){recheckFromTop=false;globalScope.scrollTo(0,0);}
       let list = reader.pickList();
       const result=reader.read(url,msg.options||{},list);
       const endMarker = list?.querySelector?.('[data-testid*="no-more"], [data-testid="end-of-list"], [data-testid="catalog-list-end"]');
@@ -162,9 +178,9 @@
     }
     return done(msg, false, 'scan_bound_reached');
   }
-  function done(msg, complete, reason, nextUrl = '') {
+  function done(msg, complete, reason, nextUrl = '', verification = '') {
     const requested = core.paginationUrl?.(globalScope.location.href, core.normalizeUrl(msg.categoryUrl)) || core.normalizeUrl(msg.categoryUrl);
-    const result = { type: 'categoryPageDone', batchId: msg.batchId, attemptId: msg.attemptId, categoryUrl: requested, ...(nextUrl ? { nextUrl } : {}), complete, reason };
+    const result = { type: 'categoryPageDone', batchId: msg.batchId, attemptId: msg.attemptId, categoryUrl: requested, ...(nextUrl ? { nextUrl } : {}), ...(verification?{verificationDetail:verification}:{}), complete, reason };
     return new Promise((resolve) => globalScope.chrome.runtime.sendMessage(result, () => resolve(result)));
   }
 })(globalThis);
