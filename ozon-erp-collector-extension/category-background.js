@@ -31,6 +31,9 @@
   }
   function snapshot() { return read().then(batch => batch ? { batch: clone(batch), stores: clone(batch.results || {}) } : null); }
   async function snapshotHistory() { return clone((await chrome.storage.local.get(HISTORY_KEY))[HISTORY_KEY] || []); }
+  const finished = batch => !!batch && ["completed", "stopped", "failed"].includes(batch.status);
+  const emptyFinished = batch => finished(batch) && qualifiedTotal(batch) === 0;
+  const historySummary = batch => ({ id: batch.id, status: batch.status, updatedAt: batch.updatedAt, qualifiedCount: qualifiedTotal(batch), storeCount: batch.stores?.length || 0 });
   function assertActive(batch, m, sender, requirePage = true) {
     if (!batch || batch.id !== m.batchId) throw Error("类目批次已变化");
     if (!batch.attemptId || batch.attemptId !== m.attemptId) throw Error("类目扫描尝试已失效");
@@ -87,7 +90,7 @@
     return queue(async () => {
       let batch = await read();
       switch (m.type) {
-        case "categoryGet": return { ok: true, batch: clone(batch), history: (await snapshotHistory()).map(x => ({ id: x.id, status: x.status, updatedAt: x.updatedAt, qualifiedCount: qualifiedTotal(x), storeCount: x.stores?.length || 0 })) };
+        case "categoryGet": return { ok: true, batch: clone(batch), history: (await snapshotHistory()).map(historySummary) };
         case "categoryStart": {
           if (batch && ["running", "paused"].includes(batch.status)) throw Error("已有类目批次正在运行或暂停，请先停止");
           const parsed = core.parseUrls(m.urls, 20);
@@ -185,6 +188,31 @@
         case "categoryExport": {
           const id=m.batchId||batch?.id,source=batch?.id===id?batch:(await snapshotHistory()).find(x=>x.id===id);
           if(!source)throw Error('找不到类目批次');return {ok:true,csv:scanner.buildManualSourcingCsv({batch:source,stores:source.results||{}})};
+        }
+        case "categoryDeleteBatch": {
+          const id=String(m.batchId||"");
+          if(!id)throw Error("请选择要删除的类目历史批次");
+          if(batch?.id===id){
+            if(["running","paused"].includes(batch.status))throw Error("运行中或暂停中的类目批次不能删除，请先结束任务");
+            if(!finished(batch))throw Error("只能删除已结束的类目批次");
+            await stopScanner(batch);await chrome.storage.local.remove(KEY);batch=null;
+          }else{
+            const archived=await snapshotHistory(),target=archived.find(x=>x.id===id);
+            if(!target)throw Error("找不到要删除的类目历史批次");
+            if(["running","paused"].includes(target.status))throw Error("运行中或暂停中的类目批次不能删除");
+            if(!finished(target))throw Error("只能删除已结束的类目批次");
+            await chrome.storage.local.set({[HISTORY_KEY]:archived.filter(x=>x.id!==id)});
+          }
+          return {ok:true,batch:clone(batch),history:(await snapshotHistory()).map(historySummary),deletedCount:1,message:"已删除所选本机类目批次；商品池、SKU 历史和工作台云端数据未改动。"};
+        }
+        case "categoryCleanupEmpty": {
+          const archived=await snapshotHistory(),kept=archived.filter(x=>!emptyFinished(x));
+          const deletedHistory=archived.length-kept.length;
+          if(deletedHistory!==0)await chrome.storage.local.set({[HISTORY_KEY]:kept});
+          let deletedCurrent=0;
+          if(emptyFinished(batch)){await stopScanner(batch);await chrome.storage.local.remove(KEY);batch=null;deletedCurrent=1;}
+          const deletedCount=deletedHistory+deletedCurrent;
+          return {ok:true,batch:clone(batch),history:kept.map(historySummary),deletedCount,message:deletedCount?`已清理 ${deletedCount} 个已结束的 0 候选批次；商品池、SKU 历史和工作台云端数据未改动。`:"没有可清理的已结束 0 候选批次。"};
         }
         default: return null;
       }

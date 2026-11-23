@@ -32,9 +32,10 @@
       <p id="message" role="status" aria-live="polite"></p>
     </section>
     <section class="card"><div class="section-head"><h2>当前批次</h2><span id="summary">读取中…</span></div><div id="batch"></div>
-      <div class="actions batch-actions"><button id="openScanTab">查看采集页面</button><button id="addPool">本批加入商品池（本机）</button><button id="exportBatch">导出本批 CSV</button><button id="syncWorkbench">同步本批到工作台</button></div>
+      <div class="actions batch-actions"><button id="openScanTab">查看采集页面</button><button id="addPool">本批加入商品池（本机）</button><button id="exportBatch">导出本批 CSV</button><button id="syncWorkbench">同步本批到工作台</button><button id="deleteCurrentBatch" class="danger">删除当前已结束批次</button></div>
       <p class="notice" id="syncNote">工作台版可将本批同步至云端，再到工作台类目选品页面确认入池；本机商品池与工作台账号隔离。</p>
-      <div class="actions"><label>历史批次 <select id="historyBatch" aria-label="历史类目批次"><option value="">选择已结束批次</option></select></label><button id="addHistoryPool" disabled>历史批次加入本机商品池</button><button id="exportHistoryBatch" disabled>导出历史批次 CSV</button></div>
+      <div class="actions"><label>历史批次 <select id="historyBatch" aria-label="历史类目批次"><option value="">选择已结束批次</option></select></label><button id="addHistoryPool" disabled>历史批次加入本机商品池</button><button id="exportHistoryBatch" disabled>导出历史批次 CSV</button><button id="deleteHistoryBatch" class="danger" disabled>删除所选历史批次</button><button id="cleanupEmptyBatches" class="danger">清理已结束的 0 候选批次</button></div>
+      <p class="notice">删除仅清理本机类目批次记录，不会删除本机商品池、SKU 历史或工作台云端数据。运行中和暂停中的批次受保护。</p>
     </section>
   </main>
   <script src="store-scanner-core.js"></script><script src="category-core.js"></script><script src="category-catalog.js"></script><script src="category.js"></script>

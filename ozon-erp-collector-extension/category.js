@@ -41,6 +41,7 @@ function render(batch, archive=history) {
   $("message").textContent = batch?.message || "";
   $("batch").innerHTML = stores.length ? `<div class="store-list">${stores.map(s=>`<article class="store"><div class="store-top"><strong>${esc(s.name||s.label||s.url||"类目")}</strong><span>${esc(labels[s.status]||s.status||"等待")}</span></div><div class="store-url">${esc(s.pageUrl||s.url||"")}</div><div class="counts">已检查 ${Number(s.observedCount||0)} · 新候选 ${Number(s.qualifiedCount||0)} · 待复查 ${Number(s.pendingCount||0)}</div>${s.error||s.message||s.note?`<p class="store-reason">${esc(s.error||s.message||s.note)}</p>`:""}</article>`).join("")}</div>` : `<div class="empty">${batch ? "批次已建立，等待类目进度…" : "创建任务后，这里会显示每个类目的进度和结果。"}</div>`;
   const active = ["running","paused","scanning"].includes(batch?.status);
+  const finishedBatch = ["completed","stopped","failed"].includes(batch?.status);
   $("start").disabled=busy||active;
   $("pause").disabled = busy||!active || batch.status === "paused";
   $("resume").disabled = busy||batch?.status !== "paused";
@@ -49,9 +50,13 @@ function render(batch, archive=history) {
   if($("syncWorkbench")) $("syncWorkbench").disabled = busy||!batch || !stores.length;
   $("openScanTab").disabled=!Number.isInteger(batch?.tabId);
   $("exportBatch").disabled=busy||!batch;
-  const chosen=$("historyBatch").value;$("historyBatch").replaceChildren(new Option('选择已结束批次',''),...history.map(b=>new Option(`${new Date(b.updatedAt).toLocaleString('zh-CN')} · ${Number(b.qualifiedCount||b.count||0)} 件`,b.id)));
+  $("deleteCurrentBatch").disabled=busy||!finishedBatch;
+  const chosen=$("historyBatch").value;$("historyBatch").replaceChildren(new Option('选择已结束批次',''),...history.map(b=>{const ended=["completed","stopped","failed"].includes(b.status);const option=new Option(`${new Date(b.updatedAt).toLocaleString('zh-CN')} · ${Number(b.qualifiedCount||b.count||0)} 件 · ${labels[b.status]||b.status}`,b.id);option.disabled=!ended;return option}));
   if(history.some(b=>b.id===chosen))$("historyBatch").value=chosen;
   $("addHistoryPool").disabled=$("exportHistoryBatch").disabled=busy||!$("historyBatch").value;
+  $("deleteHistoryBatch").disabled=busy||!history.some(b=>b.id===$("historyBatch").value&&["completed","stopped","failed"].includes(b.status));
+  const currentEmpty=finishedBatch&&Number(batch?.qualifiedSkuIds?.length||0)===0&&stores.reduce((n,s)=>n+Number(s.qualifiedCount||0),0)===0;
+  $("cleanupEmptyBatches").disabled=busy||(!currentEmpty&&!history.some(b=>["completed","stopped","failed"].includes(b.status)&&Number(b.qualifiedCount||b.count||0)===0));
 }
 async function refresh() { if(busy)return;try { const r = await send({type:"categoryGet"}); render(r.batch || r.state || null,r.history); } catch(e) { $("message").textContent=e.message; } }
 $("start").onclick = async () => {
@@ -62,10 +67,13 @@ $("start").onclick = async () => {
     await perform({type:"categoryStart",urls:parsed.urls,categoryLabels:categoryLabels(),...options,confirmArchiveOverflow:needsArchiveConfirmation});
   }catch(e){$("message").textContent=e.message;}
 };
-async function perform(message){if(busy)return;busy=true;render(state);try{const r=await send(message);busy=false;render(r.batch||state,r.history||history);$("message").textContent=r.message||(message.type==='categoryAddPool'?`已加入 ${r.added||0} 件 · 重复 ${r.duplicates||0} · 历史排除 ${r.historySkipped||0}`:r.batch?.message||'操作已完成。');}catch(e){busy=false;render(state);$("message").textContent=e.message;}}
+async function perform(message){if(busy)return;busy=true;render(state);try{const r=await send(message);busy=false;render(Object.hasOwn(r,'batch')?r.batch:state,Array.isArray(r.history)?r.history:history);$("message").textContent=r.message||(message.type==='categoryAddPool'?`已加入 ${r.added||0} 件 · 重复 ${r.duplicates||0} · 历史排除 ${r.historySkipped||0}`:r.batch?.message||'操作已完成。');}catch(e){busy=false;render(state);$("message").textContent=e.message;}}
 for(const [id,type] of [["pause","categoryPause"],["resume","categoryResume"],["stop","categoryStop"],["addPool","categoryAddPool"],["syncWorkbench","categorySyncWorkbench"]]) if($(id))$(id).onclick=()=>perform({type,batchId:state?.id});
-$("historyBatch").onchange=()=>{$("addHistoryPool").disabled=$("exportHistoryBatch").disabled=busy||!$("historyBatch").value};
+$("historyBatch").onchange=()=>{$("addHistoryPool").disabled=$("exportHistoryBatch").disabled=$("deleteHistoryBatch").disabled=busy||!$("historyBatch").value};
 $("addHistoryPool").onclick=()=>perform({type:'categoryAddPool',batchId:$("historyBatch").value});
+$("deleteHistoryBatch").onclick=()=>{const id=$("historyBatch").value;if(!id)return;const item=history.find(x=>x.id===id);if(!confirm(`确认删除所选已结束类目批次（${Number(item?.qualifiedCount||0)} 个候选）？本机商品池、SKU 历史和工作台云端数据不会改动。`))return;void perform({type:'categoryDeleteBatch',batchId:id})};
+$("deleteCurrentBatch").onclick=()=>{if(!state||!["completed","stopped","failed"].includes(state.status))return;const count=Number(state.qualifiedSkuIds?.length||state.stores?.reduce((n,s)=>n+Number(s.qualifiedCount||0),0)||0);if(!confirm(`确认删除当前已结束类目批次（${count} 个候选）？本机商品池、SKU 历史和工作台云端数据不会改动。`))return;void perform({type:'categoryDeleteBatch',batchId:state.id})};
+$("cleanupEmptyBatches").onclick=()=>{if(!confirm('清理所有已结束且没有候选的类目批次，包括当前已结束的空批次？运行中和暂停中的批次会保留；商品池、SKU 历史和工作台云端数据不会改动。'))return;void perform({type:'categoryCleanupEmpty'})};
 async function exportCsv(batchId){try{const r=await send({type:'categoryExport',batchId});const url=URL.createObjectURL(new Blob(['\ufeff'+r.csv],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download=`Ozon类目选品-${batchId}.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}catch(e){$("message").textContent=e.message}}
 $("exportBatch").onclick=()=>exportCsv(state?.id);$("exportHistoryBatch").onclick=()=>exportCsv($("historyBatch").value);
 $("openScanTab").onclick=async()=>{try{if(!Number.isInteger(state?.tabId))return;const tab=await chrome.tabs.get(state.tabId);if(!tab)throw Error('采集页面已关闭');await chrome.tabs.update(tab.id,{active:true});if(tab.windowId!=null)await chrome.windows.update(tab.windowId,{focused:true});}catch(e){$("message").textContent=e.message}};

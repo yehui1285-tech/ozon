@@ -4,7 +4,7 @@ import vm from "node:vm";
 
 const data = {};
 let created = [], reloads=0, sentMessages=[], nextTabId=71;
-const storage = { async get(k) { return k ? { ...(data[k] ? { [k]: data[k] } : {}) } : { ...data }; }, async set(v) { Object.assign(data, v); } };
+const storage = { async get(k) { return k ? { ...(data[k] ? { [k]: data[k] } : {}) } : { ...data }; }, async set(v) { Object.assign(data, v); }, async remove(k) { for (const key of Array.isArray(k) ? k : [k]) delete data[key]; } };
 const chrome = {
   storage: { local: storage },
   tabs: {
@@ -94,4 +94,25 @@ assert.match(batch.results['china-category:8500'].storeName,/中国专区/);asse
 const exportResult=await runner.handle({type:'categoryExport',batchId:batch.id});assert.match(exportResult.csv,/highlight\/tovary-iz-kitaya-935133\/\?category=8500/);
 batch=(await runner.handle({type:'categoryPageDone',batchId:batch.id,attemptId:batch.attemptId,categoryUrl:chinaUrl,complete:false,reason:'next_page_available',nextUrl:chinaUrl+'&page=2'},{tab:{id:batch.tabId,url:chinaUrl}})).batch;
 assert.equal(batch.stores[1].pageUrl,chinaUrl+'&page=2');
+
+// Finished history deletion is local to the category archive, and cleanup also clears a finished empty current batch.
+const historyBatch=(id,status,count)=>({id,status,updatedAt:'2026-11-23T00:00:00.000Z',qualifiedSkuIds:Array.from({length:count},(_,i)=>`${id}-${i}`),stores:[],results:{}});
+data.ozonCategoryBatchHistoryV1=[historyBatch('empty-completed','completed',0),historyBatch('keep-products','completed',1),historyBatch('empty-stopped','stopped',0)];
+data.ozonProductPoolV1={products:{'sku-keep':{sku:'sku-keep'}},history:{'sku-history':{sku:'sku-history'}}};
+data.ozonCategoryBatchV1=historyBatch('protected-paused','paused',0);
+await assert.rejects(()=>runner.handle({type:'categoryDeleteBatch',batchId:'protected-paused'}),/运行|暂停/);
+let cleaned=await runner.handle({type:'categoryCleanupEmpty'});
+assert.equal(cleaned.deletedCount,2,'cleanup removes only finished zero-result history batches');
+assert.equal(cleaned.batch.id,'protected-paused','cleanup preserves a paused current batch');
+assert.deepEqual(Array.from((await runner.snapshotHistory()),x=>x.id),['keep-products']);
+assert.ok(data.ozonProductPoolV1.products['sku-keep']);assert.ok(data.ozonProductPoolV1.history['sku-history']);
+const currentEmpty=historyBatch('empty-current','completed',0);
+data.ozonCategoryBatchV1=currentEmpty;
+cleaned=await runner.handle({type:'categoryCleanupEmpty'});
+assert.equal(cleaned.deletedCount,1,'cleanup includes a finished zero-result current batch');
+assert.equal(cleaned.batch,null);
+assert.equal(await runner.snapshot(),null);
+assert.equal((await runner.snapshotHistory()).length,1,'nonempty history remains available');
+const deleted=await runner.handle({type:'categoryDeleteBatch',batchId:'keep-products'});
+assert.equal((await runner.snapshotHistory()).length,0,'selected finished history can be deleted');
 console.log("category background runner tests passed");

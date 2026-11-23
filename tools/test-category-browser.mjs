@@ -13,12 +13,14 @@ try{
  const manager=await browser.newPage(),errors=[];manager.on('pageerror',e=>errors.push(e.message));
  await manager.route('**/*',route=>{const u=new URL(route.request().url()),f=u.pathname.slice(1);if(u.origin!=='https://catalog-fixture.invalid'||!['category.html','category.css','standalone-nav.css','store-scanner-core.js','category-core.js','category-catalog.js','category.js','category-catalog.json'].includes(f))return route.abort();return route.fulfill({contentType:f.endsWith('.html')?'text/html':f.endsWith('.css')?'text/css':f.endsWith('.json')?'application/json':'text/javascript',body:fs.readFileSync(path.join(dir,f))})});
  await manager.addInitScript(()=>{
-  window.calls=[];window.state=null;window.changeListeners=[];window.favoriteStorage={};
-  Object.defineProperty(window,'chrome',{configurable:true,value:{runtime:{sendMessage(m,cb){calls.push(m);if(m.type==='categoryGet')return cb({ok:true,batch:state,history:[]});if(m.type==='categoryStart'){state={id:'category-fixture',status:'running',options:{targetCount:m.targetCount},stores:m.urls.map(url=>({url,status:'scanning',observedCount:0,qualifiedCount:0,pendingCount:0})),tabId:9};return cb({ok:true,batch:state})}if(m.type==='categoryPause'){state.status='paused';return cb({ok:true,batch:state})}if(m.type==='categoryResume'){state.status='running';return cb({ok:true,batch:state})}if(m.type==='categoryStop'){state.status='stopped';return cb({ok:true,batch:state})}cb({ok:false,error:'unexpected'})}},storage:{local:{async get(k){return {[k]:favoriteStorage[k]}},async set(v){Object.assign(favoriteStorage,v)}},onChanged:{addListener(fn){changeListeners.push(fn)}}},tabs:{},windows:{}}});
+  window.calls=[];window.state=null;window.historyData=[];window.changeListeners=[];window.favoriteStorage={};window.confirmMessages=[];window.confirm=message=>{confirmMessages.push(message);return true};
+  Object.defineProperty(window,'chrome',{configurable:true,value:{runtime:{sendMessage(m,cb){calls.push(m);if(m.type==='categoryGet')return cb({ok:true,batch:state,history:historyData});if(m.type==='categoryStart'){state={id:'category-fixture',status:'running',options:{targetCount:m.targetCount},stores:m.urls.map(url=>({url,status:'scanning',observedCount:0,qualifiedCount:0,pendingCount:0})),tabId:9};return cb({ok:true,batch:state})}if(m.type==='categoryPause'){state.status='paused';return cb({ok:true,batch:state})}if(m.type==='categoryResume'){state.status='running';return cb({ok:true,batch:state})}if(m.type==='categoryStop'){state.status='stopped';return cb({ok:true,batch:state})}if(m.type==='categoryDeleteBatch'){if(state?.id===m.batchId)state=null;else historyData=historyData.filter(x=>x.id!==m.batchId);return cb({ok:true,batch:state,history:historyData,message:'已删除所选本机类目批次'})}if(m.type==='categoryCleanupEmpty'){const before=historyData.length;historyData=historyData.filter(x=>Number(x.qualifiedCount||x.count||0)!==0);const currentEmpty=state&&['completed','stopped','failed'].includes(state.status)&&Number(state.qualifiedSkuIds?.length||0)===0&&state.stores.every(s=>Number(s.qualifiedCount||0)===0);if(currentEmpty)state=null;return cb({ok:true,batch:state,history:historyData,deletedCount:before-historyData.length+(currentEmpty?1:0),message:'已清理空批次'})}cb({ok:false,error:'unexpected'})}},storage:{local:{async get(k){return {[k]:favoriteStorage[k]}},async set(v){Object.assign(favoriteStorage,v)}},onChanged:{addListener(fn){changeListeners.push(fn)}}},tabs:{},windows:{}}});
  });
  await manager.goto('https://catalog-fixture.invalid/category.html');
  await manager.waitForFunction(()=>document.querySelectorAll('#catalogTree details').length>0);
  assert.equal(await manager.locator('#syncWorkbench').count(),0);
+ assert.equal(await manager.locator('#deleteHistoryBatch').count(),1,'finished history batches have a dedicated delete action');
+ assert.equal(await manager.locator('#cleanupEmptyBatches').count(),1,'empty finished batches can be cleaned in one action');
  await manager.locator('#urls').fill('https://www.ozon.ru/category/tools-1234/\nhttps://www.ozon.ru/category/car-2345/');
  await manager.locator('#targetCount').fill('3');await manager.locator('#minPrice').fill('20');
  await manager.locator('#start').click();await manager.getByText('运行中',{exact:false}).first().waitFor();
@@ -26,6 +28,19 @@ try{
  await manager.locator('#pause').click();assert.match(await manager.locator('#summary').innerText(),/已暂停/);
  await manager.locator('#resume').click();assert.match(await manager.locator('#summary').innerText(),/运行中/);
  await manager.locator('#stop').click();assert.match(await manager.locator('#summary').innerText(),/已停止/);assert.deepEqual(errors,[]);
+ assert.equal(await manager.locator('#cleanupEmptyBatches').isEnabled(),true,'a stopped empty current batch can be cleaned');
+ await manager.evaluate(()=>{state.qualifiedSkuIds=['900'];state.stores[0].qualifiedCount=1;for(const fn of changeListeners)fn({ozonCategoryBatchV1:{}},'local')});
+ assert.equal(await manager.locator('#deleteCurrentBatch').isEnabled(),true,'a nonempty finished current batch can be deleted explicitly');
+ await manager.locator('#deleteCurrentBatch').click();await manager.waitForFunction(()=>calls.some(m=>m.type==='categoryDeleteBatch'));
+ assert.match((await manager.evaluate(()=>confirmMessages.at(-1))),/工作台云端数据不会改动/);
+ assert.match(await manager.locator('#summary').innerText(),/暂无类目批次/);
+ await manager.evaluate(()=>{historyData=[{id:'paused-history',status:'paused',updatedAt:'2026-11-23T00:00:00.000Z',qualifiedCount:0},{id:'finished-history',status:'completed',updatedAt:'2026-11-23T00:00:00.000Z',qualifiedCount:2}];for(const fn of changeListeners)fn({ozonCategoryBatchHistoryV1:{}},'local')});
+ await manager.waitForFunction(()=>document.querySelector('#historyBatch').options.length===3);
+ assert.equal(await manager.locator('#historyBatch option[value="paused-history"]').evaluate(el=>el.disabled),true,'paused history cannot be selected for deletion');
+ await manager.locator('#historyBatch').selectOption('finished-history');assert.equal(await manager.locator('#deleteHistoryBatch').isEnabled(),true);
+ await manager.locator('#deleteHistoryBatch').click();assert.ok(await manager.evaluate(()=>calls.some(m=>m.type==='categoryDeleteBatch'&&m.batchId==='finished-history')));
+ assert.equal(await manager.locator('#deleteHistoryBatch').isDisabled(),true,'deleting a history item refreshes selection');
+ assert.equal(await manager.locator('#cleanupEmptyBatches').isDisabled(),true,'cleanup is disabled when no empty finished batches remain');
  // Select a whole China category as one task, persist a local named combination, and retain manual links.
  await manager.locator('#urls').fill('https://www.ozon.ru/category/car-8500/');
  await manager.locator('#catalogSource').selectOption('china');await manager.locator('#catalogSearch').fill('汽车用品');
