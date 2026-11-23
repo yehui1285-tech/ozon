@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ozon 类目选品</title>
+  <link rel="stylesheet" href="category.css">
+</head>
+<body>
+  <main class="shell">
+    <header><div><p class="eyebrow">OZON · 本机任务</p><h1>类目选品</h1><p class="intro">逐类目检查商品。遇到站点验证或登录时，请在当前标签页手动完成。</p></div><a href="product-pool.html">打开本机商品池</a></header>
+    <section class="card setup">
+      <h2>新建类目任务</h2>
+      <label for="urls">类目链接 <span>每行一个，最多 20 个</span></label>
+      <textarea id="urls" rows="5" placeholder="https://www.ozon.ru/category/..."></textarea>
+      <div class="fields">
+        <label>本批目标新品数<input id="targetCount" type="number" min="1" max="500" value="20"></label>
+        <label>最低价格（可选，CNY ¥）<input id="minPrice" type="number" min="0" step="0.01" placeholder="不限制"></label>
+        <label>最高价格（可选，CNY ¥）<input id="maxPrice" type="number" min="0" step="0.01" placeholder="不限制"></label>
+      </div>
+      <p class="notice">进度统计为本机发现并符合条件的新候选，不保证最终实际入池数量。任务一次只管理一个 Ozon 标签页。</p>
+      <div class="actions"><button class="primary" id="start">开始类目选品</button><button id="pause">暂停</button><button id="resume">继续</button><button class="danger" id="stop">停止</button></div>
+      <p id="message" role="status" aria-live="polite"></p>
+    </section>
+    <section class="card"><div class="section-head"><h2>当前批次</h2><span id="summary">读取中…</span></div><div id="batch"></div>
+      <div class="actions batch-actions"><button id="openScanTab">查看采集页面</button><button id="addPool">本批加入商品池（本机）</button><button id="exportBatch">导出本批 CSV</button><button id="syncWorkbench">同步本批到工作台</button></div>
+      <p class="notice" id="syncNote">工作台版可将本批同步至云端，再到工作台类目选品页面确认入池；本机商品池与工作台账号隔离。</p>
+      <div class="actions"><label>历史批次 <select id="historyBatch" aria-label="历史类目批次"><option value="">选择已结束批次</option></select></label><button id="addHistoryPool" disabled>历史批次加入本机商品池</button><button id="exportHistoryBatch" disabled>导出历史批次 CSV</button></div>
+    </section>
+  </main>
+  <script src="store-scanner-core.js"></script><script src="category-core.js"></script><script src="category.js"></script>
+</body>
+</html>

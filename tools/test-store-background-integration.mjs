@@ -62,7 +62,7 @@ const chrome = {
   scripting: { async executeScript() {} },
 };
 
-const context = vm.createContext({ chrome, console, setTimeout: fakeSetTimeout, clearTimeout: fakeClearTimeout, URL });
+const context = vm.createContext({ chrome, console, setTimeout: fakeSetTimeout, clearTimeout: fakeClearTimeout, URL, crypto:globalThis.crypto });
 context.globalThis = context;
 context.importScripts = (...files) => files.forEach((file) => {
   const source = fs.readFileSync(new URL(`../ozon-erp-collector-extension/${file}`, import.meta.url), "utf8");
@@ -333,4 +333,23 @@ const bulkConflict=await poolMessage({type:'updateProductPoolItems',changes:[{sk
 assert.equal(bulkConflict.ok,false);
 assert.equal(JSON.stringify((await context.getProductPool()).pool),bulkBefore,'a rejected batch must not partially write');
 
-console.log("Store background integration tests passed.");
+// Category and shop batches remain independent through the actual background message dispatcher.
+const categoryUi={url:'chrome-extension://test/category.html'};
+const categoryRequest=(message,sender=categoryUi)=>new Promise(resolve=>{for(const listener of listeners.messages)if(listener(message,sender,resolve)===true)return;resolve({ok:false,error:'no listener'})});
+const categoryUrl='https://www.ozon.ru/category/tools-1234/';
+const started=await categoryRequest({type:'categoryStart',urls:[categoryUrl],targetCount:1});
+assert.equal(started.ok,true);assert.match(started.batch.id,/^category-[a-f0-9-]{36}$/);
+assert.equal((await categoryRequest({type:'categoryPause'},{url:'https://www.ozon.ru/category/tools-1234/'})).ok,false);
+await assert.rejects(()=>context.startStoreBatch({urls:['https://www.ozon.ru/seller/alpha/']}),/类目选品/);
+const sample={type:'categorySample',batchId:started.batch.id,attemptId:started.batch.attemptId,categoryUrl,categoryName:'工具',observedSkus:['555'],products:[{sku:'555',name:'工具',qualified:true,price:'90,00',link:'https://www.ozon.ru/product/tool-555/',shippingRisk:{type:'clear'}}]};
+assert.equal((await categoryRequest(sample,{tab:{id:999,url:categoryUrl}})).ok,false);
+const scanned=await categoryRequest(sample,{tab:{id:started.batch.tabId,url:categoryUrl}});assert.equal(scanned.stop,true);assert.equal(scanned.batch.status,'completed');
+const addedCategory=await categoryRequest({type:'categoryAddPool',batchId:started.batch.id});assert.equal(addedCategory.ok,true);assert.equal(addedCategory.added,1);
+const categoryItem=(await context.getProductPool()).pool.products['555'];assert.equal(categoryItem.sourceMode,'category');assert.equal(categoryItem.storeName,'类目 · 工具');
+assert.equal((await categoryRequest({type:'categoryExport',batchId:started.batch.id})).csv.includes(categoryUrl),true);
+const uploads=[];context.wbRequest=async(_token,body)=>{uploads.push(body);return {ok:true,count:1}};
+storageData.ozonWorkbenchSettingsV1={token:'a'.repeat(64),auto:true};
+const sync=await context.wbSyncCategory(true);assert.equal(sync.ok,true);assert.equal(sync.count,1);assert.equal(uploads.length,1);assert.equal(uploads[0].action,'batch');assert.equal(uploads[0].batch.id,started.batch.id);assert.equal(uploads[0].batch.status,'completed');assert.match(uploads[0].batch.csv,/类目 · 工具/);
+await context.wbSyncCategory(false);assert.equal(uploads.length,1,'unchanged category batch must not be repeatedly uploaded');
+delete storageData.ozonWorkbenchSettingsV1;
+console.log("Store and category background integration tests passed.");

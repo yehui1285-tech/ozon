@@ -13,6 +13,13 @@ try {
   node tools/test-sourcing-queue.mjs
   node tools/test-store-scanner.mjs
   node tools/test-store-background-integration.mjs
+  if ($LASTEXITCODE -ne 0) { throw "Store/background integration failed" }
+  node tools/test-category-core.mjs
+  if ($LASTEXITCODE -ne 0) { throw "Category data validation failed" }
+  node tools/test-category-scanner.mjs
+  if ($LASTEXITCODE -ne 0) { throw "Category reader tests failed" }
+  node tools/test-category-background.mjs
+  if ($LASTEXITCODE -ne 0) { throw "Category task tests failed" }
   node tools/test-product-pool.mjs
   if ($LASTEXITCODE -ne 0) { throw "Product pool tests failed" }
   node tools/test-quick-pricing.mjs

@@ -24,15 +24,19 @@ assert.match(read("product-pool.html"),/quick-pricing-core\.js/);
 assert.match(read("pricing-app.js"),/quickPricingPatch/);
 assert.match(read("quick-pricing-local.js"),/rowsForSku/);
 assert.doesNotMatch(read("pricing.html"),/<script>/);
-for (const current of ["pricing.html","batch.html","product-pool.html"]) {
+for (const current of ["pricing.html","batch.html","category.html","product-pool.html"]) {
   const nav=read(current).match(/<nav class="standalone-nav"[^>]*>([\s\S]*?)<\/nav>/)?.[1];
   assert.ok(nav, `${current} must have shared local navigation`);
-  assert.deepEqual([...nav.matchAll(/href="([^"]+)"/g)].map(m=>m[1]), ["product-pool.html","batch.html","pricing.html"], `${current}: product pool comes first`);
-  for (const target of ["pricing.html","batch.html","product-pool.html"]) {
+  assert.deepEqual([...nav.matchAll(/href="([^"]+)"/g)].map(m=>m[1]), ["product-pool.html","batch.html","category.html","pricing.html"], `${current}: product pool comes first`);
+  for (const target of ["pricing.html","batch.html","category.html","product-pool.html"]) {
     assert.ok(nav.includes(`href="${target}"`), `${current} links to ${target}`);
     assert.equal(nav.includes(`href="${target}" aria-current="page"`), current===target);
   }
 }
+assert.ok(fs.existsSync(path.join(dir,'category-scanner.js')));
+assert.ok(fs.existsSync(path.join(dir,'category-background.js')));
+assert.doesNotMatch(read('category.html'),/id="syncWorkbench"/);
+assert.doesNotMatch(read('background.js'),/wbSyncCategory/);
 assert.equal(read("product-pool-core.js"),fs.readFileSync("ozon-erp-collector-extension/product-pool-core.js","utf8"));
 // Run the generated pricing-page bridge with an in-memory local draft and real row patch core.
 const testKey='ozon_pricing_draft_v1',record={id:'a',sku:'123',green:'10',black:'12',commission:'8',freight:'2',cost:'5',factorOverride:'',quoteOverride:'',link:'',source:'',note:''},other={...record,id:'b',sku:'456',note:'preserve'};

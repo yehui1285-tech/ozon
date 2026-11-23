@@ -12,7 +12,7 @@ const replace = (text, before, after) => {
   if (!text.includes(before)) throw new Error("Standalone source anchor missing: " + before.slice(0, 80));
   return text.replace(before, after);
 };
-const localTabs = [["product-pool.html","商品池"],["batch.html","批量店铺扫描"],["pricing.html","核价表"]];
+const localTabs = [["product-pool.html","商品池"],["batch.html","批量店铺扫描"],["category.html","类目选品"],["pricing.html","核价表"]];
 const withLocalNav = (html,current,anchor) => {
   const nav = `<nav class="standalone-nav" aria-label="Ozon 功能导航">${localTabs.map(([href,label])=>`<a href="${href}"${href===current?' aria-current="page"':''}>${label}</a>`).join("")}</nav>`;
   return replace(replace(html,"</head>",'<link rel="stylesheet" href="standalone-nav.css">\n</head>'),anchor,anchor+"\n    "+nav);
@@ -22,6 +22,7 @@ const keep = [
   "1688-background.js","1688-content.js","1688-core.js","black-price-core.js","main-image-core.js",
   "task-pricing-core.js","store-scanner-core.js","store-scanner.js","pinduoduo-bridge.js",
   "sourcing-enrichment.html","sourcing-enrichment.js","product-pool-core.js","product-pool.html","product-pool.js","product-pool.css",
+  "category-core.js","category-background.js","category-scanner.js","category.css","category.js",
 ];
 for (const name of keep) fs.copyFileSync(path.join(extension, name), path.join(dest, name));
 let poolHtml = withLocalNav(read("product-pool.html"),"product-pool.html","<main>");
@@ -43,7 +44,7 @@ background = background.replace(/^const TARGET_URL = .*?;$/m, 'const TARGET_URL 
   .replace(/^const TARGET_MATCH = .*?;$/m, '');
 background = replace(background, 'const tabs = await chrome.tabs.query({ url: TARGET_MATCH });', 'const tabs = (await chrome.tabs.query({})).filter(tab => tab.url === TARGET_URL);');
 background = replace(background, 'operation = wbSendDetail(message.product || {},message.destination || "original",message.requestId);', 'operation = sendToPricing(message.product || {});');
-background = background.split(/\r?\n/).filter(line => !/wbArchiveBeforeReset|wbSettings\(\)|WB_ALARM|message\?\.type === "wb/.test(line)).join("\n");
+background = background.split(/\r?\n/).filter(line => !/wbArchiveBeforeReset|wbSettings\(\)|WB_ALARM|wbSyncCategory|message\?\.type === "wb/.test(line)).join("\n");
 write("background.js", background);
 
 let content = read("content.js");
@@ -62,6 +63,8 @@ batch = batch.replace(/<button class="primary" id="wbSyncNow">[^<]+<\/button>/, 
   .replace(/<p class="copy" id="wbBatchStatus">[^<]+<\/p>/, "");
 write("batch.html", withLocalNav(batch,"batch.html",'<div class="wrap">'));
 write("batch.js", read("batch.js").split(/\r?\nasync function wbBatchStatus\(/)[0] + "\n");
+let category = read("category.html").replace(/<button id="syncWorkbench">[^<]+<\/button>/, "").replace(/<p class="notice" id="syncNote">[^<]+<\/p>/,'<p class="notice">独立版将类目结果保存到当前浏览器的商品池。</p>');
+write("category.html",withLocalNav(category,"category.html",'<main class="shell">'));
 
 // Reuse the exact local pricing code and freight rules; extension pages need external JS under MV3 CSP.
 const web = name => fs.readFileSync(path.join(root,"web-src",name),"utf8");
@@ -135,7 +138,7 @@ write("安装说明.txt", `OZON 独立选品助手 ${manifest.version}
 
 1. 解压到专用固定目录（例如 D:\\OzonStandalone），不要直接加载 ZIP。
 2. 打开 Chrome 或 Edge 的扩展管理，开启开发者模式，加载此目录。
-3. 在扩展弹窗打开批量店铺扫描、商品池或本地核价页。无需工作台账号或连接码。
+3. 在扩展弹窗打开批量店铺扫描、类目选品、商品池或本地核价页。无需工作台账号或连接码。
 4. 批量扫描后点击本批加入商品池；历史 SKU 可在商品池导入。
 5. 升级先备份商品池 CSV/JSON 和核价 CSV，再覆盖同一目录并重新加载扩展；保留原扩展，不要卸载。
 6. 网页扫描需正常登录 Ozon，并具有所需 ERP 页面数据；登录、验证码由使用者自行处理。

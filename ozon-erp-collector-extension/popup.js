@@ -1,5 +1,6 @@
 const activateButton = document.getElementById("activate");
 const batchManagerButton = document.getElementById("batchManager");
+const categoryManagerButton = document.getElementById("categoryManager");
 const sourcingEnrichmentButton = document.getElementById("sourcingEnrichment");
 const autoStartButton = document.getElementById("autoStart");
 const autoStopButton = document.getElementById("autoStop");
@@ -45,6 +46,11 @@ batchManagerButton.addEventListener("click", () => {
     }
     window.close();
   });
+});
+
+categoryManagerButton.addEventListener("click", () => {
+  chrome.tabs.create({ url: chrome.runtime.getURL("category.html") });
+  window.close();
 });
 
 sourcingEnrichmentButton.addEventListener("click", () => {

@@ -1,6 +1,7 @@
 importScripts("black-price-core.js", "main-image-core.js", "task-pricing-core.js", "store-scanner-core.js");
 importScripts("1688-core.js", "1688-background.js");
 importScripts("workbench-bridge.js", "product-pool-core.js");
+importScripts("category-core.js", "category-background.js");
 
 const blackPriceCore = globalThis.OzonBlackPriceCore;
 const mainImageCore = globalThis.OzonMainImageCore;
@@ -574,6 +575,7 @@ async function getAutoInject() {
 
 async function autoInjectOzonTab(tabId, url) {
   if (!/^https:\/\/www\.ozon\.ru\//.test(url || "")) return;
+  if (OzonCategoryCore.keyFromUrl(url)) return;
   if (temporaryProductTabs.has(tabId)) return;
   const stored = await chrome.storage.session.get(AUTO_INJECT_KEY);
   if (!stored[AUTO_INJECT_KEY]) return;
@@ -948,6 +950,7 @@ async function launchBatchScanner(tabId, url) {
 }
 
 async function startStoreBatch(message) {
+  await assertCategoryInactive();
   const parsed = storeScannerCore.parseStoreUrlList((message.urls || []).join("\n"), BATCH_MAX_STORES);
   if (!parsed.urls.length) throw new Error("没有识别到有效的 Ozon 店铺地址。");
   const oldBatch = await getBatch();
@@ -1073,6 +1076,7 @@ async function pauseStoreBatch() {
 }
 
 async function resumeStoreBatch() {
+  await assertCategoryInactive();
   const batch = await getBatch();
   if (!batch) throw new Error("当前没有可继续的批量任务。");
   if (batch.currentIndex >= batch.stores.length) throw new Error("这个批量任务已经全部完成。");
@@ -1204,6 +1208,7 @@ async function removeStoreBatchTask(message = {}) {
 }
 
 async function retryFailedBatchStores() {
+  await assertCategoryInactive();
   const batch = await getBatch();
   if (!batch) throw new Error("当前没有批量任务。");
   const indexes = [];
@@ -1235,6 +1240,8 @@ async function retryFailedBatchStores() {
 async function resumeInterruptedBatch() {
   const batch = await getBatch();
   if (!batch || batch.status !== "running") return;
+  const category = await OzonCategoryBackground.snapshot();
+  if (category?.batch && ['running','paused'].includes(category.batch.status)) {batch.status='paused';batch.message='类目任务未结束，店铺任务保持暂停。';await saveBatch(batch);return;}
   if (batch.nextRunAt && Date.now() < Number(batch.nextRunAt)) {
     batch.message = `浏览器恢复后继续等待店铺间隔，剩余约 ${Math.max(1, Math.ceil((Number(batch.nextRunAt) - Date.now()) / 1000))} 秒。`;
     await saveBatch(batch);
@@ -1283,6 +1290,13 @@ function batchOperation(operation) {
   return enqueueBatchOperation(operation);
 }
 
+async function assertCategoryInactive(){const snapshot=await OzonCategoryBackground.snapshot();if(snapshot?.batch&&['running','paused'].includes(snapshot.batch.status))throw Error('已有类目选品任务，请先停止类目任务再开始或继续店铺扫描。');}
+async function categoryOperation(message,sender){
+  if(['categoryStart','categoryResume'].includes(message.type)){const store=await getBatch();if(store&&['running','paused'].includes(store.status))throw Error('已有店铺扫描任务，请先停止店铺任务再开始或继续类目选品。');}
+  if(!['categorySample','categoryPageDone'].includes(message.type)&&sender.url!==chrome.runtime.getURL('category.html'))throw Error('请从类目选品管理页执行此操作。');
+  return OzonCategoryBackground.handle(message,sender);
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   let operation = null;
   if (message?.type === "setStoreScanProtection") operation = setStoreScanProtection(sender.tab?.id, Boolean(message.active));
@@ -1295,6 +1309,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   else if (message?.type === "wbStatus") operation = wbStatus();
   else if (message?.type === "wbAuto") operation = wbAuto(message.enabled);
   else if (message?.type === "wbSyncBatch") operation = wbSyncBatch(true);
+  else if (message?.type === "categorySyncWorkbench") operation = sender.url===chrome.runtime.getURL('category.html')?wbSyncCategory(true):Promise.reject(Error('请从类目选品管理页同步。'));
+  else if (typeof message?.type === 'string' && message.type.startsWith('category')) operation = batchOperation(()=>categoryOperation(message,sender));
   else if (message?.type === "readBlackPriceFromProductUrl") operation = readBlackPriceFromProductUrl(message.url);
   else if (message?.type === "readMainImageFromProductUrl") operation = readMainImageFromProductUrl(message.url);
   else if (message?.type === "readOzonTaskPricing") operation = readOzonTaskPricing(message.task);
@@ -1341,6 +1357,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
+  OzonCategoryBackground.onUpdated(tabId,info,tab).catch(()=>null);
   if (info.status === "loading") {
     autoInjectedTabs.delete(tabId);
     batchOperation(() => markBatchTabReloading(tabId)).catch(() => null);
@@ -1352,6 +1369,7 @@ chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  OzonCategoryBackground.onRemoved(tabId).catch(()=>null);
   autoInjectedTabs.delete(tabId);
   temporaryProductTabs.delete(tabId);
   setStoreScanProtection(tabId, false).catch(() => {
@@ -1372,7 +1390,8 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if(alarm.name===WB_ALARM){void wbSyncBatch(false);return;}
+  if(alarm.name===WB_ALARM){void wbSyncBatch(false);void wbSyncCategory(false);return;}
+  if(alarm.name==='ozon-category-runner'){void OzonCategoryBackground.onAlarm(alarm);return;}
   if (alarm.name === BATCH_NEXT_ALARM) {
     batchOperation(() => continueBatchAfterCooldown({ source: "alarm-fallback" })).catch((error) => batchOperation(() => failCurrentBatchStore(error.message || String(error))));
     return;
@@ -1386,11 +1405,13 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 });
 
 chrome.runtime.onStartup.addListener(() => {
+  OzonCategoryBackground.onRestart().catch(()=>null);
   wbSettings().then(s=>{if(s.token)wbSchedule()}).catch(()=>{});
   enqueueStoreOperation(() => ensureStoreStorageMigrated()).catch(() => null);
   batchOperation(() => resumeInterruptedBatch()).catch(() => null);
 });
 chrome.runtime.onInstalled.addListener(() => {
+  OzonCategoryBackground.onRestart().catch(()=>null);
   wbSettings().then(s=>{if(s.token)wbSchedule()}).catch(()=>{});
   enqueueStoreOperation(() => ensureStoreStorageMigrated()).catch(() => null);
   batchOperation(() => resumeInterruptedBatch()).catch(() => null);

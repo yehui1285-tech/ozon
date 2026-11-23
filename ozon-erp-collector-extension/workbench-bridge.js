@@ -22,3 +22,26 @@ async function wbSyncBatch(manual=false){if(wbSyncRunning)return wbSyncRunning;w
  })();try{return await wbSyncRunning}finally{wbSyncRunning=null}}
 function wbSchedule(){chrome.alarms.create(WB_ALARM,{periodInMinutes:1})?.catch?.(()=>{})}
 
+// Independent category batches use the same authenticated append-only batch endpoint.
+let wbCategorySyncRunning=null;
+async function wbSyncCategory(manual=false){
+ if(wbCategorySyncRunning)return wbCategorySyncRunning;
+ wbCategorySyncRunning=(async()=>{
+  const settings=await wbSettings();if(!settings.token){if(manual)throw Error('请先在插件弹窗连接工作台');return {ok:true,skipped:true}}if(!manual&&settings.auto===false)return {ok:true,skipped:true};
+  const current=await OzonCategoryBackground.snapshot(),history=await OzonCategoryBackground.snapshotHistory();
+  const batches=[...history.reverse(),...(current?.batch?[current.batch]:[])];
+  const key='ozonWorkbenchCategorySyncV1',acks=(await chrome.storage.local.get(key))[key]||{};
+  const retained={};let count=0;
+  for(const batch of batches){
+   if(batch?.sourceMode!=='category'||!batch.stores?.length)continue;
+   const csv=storeScannerCore.buildManualSourcingCsv({batch,stores:batch.results||{}}),capturedAt=Date.parse(batch.updatedAt);
+   if(!Number.isFinite(capturedAt))continue;
+   if(!manual&&acks[batch.id]?.updatedAt===batch.updatedAt){retained[batch.id]=acks[batch.id];if(batch.id===current?.batch?.id)count=retained[batch.id].count;continue;}
+   const snap={id:batch.id,capturedAt,status:batch.status,storeCount:batch.stores.length,completedCount:batch.stores.filter(t=>['completed','partial','failed','skipped'].includes(t.status)).length,observed:batch.stores.reduce((s,t)=>s+(Number(t.observedCount)||0),0),csv};
+   const result=await wbRequest(settings.token,{action:'batch',batch:snap});retained[batch.id]={updatedAt:batch.updatedAt,count:Number(result.count)||0};if(batch.id===current?.batch?.id)count=retained[batch.id].count;
+   await chrome.storage.local.set({[key]:{...acks,...retained}});
+  }
+  await chrome.storage.local.set({[key]:retained});return {ok:true,count,message:`类目批次已同步 · 当前可交接 ${count} 件，请在工作台类目选品页确认入池。`,batch:current?.batch||null};
+ })();try{return await wbCategorySyncRunning}catch(e){if(manual)throw e;return {ok:false,error:e.message}}finally{wbCategorySyncRunning=null}
+}
+

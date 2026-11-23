@@ -64,6 +64,8 @@
         fulfillment: String(product.fulfillment || ""), competitor: String(product.competitor || ""),
         shippingRisk: scanner.shippingReviewLabel(product), blocked: false,
         storeName: String(saved.storeName || task.sellerKey),
+        sourceMode: batch.sourceMode === "category" ? "category" : "store",
+        sourceUrl: String(task.url || ""),
         batchIds,
         firstSeenAt: previous?.firstSeenAt || now, lastSeenAt: observedAt,
         status: previous?.status || "new", notes: previous?.notes || "",
