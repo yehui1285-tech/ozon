@@ -3,6 +3,7 @@
   const MAX_SCROLLS = 400;
   const LIST_WAIT_POLLS = 30;
   const LIST_WAIT_MS = 1000;
+  const BACKGROUND_SETTLE_MS=4000, FOREGROUND_SETTLE_MS=1600, BACKGROUND_BOUNDARY_MS=20000, BACKGROUND_BOUNDARY_POLLS=5, BACKGROUND_RETRY_MS=10000;
   const MAX_REVIEW_PASSES = 2;
   const SELECTORS = [
     '[data-widget="tileGridDesktop"]', '.tileGridDesktop',
@@ -131,11 +132,24 @@
   if (!core || !globalScope.chrome?.runtime?.onMessage || !core.exactPageUrl(globalScope.location?.href || '') || globalScope.__ozonCategoryListenerInstalled) return;
   globalScope.__ozonCategoryListenerInstalled = true;
   let activeRun = null;
+  const hidden=()=>globalScope.document?.hidden===true;
+  function waitForRun(run,ms){return new Promise(resolve=>{
+    const readyAt=Date.now()+ms;let timer;
+    const finish=()=>{if(run.wait?.finish!==finish)return;globalScope.clearTimeout?.(timer);run.wait=null;resolve()};
+    run.wait={finish,wake:()=>{if(Date.now()>=readyAt)finish()}};timer=globalScope.setTimeout(finish,ms);
+  })}
+  function cancelRun(){const run=activeRun;activeRun=null;run?.wait?.finish()}
+  globalScope.document?.addEventListener?.('visibilitychange',()=>activeRun?.wait?.wake());
+  globalScope.document?.addEventListener?.('resume',()=>activeRun?.wait?.wake());
   globalScope.chrome.runtime.onMessage.addListener((message, _sender, reply) => {
-    if (message?.type === 'categoryScanStop') { if(activeRun?.batchId===message.batchId&&activeRun?.attemptId===message.attemptId)activeRun=null; reply?.({ ok: true }); return false; }
+    if (message?.type === 'categoryScanStop') { if(activeRun?.batchId===message.batchId&&activeRun?.attemptId===message.attemptId)cancelRun(); reply?.({ ok: true }); return false; }
+    if(message?.type==='categoryScanTick'){
+      const running=!!activeRun&&activeRun.batchId===message.batchId&&activeRun.attemptId===message.attemptId;
+      reply?.({ok:true,running,pageHidden:hidden()});if(running)activeRun.wait?.wake();return false;
+    }
     if (message?.type !== 'categoryScanStart') return false;
     if(activeRun?.batchId===message.batchId&&activeRun?.attemptId===message.attemptId){reply?.({ok:true,accepted:true});return false;}
-    const run={batchId:message.batchId,attemptId:message.attemptId};activeRun=run;
+    cancelRun();const run={batchId:message.batchId,attemptId:message.attemptId,wait:null};activeRun=run;
     reply?.({ ok: true, accepted: true, batchId: message.batchId, attemptId: message.attemptId });
     void scan(message,run).catch(() => {if(activeRun===run)return done(message, false, 'reader_error')}).finally(()=>{if(activeRun===run)activeRun=null});
     return false;
@@ -145,13 +159,15 @@
     const url = core.exactPageUrl(globalScope.location.href);
     if (!core.samePage(globalScope.location.href, baseUrl) || !url || url!==msg.categoryUrl) return done(msg, false, 'wrong_category_page');
     const reader = createReader(globalScope.document, core), sent=new Set(),observed = new Set(msg.observedSkus||[]),pending=new Set(msg.pendingSkus||[]);
-    let scrolls = 0, stable = 0, bottomStable = 0, lastHeight = -1, noListPolls = 0,reviewPasses=0;
+    let scrolls = 0, stable = 0, bottomStable = 0, lastHeight = -1, noListPolls = 0,reviewPasses=0,bottomSince=0,previousHidden=hidden();
     let recheckFromTop=!!msg.recheckFromTop;
-    const wait=ms=>new Promise(resolve=>globalScope.setTimeout(resolve,ms));
-    const reportWait=reason=>new Promise(resolve=>globalScope.chrome.runtime.sendMessage({type:'categoryWait',batchId:msg.batchId,attemptId:msg.attemptId,categoryUrl:url,reason},response=>resolve(response||{})));
+    const wait=ms=>waitForRun(run,ms);
+    const settle=()=>hidden()?BACKGROUND_SETTLE_MS:FOREGROUND_SETTLE_MS;
+    const reportWait=reason=>new Promise(resolve=>globalScope.chrome.runtime.sendMessage({type:'categoryWait',batchId:msg.batchId,attemptId:msg.attemptId,categoryUrl:url,reason,pageHidden:hidden()},response=>resolve(response||{})));
     for (let sample = 0; sample < MAX_SAMPLES && scrolls <= MAX_SCROLLS; sample++) {
       if (activeRun!==run) return;
       if(core.exactPageUrl(globalScope.location.href)!==url)return done(msg,false,'wrong_category_page');
+      const pageHidden=hidden();if(previousHidden&&!pageHidden){noListPolls=0;stable=0;bottomStable=0;bottomSince=0;reviewPasses=0}previousHidden=pageHidden;
       const verification=verificationDetail(globalScope.document);
       if(verification)return done(msg,false,'manual-verification','',verification);
       if(recheckFromTop){recheckFromTop=false;globalScope.scrollTo(0,0);}
@@ -159,38 +175,48 @@
       const result=reader.read(url,msg.options||{},list);
       const endMarker = list?.querySelector?.('[data-testid*="no-more"], [data-testid="end-of-list"], [data-testid="catalog-list-end"]');
       if(!list||(!result.available&&!visible(endMarker))){
-        if(noListPolls>=LIST_WAIT_POLLS)return done(msg,false,'catalog_list_unavailable');
+        if(noListPolls>=LIST_WAIT_POLLS&&!pageHidden)return done(msg,false,'catalog_list_unavailable');
+        if(noListPolls>=LIST_WAIT_POLLS)noListPolls=0;
         if(noListPolls%5===0){const ack=await reportWait('catalog_loading');if(ack.ok!==true||activeRun!==run)return;}
         noListPolls++;stable=0;bottomStable=0;lastHeight=-1;
-        await wait(LIST_WAIT_MS);sample--;continue;
+        await wait(pageHidden?BACKGROUND_SETTLE_MS:LIST_WAIT_MS);sample--;continue;
       }
       noListPolls = 0;
       for(const sku of result.pendingSkus)if(!observed.has(sku))pending.add(sku);
       for(const sku of result.observedSkus){observed.add(sku);pending.delete(sku)}
       const products=result.products.filter(p=>!sent.has(p.sku));
       const categoryName=textOf(globalScope.document.querySelector?.('h1')).slice(0,120);
-      const ack = await new Promise((resolve) => globalScope.chrome.runtime.sendMessage({ type: 'categorySample', batchId: msg.batchId, attemptId: msg.attemptId, categoryUrl: url,categoryName,products,observedSkus: result.observedSkus, pendingSkus:[...pending],pendingCount:pending.size }, (response) => resolve(response || {})));
+      const ack = await new Promise((resolve) => globalScope.chrome.runtime.sendMessage({ type: 'categorySample', batchId: msg.batchId, attemptId: msg.attemptId, categoryUrl: url,categoryName,products,observedSkus: result.observedSkus, pendingSkus:[...pending],pendingCount:pending.size,pageHidden }, (response) => resolve(response || {})));
+      if(activeRun!==run)return;
       if (ack.ok !== true) return done(msg, false, 'sample_not_persisted');
       if(ack.stop===true||ack.stopped===true||activeRun!==run)return;
       for(const p of products)sent.add(p.sku);
       const height = globalScope.document.documentElement?.scrollHeight || 0;
       const atBottom = globalScope.innerHeight + globalScope.scrollY >= height - 8;
-      if (atBottom && height === lastHeight) { stable++; bottomStable++; } else { stable = 0; bottomStable = 0; }
+      if (atBottom && height === lastHeight) { stable++; bottomStable++;if(!bottomSince)bottomSince=Date.now(); } else { stable = 0; bottomStable = 0;bottomSince=0; }
       lastHeight = height;
-      const nextUrl = atBottom && bottomStable >= 3 ? reader.next(url) : '';
-      const reachedEnd = atBottom && stable >= 2 && bottomStable >= 3 && visible(endMarker);
+      const confirmedBottom=atBottom&&bottomStable>=(pageHidden?BACKGROUND_BOUNDARY_POLLS:3)&&(!pageHidden||Date.now()-bottomSince>=BACKGROUND_BOUNDARY_MS);
+      const nextUrl = confirmedBottom ? reader.next(url) : '';
+      const reachedEnd = confirmedBottom && stable >= 2 && visible(endMarker);
       if(nextUrl||reachedEnd){
         if(pending.size&&reviewPasses<MAX_REVIEW_PASSES){
           reviewPasses++;const reviewAck=await reportWait('review_pending');if(reviewAck.ok!==true||activeRun!==run)return;
-          globalScope.scrollTo(0,0);stable=0;bottomStable=0;lastHeight=-1;
-          await wait(1600);continue;
+          globalScope.scrollTo(0,0);stable=0;bottomStable=0;bottomSince=0;lastHeight=-1;
+          await wait(settle());continue;
         }
+        if(pending.size&&pageHidden){const waiting=await reportWait('review_pending');if(waiting.ok!==true||activeRun!==run)return;await wait(BACKGROUND_RETRY_MS);sample--;continue;}
         if(pending.size)return done(msg,false,'pending_cards');
         return nextUrl?done(msg,false,'next_page_available',nextUrl):done(msg,true,'visible_catalog_end');
       }
+      // Hidden lazy-loaded lists can stop briefly at the current document end.
+      // Wait for layout/explicit pagination evidence instead of exhausting
+      // the scan budget on repeated scrolls against the same bottom.
+      if(pageHidden&&atBottom){if(confirmedBottom){const waiting=await reportWait('catalog_loading');if(waiting.ok!==true||activeRun!==run)return;}await wait(confirmedBottom?BACKGROUND_RETRY_MS:BACKGROUND_SETTLE_MS);sample--;continue;}
       if (sample === MAX_SAMPLES - 1 || scrolls >= MAX_SCROLLS) break;
-      globalScope.scrollBy(0, Math.max(200, Math.floor(globalScope.innerHeight * 0.65))); scrolls++;
-      await new Promise((resolve) => globalScope.setTimeout(resolve, 1600));
+      const beforeScroll=globalScope.scrollY;globalScope.scrollBy(0, Math.max(200, Math.floor(globalScope.innerHeight * 0.65)));
+      if(pageHidden&&Math.abs(globalScope.scrollY-beforeScroll)<5){const waiting=await reportWait('catalog_loading');if(waiting.ok!==true||activeRun!==run)return;await wait(BACKGROUND_RETRY_MS);sample--;continue;}
+      scrolls++;
+      await wait(settle());
     }
     return done(msg, false, 'scan_bound_reached');
   }

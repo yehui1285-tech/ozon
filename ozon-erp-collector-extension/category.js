@@ -1,10 +1,15 @@
 const $ = (id) => document.getElementById(id);
 let state = null;
-let history = [], busy = false;
+let history = [], busy = false, refreshSequence = 0, actionRevision = 0, refreshInFlight = false, refreshPending = false;
 const core=globalThis.OzonCategoryCore;
 const catalog=globalThis.OzonCategoryCatalog;
-let catalogData=null, treeSelection=null, confirmedSource='ordinary', draftSelection=null, favorites=[], navPath=[];
+let catalogData=null, treeSelection=null, confirmedSource='china', draftSelection=null, favorites=[], navPath=[];
 const labels={running:'运行中',paused:'已暂停',completed:'已完成',stopped:'已停止',pending:'待开始',loading:'打开页面',scanning:'扫描中',partial:'部分完成',failed:'失败',skipped:'已跳过'};
+const pageModes={foreground:'前台',background:'后台',waiting:'等待中',recovering:'恢复中'};
+const sourceInput=()=>document.querySelector('[name="catalogSource"]:checked');
+const sourceValue=()=>sourceInput()?.value||'china';
+function setSource(source){const input=document.querySelector(`[name="catalogSource"][value="${source==='ordinary'?'ordinary':'china'}"]`);if(input)input.checked=true;$('catalogAdvanced').open=source==='ordinary'}
+function formatTimestamp(value){if(!value)return '';const date=new Date(value);return Number.isNaN(date.getTime())?'':date.toLocaleString('zh-CN')}
 function send(message) {
   return new Promise((resolve, reject) => chrome.runtime.sendMessage(message, response => {
     if (chrome.runtime.lastError) reject(Error(chrome.runtime.lastError.message));
@@ -17,7 +22,7 @@ const sourceName=source=>source==='china'?'中国专区':'普通 Ozon 类目';
 function pathFor(node,selection){const path=[];for(let n=node;n;n=selection.byId.get(n.parentId))path.unshift(n);return path}
 function displayPath(node,selection){return pathFor(node,selection).map(catalog.names).join(' / ')}
 function newSelection(source,ids=[]){const selection=catalog.makeSelection(catalogData[source]||[]);let missing=0;for(const id of ids){const node=selection.byId.get(id);if(node)selection.add(node);else missing++}return {selection,missing}}
-function setDraft(source,ids=[]){const result=newSelection(source,ids);draftSelection=result.selection;$('catalogSource').value=source;navPath=[];$('catalogSearch').value='';const first=[...draftSelection.selected.values()][0];if(first)navPath=pathFor(first,draftSelection).map(n=>n.id);return result.missing}
+function setDraft(source,ids=[]){const result=newSelection(source,ids);draftSelection=result.selection;setSource(source);navPath=[];$('catalogSearch').value='';const first=[...draftSelection.selected.values()][0];if(first)navPath=pathFor(first,draftSelection).map(n=>n.id);return result.missing}
 function selectedCount(selection=treeSelection){return selection?.selected.size||0}
 function renderSelected(container,selection,remove){const items=[...(selection?.selected.values()||[])];container.innerHTML=items.length?items.map(n=>`<span class="catalog-chip"><span title="${esc(displayPath(n,selection))}">${esc(displayPath(n,selection))}</span><button type="button" data-remove="${esc(n.id)}" aria-label="移除 ${esc(displayPath(n,selection))}">×</button></span>`).join(''):'<span class="catalog-muted">尚未选择类目</span>';container.querySelectorAll('[data-remove]').forEach(btn=>btn.onclick=()=>remove(selection.byId.get(btn.dataset.remove)))}
 function syncCatalogUrls(){ $('catalogCount').textContent=`已选 ${selectedCount()} / ${catalog.MAX}`;$('catalogSourceLabel').textContent=sourceName(confirmedSource);renderSelected($('catalogSelected'),treeSelection,node=>{treeSelection.remove(node);syncCatalogUrls()}) }
@@ -57,7 +62,9 @@ function render(batch, archive=history) {
   const selected = stores.reduce((a,s)=>a+Number(s.qualifiedCount||0),0);
   const checked = stores.reduce((a,s)=>a+Number(s.observedCount||0),0);
   const eligible = stores.reduce((a,s)=>a+Number(s.pendingCount||0),0);
-  $("summary").textContent = batch ? `${labels[batch.status]||batch.status} · 新候选 ${selected}/${batch.options?.targetCount||'—'} · 已检查 ${checked} · 待复查 ${eligible}` : "暂无类目批次";
+  const summaryParts=batch?[labels[batch.status]||batch.status,`新候选 ${selected}/${batch.options?.targetCount||'—'}`,`已检查 ${checked}`,`待复查 ${eligible}`]:[];
+  if(batch){const progressAt=formatTimestamp(batch.lastProgressAt),newSkuAt=formatTimestamp(batch.lastNewSkuAt);if(progressAt)summaryParts.push(`最近上报 ${progressAt}`);if(newSkuAt)summaryParts.push(`最近新增 SKU ${newSkuAt}`);if(batch.pageMode)summaryParts.push(`页面${pageModes[batch.pageMode]||'未知'}`)}
+  $("summary").textContent=batch?summaryParts.join(' · '):"暂无类目批次";
   $("message").textContent = batch?.message || "";
   $("batch").innerHTML = stores.length ? `<div class="store-list">${stores.map(s=>`<article class="store"><div class="store-top"><strong>${esc(s.name||s.label||s.url||"类目")}</strong><span>${esc(labels[s.status]||s.status||"等待")}</span></div><div class="store-url">${esc(s.pageUrl||s.url||"")}</div><div class="counts">已检查 ${Number(s.observedCount||0)} · 新候选 ${Number(s.qualifiedCount||0)} · 待复查 ${Number(s.pendingCount||0)}</div>${s.error||s.message||s.note?`<p class="store-reason">${esc(s.error||s.message||s.note)}</p>`:""}</article>`).join("")}</div>` : `<div class="empty">${batch ? "批次已建立，等待类目进度…" : "创建任务后，这里会显示每个类目的进度和结果。"}</div>`;
   const active = ["running","paused","scanning"].includes(batch?.status);
@@ -78,7 +85,7 @@ function render(batch, archive=history) {
   const currentEmpty=finishedBatch&&Number(batch?.qualifiedSkuIds?.length||0)===0&&stores.reduce((n,s)=>n+Number(s.qualifiedCount||0),0)===0;
   $("cleanupEmptyBatches").disabled=busy||(!currentEmpty&&!history.some(b=>["completed","stopped","failed"].includes(b.status)&&Number(b.qualifiedCount||b.count||0)===0));
 }
-async function refresh() { if(busy)return;try { const r = await send({type:"categoryGet"}); render(r.batch || r.state || null,r.history); } catch(e) { $("message").textContent=e.message; } }
+async function refresh() { if(busy)return;if(refreshInFlight){refreshPending=true;return}refreshInFlight=true;const sequence=++refreshSequence,revision=actionRevision;try { const r=await send({type:"categoryGet"});if(!busy&&sequence===refreshSequence&&revision===actionRevision)render(r.batch||r.state||null,r.history); } catch(e) { if(!busy&&sequence===refreshSequence&&revision===actionRevision)$("message").textContent=e.message; } finally {refreshInFlight=false;if(refreshPending){refreshPending=false;if(!busy)void refresh()}} }
 $("start").onclick = async () => {
   try{const treeUrls=treeSelection?.urls()||[];const manual=$('urls').value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);const parsed=core.parseUrls([...manual,...treeUrls]);if(!parsed.urls.length||parsed.invalid.length||parsed.overflowCount)throw Error('请提供 1–20 个有效 Ozon 类目链接，修正无效或超限地址。');
     const options=core.validateOptions({targetCount:$("targetCount").value,minPrice:$("minPrice").value,maxPrice:$("maxPrice").value});
@@ -87,7 +94,7 @@ $("start").onclick = async () => {
     await perform({type:"categoryStart",urls:parsed.urls,categoryLabels:categoryLabels(),...options,confirmArchiveOverflow:needsArchiveConfirmation});
   }catch(e){$("message").textContent=e.message;}
 };
-async function perform(message){if(busy)return;busy=true;render(state);try{const r=await send(message);busy=false;render(Object.hasOwn(r,'batch')?r.batch:state,Array.isArray(r.history)?r.history:history);$("message").textContent=r.message||(message.type==='categoryAddPool'?`已加入 ${r.added||0} 件 · 重复 ${r.duplicates||0} · 历史排除 ${r.historySkipped||0}`:r.batch?.message||'操作已完成。');}catch(e){busy=false;render(state);$("message").textContent=e.message;}}
+async function perform(message){if(busy)return;actionRevision++;refreshSequence++;busy=true;render(state);try{const r=await send(message);busy=false;render(Object.hasOwn(r,'batch')?r.batch:state,Array.isArray(r.history)?r.history:history);$("message").textContent=r.message||(message.type==='categoryAddPool'?`已加入 ${r.added||0} 件 · 重复 ${r.duplicates||0} · 历史排除 ${r.historySkipped||0}`:r.batch?.message||'操作已完成。');}catch(e){busy=false;render(state);$("message").textContent=e.message;}}
 for(const [id,type] of [["pause","categoryPause"],["resume","categoryResume"],["stop","categoryStop"],["addPool","categoryAddPool"],["syncWorkbench","categorySyncWorkbench"]]) if($(id))$(id).onclick=()=>perform({type,batchId:state?.id});
 $("historyBatch").onchange=()=>{$("addHistoryPool").disabled=$("exportHistoryBatch").disabled=$("deleteHistoryBatch").disabled=busy||!$("historyBatch").value};
 $("addHistoryPool").onclick=()=>perform({type:'categoryAddPool',batchId:$("historyBatch").value});
@@ -98,16 +105,19 @@ async function exportCsv(batchId){try{const r=await send({type:'categoryExport',
 $("exportBatch").onclick=()=>exportCsv(state?.id);$("exportHistoryBatch").onclick=()=>exportCsv($("historyBatch").value);
 $("openScanTab").onclick=async()=>{try{if(!Number.isInteger(state?.tabId))return;const tab=await chrome.tabs.get(state.tabId);if(!tab)throw Error('采集页面已关闭');await chrome.tabs.update(tab.id,{active:true});if(tab.windowId!=null)await chrome.windows.update(tab.windowId,{focused:true});}catch(e){$("message").textContent=e.message}};
 chrome.storage.onChanged.addListener((changes,area)=>{if(area==='local'&&(changes.ozonCategoryBatchV1||changes.ozonCategoryBatchHistoryV1))void refresh()});
+window.addEventListener('focus',()=>void refresh());
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')void refresh()});
+window.setInterval(()=>{if(['running','scanning'].includes(state?.status)&&document.visibilityState==='visible')void refresh()},2500);
 // Modal selection is a draft. Completing applies it; cancel/Escape leaves the
 // previous committed source and selection and all manual links untouched.
 const dialog=$('catalogDialog'),feedback=$('catalogFeedback');
 $('openCatalog').onclick=()=>{if(!catalogData||dialog.open)return;setDraft(confirmedSource,[...(treeSelection?.selected.keys()||[])]);feedback.textContent='';dialog.showModal();renderPicker(1);$('catalogSearch').focus()};
 $('catalogCancel').onclick=()=>dialog.close();dialog.addEventListener('close',()=>{draftSelection=null;navPath=[];$('openCatalog').focus()});
-$('catalogDone').onclick=()=>{if(!draftSelection)return;const combined=core.parseUrls([...$('urls').value.split(/\r?\n/),...draftSelection.urls()]);if(combined.overflowCount){feedback.textContent='与手动链接合计最多 20 个类目，请减少选择后再完成。';return}treeSelection=draftSelection;confirmedSource=$('catalogSource').value;syncCatalogUrls();dialog.close()};
-$('catalogSource').onchange=()=>{const had=selectedCount(draftSelection)>0;setDraft($('catalogSource').value);feedback.textContent=had?'已切换目录，本次原选择已清空；取消可保留此前确认结果。':'已切换目录；手动链接保持不变。';renderPicker(1)};
+$('catalogDone').onclick=()=>{if(!draftSelection)return;const combined=core.parseUrls([...$('urls').value.split(/\r?\n/),...draftSelection.urls()]);if(combined.overflowCount){feedback.textContent='与手动链接合计最多 20 个类目，请减少选择后再完成。';return}treeSelection=draftSelection;confirmedSource=sourceValue();syncCatalogUrls();dialog.close()};
+document.querySelectorAll('[name="catalogSource"]').forEach(input=>input.onchange=()=>{const next=input.value;const had=selectedCount(draftSelection)>0;setDraft(next);feedback.textContent=had?'已切换目录，本次原选择已清空；取消可保留此前确认结果。':'已切换目录；手动链接保持不变。';renderPicker(1)});
 $('catalogSearch').oninput=searchPicker;$('catalogClear').onclick=()=>{draftSelection?.clear();feedback.textContent='';renderPicker()};
 for(const [id,depth] of [['catalogLeaves1',0],['catalogLeaves2',1]])$(id).onclick=()=>{const node=draftSelection?.byId.get(navPath[depth]);if(!node)return;try{draftSelection.addLeaves(node);feedback.textContent='';renderPicker()}catch(e){feedback.textContent=e.message}};
-$('saveFavorite').onclick=async()=>{const name=$('favoriteName').value.trim();if(!name){feedback.textContent='请先填写组合名称。';return}if(!selectedCount(draftSelection)){feedback.textContent='请选择至少一个目录类目。';return}const item={id:crypto.randomUUID(),name,source:$('catalogSource').value,ids:[...draftSelection.selected.keys()]};try{favorites=await catalog.readFavorites();favorites=[...favorites.filter(f=>f.name!==name||f.source!==item.source),item].slice(-30);await catalog.writeFavorites(favorites);await refreshFavorites();feedback.textContent=`已保存“${name}”到本机。`}catch(e){feedback.textContent=e.message}};
+$('saveFavorite').onclick=async()=>{const name=$('favoriteName').value.trim();if(!name){feedback.textContent='请先填写组合名称。';return}if(!selectedCount(draftSelection)){feedback.textContent='请选择至少一个目录类目。';return}const item={id:crypto.randomUUID(),name,source:sourceValue(),ids:[...draftSelection.selected.keys()]};try{favorites=await catalog.readFavorites();favorites=[...favorites.filter(f=>f.name!==name||f.source!==item.source),item].slice(-30);await catalog.writeFavorites(favorites);await refreshFavorites();feedback.textContent=`已保存“${name}”到本机。`}catch(e){feedback.textContent=e.message}};
 $('loadFavorite').onclick=()=>{const f=favorites.find(x=>x.id===$('favoriteSelect').value);if(!f||!catalogData)return;try{const missing=setDraft(f.source,f.ids);renderPicker(1);feedback.textContent=`已载入“${f.name}”${missing?`，${missing} 项已不在目录中需复核`:''}。`}catch(e){feedback.textContent=`组合未载入：${e.message}`}};
 $('deleteFavorite').onclick=async()=>{const id=$('favoriteSelect').value;if(!id)return;try{await catalog.writeFavorites(favorites.filter(f=>f.id!==id));await refreshFavorites();feedback.textContent='已删除本机组合。'}catch(e){feedback.textContent=e.message}};
 void refreshFavorites();void loadCatalog();

@@ -13,11 +13,11 @@
       <h2>新建类目任务</h2>
       <section class="catalog" aria-labelledby="catalogTitle">
         <div class="section-head"><h3 id="catalogTitle">类目目录</h3><span id="catalogCount">已选 0 / 20</span></div>
-        <div class="catalog-launch"><button id="openCatalog" type="button" disabled>选择类目</button><span id="catalogSourceLabel">普通 Ozon 类目</span><span id="catalogLoadState" role="status">正在读取目录…</span></div>
+        <div class="catalog-launch"><button id="openCatalog" type="button" disabled>选择类目</button><span id="catalogSourceLabel">中国专区</span><span id="catalogLoadState" role="status">正在读取目录…</span></div>
         <div id="catalogSelected" class="catalog-selected" aria-label="已确认类目"></div>
         <dialog id="catalogDialog" class="catalog-dialog" aria-labelledby="catalogDialogTitle">
           <div class="dialog-heading"><div><h2 id="catalogDialogTitle">选择类目</h2><p>点击名称向右展开；勾选任一级类目为一个扫描任务，不自动拆分下级。</p></div><button id="catalogDone" class="primary" type="button">完成选择</button></div>
-          <div class="catalog-tools"><label for="catalogSource">目录来源</label><select id="catalogSource"><option value="ordinary">普通 Ozon 类目</option><option value="china">中国专区</option></select><input id="catalogSearch" type="search" placeholder="搜索中文、俄文、类目编号或完整路径" aria-label="搜索类目"></div>
+          <div class="catalog-tools"><span class="catalog-source-label">目录来源</span><label class="catalog-source-choice"><input type="radio" name="catalogSource" value="china" checked>中国专区</label><details id="catalogAdvanced" class="catalog-advanced"><summary>高级选项</summary><label class="catalog-source-choice"><input type="radio" name="catalogSource" value="ordinary">普通 Ozon 类目</label></details><input id="catalogSearch" type="search" placeholder="搜索中文、俄文、类目编号或完整路径" aria-label="搜索类目"></div>
           <div class="catalog-selection-status"><strong id="catalogDraftCount">已选 0 / 20</strong><span id="catalogFeedback" role="status" aria-live="polite"></span><button id="catalogClear" type="button">清空选择</button></div>
           <div class="catalog-columns" aria-label="三级联动类目">
             <section class="catalog-column"><div class="catalog-column-title"><strong>一级类目</strong></div><div class="catalog-level" id="catalogLevel1" aria-label="一级类目"></div></section>

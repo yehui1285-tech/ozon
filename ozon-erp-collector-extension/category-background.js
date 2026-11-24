@@ -3,6 +3,9 @@
   const KEY = "ozonCategoryBatchV1";
   const HISTORY_KEY = "ozonCategoryBatchHistoryV1";
   const HISTORY_LIMIT = 5;
+  const ALARM = 'ozon-category-runner';
+  const PROTECTION_KEY = 'ozonCategoryScanProtectionV1';
+  const STALE_MS = 15000, MESSAGE_TIMEOUT_MS = 4000, RECOVERY_LIMIT = 2;
   const core = scope.OzonCategoryCore;
   const scanner = scope.OzonStoreScannerCore;
   const storeCore = scope.OzonProductPoolCore;
@@ -12,7 +15,18 @@
   const uuid = () => scope.crypto.randomUUID();
   const clone = (v) => v == null ? v : JSON.parse(JSON.stringify(v));
   async function read() { return (await chrome.storage.local.get(KEY))[KEY] || null; }
-  async function save(batch) { batch.updatedAt = now(); await chrome.storage.local.set({ [KEY]: batch });if(batch.status==='running')await chrome.alarms?.create?.('ozon-category-runner',{periodInMinutes:1});else await chrome.alarms?.clear?.('ozon-category-runner');return batch; }
+  async function protectTab(tabId){
+    if(!Number.isInteger(tabId)||!chrome.storage.session?.get)return;
+    try{const stored=await chrome.storage.session.get(PROTECTION_KEY),record=stored[PROTECTION_KEY]||{};const tab=await chrome.tabs.get(tabId);if(!Object.hasOwn(record,tabId)){record[tabId]=tab.autoDiscardable!==false;await chrome.storage.session.set({[PROTECTION_KEY]:record})}if(tab.autoDiscardable!==false)await chrome.tabs.update(tabId,{autoDiscardable:false})}catch{}
+  }
+  async function releaseTab(tabId){
+    if(!Number.isInteger(tabId)||!chrome.storage.session?.get)return;
+    try{const stored=await chrome.storage.session.get(PROTECTION_KEY),record=stored[PROTECTION_KEY]||{};if(!Object.hasOwn(record,tabId))return;await chrome.tabs.update(tabId,{autoDiscardable:record[tabId]}).catch(()=>null);delete record[tabId];await chrome.storage.session.set({[PROTECTION_KEY]:record})}catch{}
+  }
+  async function save(batch) { batch.updatedAt = now();await chrome.storage.local.set({[KEY]:batch});if(batch.status==='running'){const alarm=await chrome.alarms?.get?.(ALARM);if(!alarm||alarm.periodInMinutes!==0.5)await chrome.alarms?.create?.(ALARM,{periodInMinutes:0.5})}else{await chrome.alarms?.clear?.(ALARM);await releaseTab(batch.tabId)}return batch; }
+  function bounded(promise,ms=MESSAGE_TIMEOUT_MS){let timer;return Promise.race([promise,new Promise(resolve=>{timer=setTimeout(()=>resolve(null),ms)})]).finally(()=>clearTimeout(timer))}
+  function phase(batch,mode,message){batch.pageMode=mode;batch.message=message;return batch}
+  async function waitStatus(batch,message){if(batch.pageMode!=='waiting'||batch.message!==message){phase(batch,'waiting',message);await save(batch)}}
   function currentStore(batch) { return batch?.stores?.[batch.currentIndex] || null; }
   function pageUrl(task) { return task?.pageUrl || task?.url || ""; }
   function pageMatches(actual, task) {
@@ -44,24 +58,25 @@
     return task;
   }
   async function stopScanner(batch) {
-    if (batch?.tabId) await chrome.tabs.sendMessage(batch.tabId, { type: "categoryScanStop", batchId: batch.id, attemptId: batch.attemptId }).catch(() => null);
+    if (batch?.tabId) await bounded(chrome.tabs.sendMessage(batch.tabId, { type: "categoryScanStop", batchId: batch.id, attemptId: batch.attemptId })).catch(() => null);
   }
   async function startScanner(batch,task){
-    await chrome.scripting.executeScript({target:{tabId:batch.tabId},files:['store-scanner-core.js','category-core.js','category-scanner.js']});
-    const ack=await chrome.tabs.sendMessage(batch.tabId,{type:'categoryScanStart',batchId:batch.id,attemptId:batch.attemptId,categoryUrl:pageUrl(task),options:batch.options,observedSkus:task.observedSkus||[],pendingSkus:task.pendingSkus||[],recheckFromTop:!!task.pendingCount&&!task.pendingSkus?.length});
+    const injection=await bounded(chrome.scripting.executeScript({target:{tabId:batch.tabId},files:['store-scanner-core.js','category-core.js','category-scanner.js']}));
+    if(injection===null)throw Error('扫描页面暂未响应');
+    const ack=await bounded(chrome.tabs.sendMessage(batch.tabId,{type:'categoryScanStart',batchId:batch.id,attemptId:batch.attemptId,categoryUrl:pageUrl(task),options:batch.options,observedSkus:task.observedSkus||[],pendingSkus:task.pendingSkus||[],recheckFromTop:!!task.pendingCount&&!task.pendingSkus?.length}));
     if(!ack?.ok)throw Error('扫描器未确认启动');
   }
   async function openCurrent(batch, create = false) {
     const task = currentStore(batch);
     if (!task) return;
-    batch.lastProgressAt=now();
+    batch.watchdogSince=now();batch.recoveryAttempts=0;
     if (batch.tabId && !create) {
       try {
         const existing = await chrome.tabs.get(batch.tabId);
         if (pageMatches(existing?.url, task)) {
-          batch.attemptId = uuid(); await save(batch);
-          if(existing.status!=='loading'){
-            try{await startScanner(batch,task)}catch{batch.status='paused';batch.message='当前页面读取器未确认启动，检查页面后继续';await save(batch)}
+          await protectTab(batch.tabId);batch.attemptId = uuid();phase(batch,'recovering','正在恢复类目扫描');await save(batch);
+          if(existing.status!=='loading'&&!existing.frozen&&!existing.discarded){
+            try{await startScanner(batch,task)}catch{await waitStatus(batch,'页面读取器暂未响应，正在等待自动恢复。')}
           }
           return;
         }
@@ -70,10 +85,11 @@
       // on behalf of the user. Resume only after the original page is ready.
       if(batch.tabId){batch.status='paused';batch.message='当前标签页已离开本批类目，请完成页面检查并返回原类目后继续';await save(batch);return;}
     }
-    batch.attemptId = uuid();batch.lastProgressAt=now();
+    batch.attemptId = uuid();batch.watchdogSince=now();phase(batch,'waiting','等待类目页面加载');
     if (!batch.tabId || create) {
       const tab = await chrome.tabs.create({ url: pageUrl(task), active: false });
       batch.tabId = tab.id;
+      await protectTab(batch.tabId);
     } else await chrome.tabs.update(batch.tabId, { url: pageUrl(task) });
     await save(batch);
   }
@@ -124,12 +140,13 @@
         case "categorySample": {
           const task = assertActive(batch, m, sender);
           if (batch.status !== "running") throw Error("类目批次当前未运行");
-          const observed = new Set(task.observedSkus || []);
+          const observed = new Set(task.observedSkus || []),beforeObserved=observed.size;
           for (const sku of m.observedSkus || []) if (/^\d+$/.test(String(sku))) observed.add(String(sku));
           task.observedSkus = [...observed]; task.observedCount = observed.size;
           task.pendingCount = Math.max(0, Number(m.pendingCount) || 0);
           if(Array.isArray(m.pendingSkus))task.pendingSkus=[...new Set(m.pendingSkus.map(String).filter(s=>/^\d+$/.test(s)&&!observed.has(s)))];
-          batch.lastProgressAt=now();batch.message='正在扫描类目商品';
+          batch.lastProgressAt=now();if(observed.size>beforeObserved)batch.lastNewSkuAt=batch.lastProgressAt;batch.recoveryAttempts=0;
+          phase(batch,m.pageHidden===true?'background':'foreground',m.pageHidden===true?'后台扫描类目商品（页面加载可能较慢）':'正在扫描类目商品');
           const poolStored = await chrome.storage.local.get("ozonProductPoolV1");
           const pool = poolStored.ozonProductPoolV1 || storeCore.emptyPool();
           const qualifiedSeen = new Set(batch.qualifiedSkuIds || []);
@@ -155,21 +172,21 @@
         }
         case "categoryWait": {
           assertActive(batch,m,sender);if(batch.status!=='running')throw Error('类目批次当前未运行');
-          batch.message=m.reason==='review_pending'?'自动复查未加载完整的商品…':'商品列表加载中，正在自动等待并重试…';
-          batch.lastProgressAt=now();await save(batch);return {ok:true};
+          phase(batch,'waiting',m.reason==='review_pending'?'自动复查未加载完整的商品…':m.pageHidden===true?'后台商品列表加载中，正在自动等待…':'商品列表加载中，正在自动等待并重试…');
+          batch.lastProgressAt=now();batch.recoveryAttempts=0;await save(batch);return {ok:true};
         }
         case "categoryPageDone": {
           const task = assertActive(batch, m, sender);
           if (batch.status !== "running") throw Error("类目批次当前未运行");
           const nextUrl = m.reason === "next_page_available" && m.nextUrl && core.paginationUrl?.(m.nextUrl, task.url);
           if (nextUrl && Number(new URL(nextUrl).searchParams.get('page'))===Number(new URL(pageUrl(task)).searchParams.get('page')||1)+1 && nextUrl!==pageUrl(task)&&!task.visitedPages.includes(nextUrl)) {
-            task.visitedPages.push(pageUrl(task)); task.pageUrl = nextUrl;task.pendingCount=0;task.pendingSkus=[]; batch.message = "继续扫描下一页"; await stopScanner(batch); batch.attemptId=uuid();batch.lastProgressAt=now();await save(batch);await chrome.tabs.update(batch.tabId,{url:nextUrl});return { ok: true, batch: clone(batch) };
+            task.visitedPages.push(pageUrl(task)); task.pageUrl = nextUrl;task.pendingCount=0;task.pendingSkus=[]; phase(batch,'waiting','继续扫描下一页'); await stopScanner(batch); batch.attemptId=uuid();batch.watchdogSince=now();batch.recoveryAttempts=0;await save(batch);await chrome.tabs.update(batch.tabId,{url:nextUrl});return { ok: true, batch: clone(batch) };
           }
           await stopScanner(batch);
           if (m.complete === true && m.reason === "visible_catalog_end") {
             task.status = "completed"; batch.message = "当前类目已完成";
             batch.currentIndex++;
-            if (currentStore(batch)) { currentStore(batch).status = "scanning";batch.attemptId=uuid();batch.lastProgressAt=now();await save(batch);await chrome.tabs.update(batch.tabId,{url:pageUrl(currentStore(batch))}); } else batch.status = "completed";
+            if (currentStore(batch)) { currentStore(batch).status = "scanning";batch.attemptId=uuid();batch.watchdogSince=now();batch.recoveryAttempts=0;phase(batch,'waiting','等待下一类目页面加载');await save(batch);await chrome.tabs.update(batch.tabId,{url:pageUrl(currentStore(batch))}); } else batch.status = "completed";
           } else { task.status = "partial";batch.status = "paused";const verificationWhy={http_denied:'检测到站点访问受限（HTTP 状态提示），需人工检查',access_restricted:'检测到站点访问受限，需人工检查',security_prompt:'检测到站点安全验证，需人工完成'};
             const why=(m.reason==='manual-verification'&&Object.hasOwn(verificationWhy,m.verificationDetail)?verificationWhy[m.verificationDetail]:null)||{"manual-verification":"需人工完成站点验证或登录","catalog_list_unavailable":"未识别唯一主商品列表","scan_bound_reached":"达到单页扫描上限（非完成）","pending_cards":"仍有商品字段待复查","reader_error":"页面读取失败","sample_not_persisted":"未确认数据已保存"}[m.reason]||"未确认扫描完成";task.note=why;batch.message=why+"，已暂停，检查页面后可继续。"; }
           await save(batch); return { ok: true, batch: clone(batch) };
@@ -226,16 +243,38 @@
       const task = currentStore(batch);
       if (!task || !pageMatches(tab?.url || "", task)) { batch.status = "paused"; batch.message = "任务标签页导航离开类目范围，已暂停"; await stopScanner(batch); await save(batch); return; }
       try {
+        await protectTab(tabId);
         await startScanner(batch,task);
-      } catch { batch.status = "paused"; batch.message = "类目扫描页面不可用，已暂停供检查"; await save(batch); }
+      } catch { await waitStatus(batch,'页面读取器暂未响应，正在等待自动恢复。'); }
     });
   }
   async function onRemoved(tabId) {
-    return queue(async () => { const batch = await read(); if (!batch || batch.tabId !== tabId || batch.status !== "running") return; batch.status = "paused"; batch.tabId = null; batch.message = "类目任务标签页已关闭，已暂停"; await save(batch); });
+    return queue(async () => { const batch = await read(); if (!batch || batch.tabId !== tabId || batch.status !== "running") return; await releaseTab(tabId);batch.status = "paused"; batch.tabId = null; batch.message = "类目任务标签页已关闭，已暂停"; await save(batch); });
   }
   async function onRestart() {
     return queue(async () => { const batch = await read(); if (!batch || batch.status !== "running") return; batch.status = "paused"; batch.message = "浏览器重启后任务已暂停，请人工检查后继续"; await save(batch); });
   }
-  async function onAlarm(alarm) { if (alarm?.name !== "ozon-category-runner") return;await queue(async()=>{const b=await read();if(b?.status==='running'&&Date.now()-Date.parse(b.lastProgressAt||b.updatedAt)>120000){await stopScanner(b);b.status='paused';b.message='超过 2 分钟没有确认采集进度，已暂停，请检查页面后继续。';await save(b)}}); }
+  async function onAlarm(alarm) {
+    if(alarm?.name!==ALARM)return;
+    await queue(async()=>{
+      const b=await read();if(b?.status!=='running')return;
+      const task=currentStore(b);let tab;
+      try{tab=await chrome.tabs.get(b.tabId)}catch{await releaseTab(b.tabId);b.tabId=null;b.status='paused';b.message='类目任务标签页已关闭，已暂停';await save(b);return}
+      if(!task||(!pageMatches(tab.url,task)&&!(tab.status==='loading'&&pageMatches(tab.pendingUrl,task)))){b.status='paused';b.message='任务标签页导航离开类目范围，已暂停';await stopScanner(b);await save(b);return}
+      // Browser lifecycle restrictions are not site verification. Do not reload,
+      // activate, or change tabs to bypass browser/site restrictions.
+      if(tab.frozen||tab.discarded||tab.status==='loading'){await waitStatus(b,tab.frozen||tab.discarded?'浏览器暂缓后台页面执行，已保留进度，页面可用后自动检查。':'等待类目页面加载');return}
+      const since=Math.max(Date.parse(b.lastProgressAt)||0,Date.parse(b.watchdogSince)||0);
+      if(since&&Date.now()-since<STALE_MS)return;
+      await protectTab(b.tabId);
+      let ack;
+      try{ack=await bounded(chrome.tabs.sendMessage(b.tabId,{type:'categoryScanTick',batchId:b.id,attemptId:b.attemptId}))}catch{ack={missing:true}}
+      if(ack===null){await waitStatus(b,'后台页面暂未响应，已保留进度并等待恢复。');return}
+      if(ack?.ok&&ack.running===true){await waitStatus(b,ack.pageHidden?'后台页面加载较慢，正在等待并检查采集进度。':'等待采集页面上报进度。');return}
+      if((Number(b.recoveryAttempts)||0)>=RECOVERY_LIMIT){await waitStatus(b,'页面读取器暂未恢复，已保留进度；请检查采集页面。');return}
+      b.recoveryAttempts=(Number(b.recoveryAttempts)||0)+1;b.attemptId=uuid();b.watchdogSince=now();phase(b,'recovering','正在从已保存进度恢复同一类目页面。');await save(b);
+      try{await startScanner(b,task)}catch{await waitStatus(b,'页面读取器暂未响应，正在等待自动恢复。')}
+    });
+  }
   scope.OzonCategoryBackground = Object.freeze({ handle, onUpdated, onRemoved, onAlarm, onRestart, snapshot, snapshotHistory });
 })(globalThis);

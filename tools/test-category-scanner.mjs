@@ -48,4 +48,30 @@ context.document.querySelectorAll = (selector) => selector.includes('tileGridDes
 assert.equal(context.OzonCategoryScanner.pickList(context.document), null, 'ambiguous list scope must be rejected');
 context.document.querySelectorAll = (selector) => selector.includes('tileGridDesktop') ? [recommendation] : [];
 assert.equal(context.OzonCategoryScanner.pickList(context.document), null, 'recommendation list must be rejected');
+// Simulate an eligible hidden page whose scheduled timer has not been delivered.
+// A task-scoped watchdog event may wake the due wait, without a duplicate run
+// or bypassing the normal loading interval.
+let fakeNow=1000,timerId=0,backgroundListener;const timers=new Map(),reported=[];
+class ClockDate extends Date{static now(){return fakeNow}}
+const bg={URL,Date:ClockDate,location:{href:'https://www.ozon.ru/category/demo-123/'},innerHeight:800,scrollY:0,
+ document:{hidden:true,documentElement:{scrollHeight:100000},querySelectorAll:s=>s.includes('tileGridDesktop')?[mainList]:[],querySelector:()=>null},
+ getComputedStyle:()=>({display:'block',visibility:'visible'}),scrollBy(_x,y){this.scrollY+=y},scrollTo(){},
+ setTimeout(fn,ms){const id=++timerId;timers.set(id,{fn,ms});return id},clearTimeout(id){timers.delete(id)},
+ chrome:{runtime:{onMessage:{addListener(fn){backgroundListener=fn}},sendMessage(msg,cb){reported.push(msg);cb({ok:true,stop:reported.filter(m=>m.type==='categorySample').length>=2})}}}};
+bg.globalThis=bg;for(const src of [scannerCore,categoryCore,categoryScanner])vm.runInNewContext(src,bg);
+backgroundListener({type:'categoryScanStart',batchId:'hidden-b',attemptId:'hidden-a',categoryUrl:bg.location.href},{},()=>{});
+await new Promise(setImmediate);
+assert.equal(reported.filter(m=>m.type==='categorySample').length,1);assert.equal(reported[0].pageHidden,true);assert.deepEqual([...timers.values()].map(t=>t.ms),[4000]);
+let tick;const wake=(attemptId)=>backgroundListener({type:'categoryScanTick',batchId:'hidden-b',attemptId},{},r=>tick=r);
+wake('hidden-a');await new Promise(setImmediate);assert.equal(tick.running,true);assert.equal(reported.length,1,'early tick must preserve the settling interval');
+fakeNow+=5000;wake('wrong-attempt');await new Promise(setImmediate);assert.equal(tick.running,false);assert.equal(reported.length,1,'stale attempt cannot wake scanner');
+wake('hidden-a');await new Promise(setImmediate);assert.equal(reported.filter(m=>m.type==='categorySample').length,2);assert.equal(timers.size,0);
+// Hidden bottom with no explicit end is not completion or a reason to scroll
+// repeatedly against an unloaded lazy-list boundary. A real challenge still stops.
+reported.length=0;bg.document.documentElement.scrollHeight=600;bg.scrollY=0;let hiddenScrolls=0;bg.scrollBy=()=>{hiddenScrolls++};bg.chrome.runtime.sendMessage=(m,cb)=>{reported.push(m);cb({ok:true})};
+backgroundListener({type:'categoryScanStart',batchId:'hidden-b',attemptId:'hidden-end',categoryUrl:bg.location.href},{},()=>{});await new Promise(setImmediate);
+for(let i=0;i<10;i++){fakeNow+=12000;wake('hidden-end');await new Promise(setImmediate);}
+assert.equal(hiddenScrolls,0);assert.ok(reported.some(m=>m.type==='categoryWait'));assert.ok(!reported.some(m=>m.type==='categoryPageDone'));
+bg.document.title='captcha';fakeNow+=12000;wake('hidden-end');await new Promise(setImmediate);
+assert.equal(reported.at(-1).reason,'manual-verification');assert.equal(timers.size,0);
 console.log('category scanner real-core synthetic DOM tests passed');

@@ -2,18 +2,19 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import vm from "node:vm";
 
-const data = {};
-let created = [], reloads=0, sentMessages=[], nextTabId=71;
+const data = {}, sessionData={}, alarms=new Map();
+let created = [], reloads=0, sentMessages=[], nextTabId=71, tickMode='running';
 const storage = { async get(k) { return k ? { ...(data[k] ? { [k]: data[k] } : {}) } : { ...data }; }, async set(v) { Object.assign(data, v); }, async remove(k) { for (const key of Array.isArray(k) ? k : [k]) delete data[key]; } };
 const chrome = {
-  storage: { local: storage },
+  storage: { local: storage,session:{async get(k){return {[k]:sessionData[k]}},async set(v){Object.assign(sessionData,v)},async remove(k){delete sessionData[k]}} },
+  alarms:{async get(n){return alarms.get(n)},async create(n,o){alarms.set(n,o)},async clear(n){alarms.delete(n)}},
   tabs: {
-    async create(o) { const t = { id: nextTabId++, ...o }; created.push(t); return t; },
-    async get(id) { return { id, url: created.find(x => x.id === id)?.url || "" }; },
+    async create(o) { const t = { id: nextTabId++, autoDiscardable:true,status:'complete', ...o }; created.push(t); return t; },
+    async get(id) { const t=created.find(x=>x.id===id);if(!t)throw Error('missing tab');return {...t}; },
     async update(id, o) { Object.assign(created.find(x => x.id === id), o); return { id, ...o }; },
     async remove(id) { created = created.filter(x => x.id !== id); },
     async reload() { reloads++; },
-    async sendMessage(id,message) { sentMessages.push({id,message});return { ok: true }; },
+    async sendMessage(id,message) { sentMessages.push({id,message});if(message.type==='categoryScanTick'){if(tickMode==='missing')throw Error('no receiving end');return {ok:true,running:tickMode==='running',pageHidden:true}}return { ok: true }; },
   },
   scripting: { async executeScript() {} },
 };
@@ -32,6 +33,8 @@ assert.equal(batch.currentIndex, 0);
 await assert.rejects(() => runner.handle({ type: "categoryStart", urls: "https://www.ozon.ru/category/tools-303/", targetCount: 1 }));
 const attemptId = batch.attemptId;
 assert.equal(batch.tabId, 71);
+assert.equal(created.find(t=>t.id===batch.tabId).autoDiscardable,false,'only the tasked tab is protected from automatic discard');
+assert.equal(alarms.get('ozon-category-runner').periodInMinutes,0.5);
 const done = await runner.handle({ type: "categorySample", batchId: batch.id, attemptId, categoryUrl: batch.stores[0].url, observedSkus: ["11", "12", "13"], products: [
   { sku: "11", name: "A", link: "https://www.ozon.ru/product/a-11", price: "20", qualified: true, shippingRisk: { type: "clear" } },
   { sku: "12", name: "B", link: "https://www.ozon.ru/product/b-12", price: "30", qualified: true, shippingRisk: { type: "clear" } },
@@ -40,6 +43,19 @@ const done = await runner.handle({ type: "categorySample", batchId: batch.id, at
 assert.equal(done.stop, false);
 batch = (await runner.handle({ type: "categoryGet" })).batch;
 assert.equal(batch.stores[0].qualifiedCount, 2);
+const taskTab=created.find(t=>t.id===batch.tabId),oldAttempt=batch.attemptId;
+data.ozonCategoryBatchV1.lastProgressAt=new Date(Date.now()-181000).toISOString();
+data.ozonCategoryBatchV1.watchdogSince=data.ozonCategoryBatchV1.lastProgressAt;
+const staleAt=data.ozonCategoryBatchV1.lastProgressAt;taskTab.frozen=true;
+const beforeFrozen=sentMessages.length;await runner.onAlarm({name:'ozon-category-runner'});
+batch=(await runner.handle({type:'categoryGet'})).batch;
+assert.equal(batch.status,'running','a frozen but matching background tab must not cause a false manual pause');assert.equal(batch.pageMode,'waiting');assert.equal(batch.lastProgressAt,staleAt,'watchdog checks are not actual progress');assert.equal(batch.stores[0].observedCount,3);assert.equal(sentMessages.length,beforeFrozen,'frozen reader is not repeatedly contacted');
+taskTab.frozen=false;await runner.onAlarm({name:'ozon-category-runner'});assert.ok(sentMessages.some(x=>x.message.type==='categoryScanTick'&&x.message.attemptId===oldAttempt));
+batch=(await runner.handle({type:'categoryGet'})).batch;assert.equal(batch.attemptId,oldAttempt,'a live reader is nudged without starting over');
+tickMode='missing';await runner.onAlarm({name:'ozon-category-runner'});tickMode='running';
+batch=(await runner.handle({type:'categoryGet'})).batch;assert.equal(batch.status,'running');assert.notEqual(batch.attemptId,oldAttempt);assert.equal(batch.pageMode,'recovering');assert.equal(batch.stores[0].observedCount,3);assert.equal(reloads,0,'recovery must not reload or navigate the site');
+const previousProgress=batch.lastProgressAt;batch=(await runner.handle({type:'categorySample',batchId:batch.id,attemptId:batch.attemptId,categoryUrl:batch.stores[0].url,observedSkus:['14'],products:[],pageHidden:true},{tab:{id:batch.tabId,url:batch.stores[0].url}})).batch;
+assert.equal(batch.pageMode,'background');assert.equal(batch.stores[0].observedCount,4);assert.ok(batch.lastProgressAt>previousProgress);assert.ok(batch.lastNewSkuAt);
 await assert.rejects(() => runner.handle({ type: "categorySample", batchId: batch.id, attemptId: "stale", categoryUrl: batch.stores[0].url, products: [] }, { tab: { id: batch.tabId, url: batch.stores[0].url } }));
 await runner.handle({ type: "categoryPageDone", batchId: batch.id, attemptId: batch.attemptId, categoryUrl: batch.stores[0].url, complete: true, reason: "visible_catalog_end" }, { tab: { id: batch.tabId, url: batch.stores[0].url } });
 batch = (await runner.handle({ type: "categoryGet" })).batch;
@@ -51,6 +67,7 @@ const second = await runner.handle({ type: "categorySample", batchId: batch.id, 
  ] }, { tab: { id: secondTabId, url: batch.stores[1].url } });
 assert.equal(second.batch.stores[1].qualifiedCount, 1);
 assert.equal(second.batch.status, "completed");
+assert.equal(created.find(t=>t.id===secondTabId).autoDiscardable,true,'completed scan restores its tab setting');assert.equal(alarms.has('ozon-category-runner'),false);
 await runner.handle({ type: "categoryStart", urls: "https://www.ozon.ru/category/tools-303/", targetCount: 1 });
 await runner.handle({ type: "categoryStop" });
 assert.equal((await runner.handle({ type: "categoryGet" })).batch.status, "stopped");
