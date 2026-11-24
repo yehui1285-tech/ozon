@@ -48,8 +48,12 @@ try{
  await manager.locator('#pause').click();assert.match(await manager.locator('#summary').innerText(),/已暂停/);
  await manager.evaluate(()=>getQueue.shift()({ok:true,batch:{...state,status:'running',lastProgressAt:'2026-11-24T10:19:00.000Z'},history:historyData}));
  await manager.waitForTimeout(50);assert.match(await manager.locator('#summary').innerText(),/已暂停/,'a stale poll cannot overwrite the completed user action');
+ await manager.locator('#backgroundExperiment').check();
  await manager.locator('#resume').click();
- const request=await manager.evaluate(()=>calls.find(m=>m.type==='categoryStart'));assert.equal(request.targetCount,3);assert.equal(request.minPrice,20);assert.equal(request.urls.length,2);
+ const resumeRequest=await manager.evaluate(()=>calls.filter(m=>m.type==='categoryResume').at(-1));assert.equal(resumeRequest.backgroundExperiment,true,'paused batch can opt into background activity');
+ const request=await manager.evaluate(()=>calls.find(m=>m.type==='categoryStart'));assert.equal(request.targetCount,3);assert.equal(request.minPrice,20);assert.equal(request.urls.length,2);assert.equal(request.backgroundExperiment,false);
+ await manager.evaluate(()=>{Object.assign(state.stores[0],{discoveredCount:100,erpReadyCount:60,labelHitCount:4});for(const fn of changeListeners)fn({ozonCategoryBatchV1:{}},'local')});
+ assert.match(await manager.locator('.store-list').innerText(),/发现商品 100.*ERP 就绪 60.*标签命中 4/);
  await manager.locator('#pause').click();assert.match(await manager.locator('#summary').innerText(),/已暂停/);
  await manager.locator('#resume').click();assert.match(await manager.locator('#summary').innerText(),/运行中/);
  await manager.locator('#stop').click();assert.match(await manager.locator('#summary').innerText(),/已停止/);assert.deepEqual(errors,[]);

@@ -85,8 +85,8 @@
     return null;
   }
   function readCards(list, core, categoryUrl, options = {}) {
-    if (!list) return { products: [], observedSkus: [], pendingSkus: [], pendingCount: 0, available: false };
-    const products = [], observed = new Set(),pending=new Set();
+    if (!list) return { products: [], observedSkus: [], discoverSkus:[], erpReadySkus:[], labelHitSkus:[], pendingSkus: [], pendingCount: 0, available: false };
+    const products = [], observed = new Set(), discovered = new Set(), erpReady = new Set(), labelHit = new Set(),pending=new Set();
     const boundary=[...(list.querySelectorAll?.(headingSelector)||[])].find(el=>recommendationHeading.test(textOf(el))&&visible(el));
     const productSku=href=>{try{const u=new URL(href);return u.origin==='https://www.ozon.ru'&&!u.username&&!u.password?u.pathname.match(/^\/product\/(?:[^/]+-)?(\d+)\/?$/)?.[1]||'':''}catch{return ''}};
     const findCard=(anchor,sku)=>{
@@ -105,13 +105,17 @@
       try { parsedUrl = new URL(anchor.href, globalScope.location?.href); } catch { continue; }
       if (parsedUrl.origin !== 'https://www.ozon.ru' || !/^\/product\//.test(parsedUrl.pathname)) continue;
       const link = globalScope.OzonStoreScannerCore?.canonicalProductLink(anchor.href) || '',sku=productSku(link);
-      if(!sku)continue;const scoped=findCard(anchor,sku);if(!scoped){if(!observed.has(sku))pending.add(sku);continue;}
+      if(!sku)continue;
+      discovered.add(sku);
+      const scoped=findCard(anchor,sku);if(!scoped){if(!observed.has(sku))pending.add(sku);continue;}
       const {card,raw}=scoped;
       const parsed = globalScope.OzonStoreScannerCore?.parseCardText(raw);
       if (!parsed?.sku || !/\/product\//.test(link)) {if(!observed.has(sku))pending.add(sku);continue;}
       const linkSku = new URL(link, globalScope.location?.href).pathname.match(/^\/product\/(?:[^/]+-)?(\d+)\/?$/)?.[1];
       if (linkSku !== String(parsed.sku)) continue;
       if (!(globalScope.OzonCategoryCore.capturedPrice(parsed.price) > 0)||!parsed.competitorReady||!parsed.commissions?.length) {if(!observed.has(sku))pending.add(sku);continue;}
+      erpReady.add(String(parsed.sku));
+      if (parsed.qualified) labelHit.add(String(parsed.sku));
       const name = [anchor,...(card.querySelectorAll?.('a[href*="/product/"]')||[])].filter(a=>productSku(a.href)===sku).map(a=>(textOf(a)||a.getAttribute?.('aria-label')||'').replace(/\s+/g,' ').trim()).filter(Boolean).sort((a,b)=>b.length-a.length)[0]||'';
       if (!name) { pending.add(sku); continue; }
       observed.add(String(parsed.sku));
@@ -124,7 +128,7 @@
         competitorReady: Boolean(parsed.competitorReady), shippingRisk, category: parsed.category, rawRiskText };
       if (parsed.qualified && core.qualifiedProduct?.(product, options)) products.push(product);
     }
-    return { products, observedSkus: [...observed], pendingSkus:[...pending],pendingCount:pending.size, available: anchors.length > 0 };
+    return { products, observedSkus: [...observed], discoverSkus:[...discovered], erpReadySkus:[...erpReady], labelHitSkus:[...labelHit], pendingSkus:[...pending],pendingCount:pending.size, available: anchors.length > 0 };
   }
   function pagination(doc, core, categoryUrl) {
     const links = [...doc.querySelectorAll('a[rel="next"], a[data-testid*="pagination-next"], a[href*="page="]')]
@@ -140,7 +144,8 @@
   if (!core || !globalScope.chrome?.runtime?.onMessage || !core.exactPageUrl(globalScope.location?.href || '') || globalScope.__ozonCategoryListenerInstalled) return;
   globalScope.__ozonCategoryListenerInstalled = true;
   let activeRun = null;
-  const hidden=()=>globalScope.document?.hidden===true;
+  let nativeHidden=false;
+  const hidden=()=>globalScope.document?.hidden===true||nativeHidden;
   function waitForRun(run,ms){return new Promise(resolve=>{
     const readyAt=Date.now()+ms;let timer;
     const finish=()=>{if(run.wait?.finish!==finish)return;globalScope.clearTimeout?.(timer);run.wait=null;resolve()};
@@ -153,11 +158,12 @@
     if (message?.type === 'categoryScanStop') { if(activeRun?.batchId===message.batchId&&activeRun?.attemptId===message.attemptId)cancelRun(); reply?.({ ok: true }); return false; }
     if(message?.type==='categoryScanTick'){
       const running=!!activeRun&&activeRun.batchId===message.batchId&&activeRun.attemptId===message.attemptId;
+      if(running&&typeof message.pageNativeHidden==='boolean')nativeHidden=message.pageNativeHidden;
       reply?.({ok:true,running,pageHidden:hidden()});if(running)activeRun.wait?.wake();return false;
     }
     if (message?.type !== 'categoryScanStart') return false;
     if(activeRun?.batchId===message.batchId&&activeRun?.attemptId===message.attemptId){reply?.({ok:true,accepted:true});return false;}
-    cancelRun();const run={batchId:message.batchId,attemptId:message.attemptId,wait:null};activeRun=run;
+    cancelRun();nativeHidden=message.pageNativeHidden===true;const run={batchId:message.batchId,attemptId:message.attemptId,wait:null};activeRun=run;
     reply?.({ ok: true, accepted: true, batchId: message.batchId, attemptId: message.attemptId });
     void scan(message,run).catch(() => {if(activeRun===run)return done(message, false, 'reader_error')}).finally(()=>{if(activeRun===run)activeRun=null});
     return false;
@@ -204,10 +210,11 @@
       for(const sku of result.observedSkus){observed.add(sku);pending.delete(sku)}
       const products=result.products.filter(p=>!sent.has(p.sku));
       const categoryName=textOf(globalScope.document.querySelector?.('h1')).slice(0,120);
-      const ack = await new Promise((resolve) => globalScope.chrome.runtime.sendMessage({ type: 'categorySample', batchId: msg.batchId, attemptId: msg.attemptId, categoryUrl: url,categoryName,products,observedSkus: result.observedSkus, pendingSkus:[...pending],pendingCount:pending.size,pageHidden }, (response) => resolve(response || {})));
+      const ack = await new Promise((resolve) => globalScope.chrome.runtime.sendMessage({ type: 'categorySample', batchId: msg.batchId, attemptId: msg.attemptId, categoryUrl: url,categoryName,products,observedSkus: result.observedSkus,discoverSkus:result.discoverSkus,erpReadySkus:result.erpReadySkus,labelHitSkus:result.labelHitSkus,pendingSkus:[...pending],pendingCount:pending.size,pageHidden }, (response) => resolve(response || {})));
       if(activeRun!==run)return;
       if (ack.ok !== true) return done(msg, false, 'sample_not_persisted');
       if(ack.stop===true||ack.stopped===true||activeRun!==run)return;
+      if(typeof ack.pageNativeHidden==='boolean')nativeHidden=ack.pageNativeHidden;
       for(const p of products)sent.add(p.sku);
       if(pageHidden&&result.available){if(newObserved)zeroNewObserved=0;else zeroNewObserved++;}
       const height = globalScope.document.documentElement?.scrollHeight || 0;

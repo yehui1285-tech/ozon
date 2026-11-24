@@ -7,6 +7,7 @@ let catalogData=null, treeSelection=null, confirmedSource='china', draftSelectio
 const labels={running:'运行中',paused:'已暂停',completed:'已完成',stopped:'已停止',pending:'待开始',loading:'打开页面',scanning:'扫描中',partial:'部分完成',deferred:'待回查',failed:'失败',skipped:'已跳过'};
 const waitReasons={catalog_loading:'商品列表仍在加载',hidden_bottom:'页面在后台，列表底部尚未确认',scroll_stalled:'页面滚动暂时停滞',review_pending:'仍有商品字段待复查',list_ambiguous:'商品列表范围不明确',no_new_sku:'本轮尚未发现新商品'};
 const pageModes={foreground:'前台',background:'后台',waiting:'等待中',recovering:'恢复中'};
+const activityLabels={'starting':'正在连接','native-background-only':'普通后台','focus-emulation-enabled':'试验模式已连接','focus-emulation-unavailable':'试验连接不可用','unavailable':'试验连接不可用','focus-emulation-detached':'试验连接已结束','focus-emulation-released':'试验连接已释放'};
 const sourceInput=()=>document.querySelector('[name="catalogSource"]:checked');
 const sourceValue=()=>sourceInput()?.value||'china';
 function setSource(source){const input=document.querySelector(`[name="catalogSource"][value="${source==='ordinary'?'ordinary':'china'}"]`);if(input)input.checked=true;$('catalogAdvanced').open=source==='ordinary'}
@@ -29,6 +30,7 @@ function renderTaskCard(task,batch){
     <div class="store-top"><strong>${esc(task.name||task.label||task.url||'类目')}</strong><span>${esc(labels[status]||status||'等待')}</span></div>
     <div class="store-url">${esc(task.pageUrl||task.url||'')}</div>
     <div class="counts">已检查 ${Number(task.observedCount||0)} · 新候选 ${Number(task.qualifiedCount||0)} · 待复查 ${Number(task.pendingCount||0)}</div>
+    <div class="counts">发现商品 ${task.discoveredCount??'—'} · ERP 就绪 ${task.erpReadyCount??'—'} · 标签命中 ${task.labelHitCount??'—'}</div>
     ${status==='deferred'?'<p class="store-reason">先扫待开始类目，再回查此项</p>':''}
     ${revisitCount>0?`<p class="store-reason">自动回查 ${revisitCount}/1</p>`:''}
     ${reason?`<p class="store-reason">${esc(reason)}</p>`:''}
@@ -72,6 +74,7 @@ async function loadCatalog(){try{const response=await fetch('category-catalog.js
 async function refreshFavorites(){favorites=await catalog.readFavorites();const select=$('favoriteSelect');const keep=select.value;select.replaceChildren(new Option('选择本机组合',''),...favorites.map(f=>new Option(`${f.name} · ${f.source==='china'?'中国专区':'普通 Ozon'}`,f.id)));if(favorites.some(f=>f.id===keep))select.value=keep}
 function categoryLabels(){const labels={};for(const n of treeSelection?.selected.values()||[])labels[core.normalizeUrl(n.url)]=catalog.names(n).slice(0,120);return labels}
 function render(batch, archive=history) {
+  if(batch?.id!==state?.id||batch?.status==='running') $("backgroundExperiment").checked=batch?.backgroundExperiment===true;
   state = batch || null;
   history=Array.isArray(archive)?archive:[];
   const stores = Array.isArray(batch?.stores) ? batch.stores : [];
@@ -80,6 +83,7 @@ function render(batch, archive=history) {
   const eligible = stores.reduce((a,s)=>a+Number(s.pendingCount||0),0);
   const summaryParts=batch?[labels[batch.status]||batch.status,`新候选 ${selected}/${batch.options?.targetCount||'—'}`,`已检查 ${checked}`,`待复查 ${eligible}`]:[];
   if(batch){const progressAt=formatTimestamp(batch.lastProgressAt),newSkuAt=formatTimestamp(batch.lastNewSkuAt);if(progressAt)summaryParts.push(`最近上报 ${progressAt}`);if(newSkuAt)summaryParts.push(`最近新增 SKU ${newSkuAt}`);if(batch.pageMode)summaryParts.push(`页面${pageModes[batch.pageMode]||'未知'}`)}
+  if(batch?.activityStatus)summaryParts.push(activityLabels[batch.activityStatus]||'等待采集连接');
   $("summary").textContent=batch?summaryParts.join(' · '):"暂无类目批次";
   $("message").textContent = batch?.message || "";
   $("batch").innerHTML = stores.length
@@ -88,6 +92,7 @@ function render(batch, archive=history) {
   const active = ["running","paused","scanning"].includes(batch?.status);
   const finishedBatch = ["completed","stopped","failed"].includes(batch?.status);
   $("start").disabled=busy||active;
+  $("backgroundExperiment").disabled=busy||batch?.status==='running'||batch?.status==='scanning';
   $("pause").disabled = busy||!active || batch.status === "paused";
   $("resume").disabled = busy||batch?.status !== "paused";
   $("stop").disabled = busy||!active;
@@ -109,11 +114,11 @@ $("start").onclick = async () => {
     const options=core.validateOptions({targetCount:$("targetCount").value,minPrice:$("minPrice").value,maxPrice:$("maxPrice").value});
     const needsArchiveConfirmation=history.length>=5&&!!state;
     if(needsArchiveConfirmation&&!confirm('历史类目批次已达 5 份，新任务可能替换最早批次；请先将需要的历史商品入池或同步。是否继续？'))return;
-    await perform({type:"categoryStart",urls:parsed.urls,categoryLabels:categoryLabels(),...options,confirmArchiveOverflow:needsArchiveConfirmation});
+    await perform({type:"categoryStart",urls:parsed.urls,categoryLabels:categoryLabels(),...options,backgroundExperiment:$("backgroundExperiment").checked,confirmArchiveOverflow:needsArchiveConfirmation});
   }catch(e){$("message").textContent=e.message;}
 };
 async function perform(message){if(busy)return;actionRevision++;refreshSequence++;busy=true;render(state);try{const r=await send(message);busy=false;render(Object.hasOwn(r,'batch')?r.batch:state,Array.isArray(r.history)?r.history:history);$("message").textContent=r.message||(message.type==='categoryAddPool'?`已加入 ${r.added||0} 件 · 重复 ${r.duplicates||0} · 历史排除 ${r.historySkipped||0}`:r.batch?.message||'操作已完成。');}catch(e){busy=false;render(state);$("message").textContent=e.message;}}
-for(const [id,type] of [["pause","categoryPause"],["resume","categoryResume"],["stop","categoryStop"],["addPool","categoryAddPool"],["syncWorkbench","categorySyncWorkbench"]]) if($(id))$(id).onclick=()=>perform({type,batchId:state?.id});
+for(const [id,type] of [["pause","categoryPause"],["resume","categoryResume"],["stop","categoryStop"],["addPool","categoryAddPool"],["syncWorkbench","categorySyncWorkbench"]]) if($(id))$(id).onclick=()=>perform({type,batchId:state?.id,...(id==='resume'?{backgroundExperiment:$("backgroundExperiment").checked}:{})});
 $("historyBatch").onchange=()=>{$("addHistoryPool").disabled=$("exportHistoryBatch").disabled=$("deleteHistoryBatch").disabled=busy||!$("historyBatch").value};
 $("addHistoryPool").onclick=()=>perform({type:'categoryAddPool',batchId:$("historyBatch").value});
 $("deleteHistoryBatch").onclick=()=>{const id=$("historyBatch").value;if(!id)return;const item=history.find(x=>x.id===id);if(!confirm(`确认删除所选已结束类目批次（${Number(item?.qualifiedCount||0)} 个候选）？本机商品池、SKU 历史和工作台云端数据不会改动。`))return;void perform({type:'categoryDeleteBatch',batchId:id})};

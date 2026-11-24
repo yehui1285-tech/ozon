@@ -3,7 +3,7 @@ import fs from "node:fs";
 import vm from "node:vm";
 
 const data = {}, sessionData={}, alarms=new Map();
-let created = [], reloads=0, sentMessages=[], nextTabId=71, tickMode='running';
+let created = [], reloads=0, sentMessages=[], debuggerCommands=[], debuggerAttached=new Set(), debuggerDetachListener=null, nextTabId=71, nextWindowId=9, windowFocused=false, tickMode='running';
 const storage = { async get(k) { return k ? { ...(data[k] ? { [k]: data[k] } : {}) } : { ...data }; }, async set(v) { Object.assign(data, v); }, async remove(k) { for (const key of Array.isArray(k) ? k : [k]) delete data[key]; } };
 const chrome = {
   storage: { local: storage,session:{async get(k){return {[k]:sessionData[k]}},async set(v){Object.assign(sessionData,v)},async remove(k){delete sessionData[k]}} },
@@ -15,6 +15,16 @@ const chrome = {
     async remove(id) { created = created.filter(x => x.id !== id); },
     async reload() { reloads++; },
     async sendMessage(id,message) { sentMessages.push({id,message});if(message.type==='categoryScanTick'){if(tickMode==='missing')throw Error('no receiving end');return {ok:true,running:tickMode==='running',pageHidden:true}}return { ok: true }; },
+  },
+  windows: {
+    async create(o) { const windowId=nextWindowId++,t={id:nextTabId++,windowId,active:false,autoDiscardable:true,status:'complete',...o};created.push(t);return {id:windowId,focused:false,tabs:[{...t}]}; },
+    async get(id) { return {id,focused:windowFocused}; },
+  },
+  debugger: {
+    onDetach:{addListener(fn){debuggerDetachListener=fn;}},
+    async attach(target){if(debuggerAttached.has(target.tabId))throw Error('already attached');debuggerAttached.add(target.tabId);},
+    async sendCommand(target,method,args){debuggerCommands.push({tabId:target.tabId,method,args});},
+    async detach(target){debuggerAttached.delete(target.tabId);},
   },
   scripting: { async executeScript() {} },
 };
@@ -225,4 +235,55 @@ assert.equal(batch.stores[0].observedCount,760);
 await report('categoryPageDone',{reason:'manual-verification',verificationDetail:'security_prompt'});
 assert.equal(batch.status,'paused');
 assert.match(batch.message,/安全验证/);
+await runner.handle({type:'categoryStop'});
+batch=(await runner.handle({type:'categoryStart',urls:regularUrl,targetCount:10,backgroundExperiment:true,confirmArchiveOverflow:true})).batch;
+const experimentTab=created.find(t=>t.id===batch.tabId);
+assert.equal(experimentTab.active,false,'the owned task opens inactive in a separate ordinary window');
+assert.equal(experimentTab.focused,false,'opening the task never focuses its window');
+assert.equal(debuggerAttached.has(batch.tabId),true,'the experiment attaches only to its owned task tab');
+assert.ok(debuggerCommands.some(x=>x.tabId===batch.tabId&&x.method==='Emulation.setFocusEmulationEnabled'&&x.args.enabled===true));
+const taskUrl=batch.stores[0].url;
+batch=(await runner.handle({type:'categorySample',batchId:batch.id,attemptId:batch.attemptId,categoryUrl:taskUrl,pageHidden:false,
+  discoverSkus:['900','901','900'],erpReadySkus:['900'],labelHitSkus:['900','900'],observedSkus:['900'],products:[]},{tab:{id:batch.tabId,url:taskUrl}})).batch;
+assert.equal(batch.stores[0].discoveredCount,2);assert.equal(batch.stores[0].erpReadyCount,1);assert.equal(batch.stores[0].labelHitCount,1);
+assert.equal(batch.pageMode,'background','inactive tab and unfocused window remain natively hidden despite focus emulation');
+batch=(await runner.handle({type:'categoryPageDone',batchId:batch.id,attemptId:batch.attemptId,categoryUrl:taskUrl,pageHidden:false,complete:true,reason:'visible_catalog_end'},{tab:{id:batch.tabId,url:taskUrl}})).batch;
+assert.equal(batch.status,'running','focus emulation cannot establish visible completion');
+windowFocused=true;experimentTab.active=true;
+batch=(await runner.handle({type:'categoryPageDone',batchId:batch.id,attemptId:batch.attemptId,categoryUrl:taskUrl,pageHidden:false,complete:true,reason:'visible_catalog_end'},{tab:{id:batch.tabId,url:taskUrl}})).batch;
+assert.equal(batch.status,'completed','completion is accepted only after native tab and window focus are confirmed');
+assert.equal(debuggerAttached.has(batch.tabId),false,'completion detaches the experiment debugger session');
+assert.ok(debuggerCommands.some(x=>x.tabId===batch.tabId&&x.method==='Emulation.setFocusEmulationEnabled'&&x.args.enabled===false));
+windowFocused=false;
+batch=(await runner.handle({type:'categoryStart',urls:regularUrl,targetCount:10,backgroundExperiment:true,confirmArchiveOverflow:true})).batch;
+assert.equal(debuggerAttached.has(batch.tabId),true);
+batch=(await runner.handle({type:'categoryPause'})).batch;
+assert.equal(batch.status,'paused');assert.equal(debuggerAttached.has(batch.tabId),false,'pause releases the owned debugger session');
+batch=(await runner.handle({type:'categoryResume',backgroundExperiment:true})).batch;
+assert.equal(batch.status,'running');assert.equal(debuggerAttached.has(batch.tabId),true,'resume can re-enable the experiment on its existing task tab');
+await runner.handle({type:'categoryStop'});
+assert.equal(debuggerAttached.size,0,'stop releases the experiment session');
+batch=(await runner.handle({type:'categoryStart',urls:regularUrl,targetCount:10,backgroundExperiment:true,confirmArchiveOverflow:true})).batch;
+const navigatingTab=created.find(t=>t.id===batch.tabId);
+navigatingTab.url='https://www.ozon.ru/login/';
+await runner.onUpdated(batch.tabId,{url:navigatingTab.url,status:'complete'},navigatingTab);
+batch=(await runner.handle({type:'categoryGet'})).batch;
+assert.equal(batch.status,'paused','unexpected navigation pauses instead of redirecting the page');
+assert.equal(debuggerAttached.has(batch.tabId),false,'navigation releases the debugger before handling the new page');
+await runner.handle({type:'categoryStop'});
+batch=(await runner.handle({type:'categoryStart',urls:regularUrl,targetCount:10,backgroundExperiment:true,confirmArchiveOverflow:true})).batch;
+const removedTabId=batch.tabId;
+assert.equal(debuggerAttached.has(removedTabId),true);
+await runner.onRemoved(removedTabId);
+batch=(await runner.handle({type:'categoryGet'})).batch;
+assert.equal(batch.status,'paused');assert.equal(debuggerAttached.has(removedTabId),false,'tab removal releases the experiment session');
+await runner.handle({type:'categoryStop'});
+await runner.handle({type:'categoryStart',urls:regularUrl,targetCount:10,backgroundExperiment:true,confirmArchiveOverflow:true});
+batch=(await runner.handle({type:'categoryGet'})).batch;
+const detachedTabId=batch.tabId;
+debuggerDetachListener?.({tabId:detachedTabId},'canceled_by_user');
+await new Promise(resolve=>setTimeout(resolve,0));
+batch=(await runner.handle({type:'categoryGet'})).batch;
+assert.equal(batch.status,'paused','user detaching the experiment session pauses with the checkpoint preserved');
+assert.equal(batch.backgroundExperiment,false);
 console.log("category background runner tests passed");

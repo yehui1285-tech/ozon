@@ -20,7 +20,9 @@ const card = (sku, name, label = '符合要求', category = '家居') => makeEl(
   text: `${label}\n399.00 ¥\n类目：${category}\nrFBS佣金：10%\nSKU：${sku}\nSKU：${sku}\n月销量：20\n发货模式：FBS\n长宽高：10×10×10\n重量：500g\n跟卖最低价：300`,
   children: [makeEl({ tag: 'A', href: `https://www.ozon.ru/product/${name}-${sku}/`, text: name })],
 });
-const mainList = makeEl({ widget: 'tileGridDesktop', children: [card('10001', 'valid-item'), card('10002', 'bad-item', '无标签'), card('10003', 'danger-item', '符合要求', '枪支用品'), card('10004', 'wrong-sku') ] });
+const incomplete = card('10005', 'incomplete-item');
+incomplete.innerText = incomplete.textContent = incomplete.innerText.replace(/\n跟卖最低价：300/, '');
+const mainList = makeEl({ widget: 'tileGridDesktop', children: [card('10001', 'valid-item'), card('10002', 'bad-item', '无标签'), card('10003', 'danger-item', '符合要求', '枪支用品'), card('10004', 'wrong-sku'), incomplete ] });
 // The final card deliberately has a SKU/link mismatch.
 mainList.children[3].children[0].href = 'https://www.ozon.ru/product/wrong-item-99999/';
 const recommendation = makeEl({ widget: 'tileGridDesktop', cls: 'recommendations', children: [card('99901', 'recommended')] });
@@ -39,6 +41,9 @@ const reader = context.OzonCategoryScanner.createReader(context.document, contex
 const result = reader.read(context.location.href, {});
 assert.deepEqual(Array.from(result.products, (p) => p.sku), ['10001']);
 assert.deepEqual(Array.from(result.observedSkus).sort(), ['10001', '10002', '10003']);
+assert.deepEqual(Array.from(result.discoverSkus).sort(), ['10001', '10002', '10003', '10005', '99999']);
+assert.deepEqual(Array.from(result.erpReadySkus).sort(), ['10001', '10002', '10003']);
+assert.deepEqual(Array.from(result.labelHitSkus).sort(), ['10001', '10003']);
 assert.equal(result.products[0].link, 'https://www.ozon.ru/product/valid-item-10001/');
 assert.equal(context.OzonCategoryCore.paginationUrl(context.location.href, 'https://www.ozon.ru/category/demo-123/'), 'https://www.ozon.ru/category/demo-123/?page=2');
 const next = makeEl({ tag: 'A', href: 'https://www.ozon.ru/category/demo-123/?page=3', text: '›', attrs: { 'aria-label': 'Next page' } });

@@ -36,7 +36,8 @@
         <label>最低价格（可选，CNY ¥）<input id="minPrice" type="number" min="0" step="0.01" placeholder="不限制"></label>
         <label>最高价格（可选，CNY ¥）<input id="maxPrice" type="number" min="0" step="0.01" placeholder="不限制"></label>
       </div>
-      <p class="notice">进度统计为本机发现并符合条件的新候选，不保证最终实际入池数量。任务一次只管理一个 Ozon 标签页。普通列表加载自动等待，待加载字段自动复查；站点验证仍需人工处理。</p>
+      <label for="backgroundExperiment" style="display:flex;align-items:center;gap:8px"><input id="backgroundExperiment" type="checkbox" style="width:auto">后台持续采集（试验，不抢前台）</label>
+      <p class="notice">新批次使用独立采集窗口。开启试验后，浏览器可能显示调试连接提示；完全遮挡时以新增商品、ERP 就绪和标签命中为准。站点验证仍需人工处理。</p>
       <div class="actions"><button class="primary" id="start">开始类目选品</button><button id="pause">暂停</button><button id="resume">继续</button><button class="danger" id="stop">停止</button></div>
       <p id="message" role="status" aria-live="polite"></p>
     </section>

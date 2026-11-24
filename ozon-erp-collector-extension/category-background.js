@@ -7,6 +7,7 @@
   const PROTECTION_KEY = 'ozonCategoryScanProtectionV1';
   const STALE_MS = 15000, MESSAGE_TIMEOUT_MS = 4000, RECOVERY_LIMIT = 2;
   const STALL_MS = 90000;
+  let experimentDebuggerTabId = null;
   const waitLabels = {
     catalog_loading: '主商品列表尚未加载',
     hidden_bottom: '已到当前页底，未加载出下一段商品',
@@ -32,7 +33,52 @@
     if(!Number.isInteger(tabId)||!chrome.storage.session?.get)return;
     try{const stored=await chrome.storage.session.get(PROTECTION_KEY),record=stored[PROTECTION_KEY]||{};if(!Object.hasOwn(record,tabId))return;await chrome.tabs.update(tabId,{autoDiscardable:record[tabId]}).catch(()=>null);delete record[tabId];await chrome.storage.session.set({[PROTECTION_KEY]:record})}catch{}
   }
-  async function save(batch) { batch.updatedAt = now();await chrome.storage.local.set({[KEY]:batch});if(batch.status==='running'){const alarm=await chrome.alarms?.get?.(ALARM);if(!alarm||alarm.periodInMinutes!==0.5)await chrome.alarms?.create?.(ALARM,{periodInMinutes:0.5})}else{await chrome.alarms?.clear?.(ALARM);await releaseTab(batch.tabId)}return batch; }
+  async function releaseFocusExperiment(tabId) {
+    if (!Number.isInteger(tabId) || experimentDebuggerTabId !== tabId) return;
+    experimentDebuggerTabId = null;
+    try { await chrome.debugger.sendCommand({tabId},'Emulation.setFocusEmulationEnabled',{enabled:false}); } catch {}
+    try { await chrome.debugger.detach({tabId}); } catch {}
+  }
+  async function enableFocusExperiment(batch) {
+    if (!batch?.backgroundExperiment || !Number.isInteger(batch.tabId)) return;
+    if (experimentDebuggerTabId===batch.tabId) return;
+    if (!chrome.debugger?.attach || !chrome.debugger?.sendCommand) { batch.activityStatus='unavailable'; return; }
+    const target={tabId:batch.tabId};
+    try {
+      const tab=await chrome.tabs.get(batch.tabId);
+      const task=currentStore(batch);
+      if (!task || (tab.pendingUrl && !pageMatches(tab.pendingUrl,task)) || (!pageMatches(tab.url,task) && !pageMatches(tab.pendingUrl,task))) { batch.activityStatus='focus-emulation-unavailable'; return; }
+      await chrome.debugger.attach(target,'1.3');
+      experimentDebuggerTabId=batch.tabId;
+      await chrome.debugger.sendCommand(target,'Emulation.setFocusEmulationEnabled',{enabled:true});
+      batch.activityStatus='focus-emulation-enabled';
+    } catch {
+      // A denied permission or an existing user-owned DevTools session must not
+      // interrupt category scanning, and must never be detached by this runner.
+      if (experimentDebuggerTabId===batch.tabId) {
+        try { await chrome.debugger.detach(target); } catch {}
+        experimentDebuggerTabId=null;
+      }
+      batch.activityStatus='focus-emulation-unavailable';
+      batch.experimentMessage='焦点模拟当前不可用，继续使用普通后台扫描';
+    }
+  }
+  async function nativePageHidden(tabId) {
+    try {
+      const tab=await chrome.tabs.get(tabId);
+      const win=await chrome.windows?.get?.(tab.windowId);
+      return tab.active!==true || win?.focused!==true;
+    } catch { return true; }
+  }
+  async function effectivePageHidden(batch,reportedHidden) {
+    return batch?.backgroundExperiment ? nativePageHidden(batch.tabId) : reportedHidden===true;
+  }
+  async function createTaskWindow(url) {
+    const win=await chrome.windows?.create?.({url,focused:false,type:'normal'});
+    if (win?.tabs?.[0]) return win.tabs[0];
+    return chrome.tabs.create({url,active:false});
+  }
+  async function save(batch) { batch.updatedAt = now();await chrome.storage.local.set({[KEY]:batch});if(batch.status==='running'){const alarm=await chrome.alarms?.get?.(ALARM);if(!alarm||alarm.periodInMinutes!==0.5)await chrome.alarms?.create?.(ALARM,{periodInMinutes:0.5})}else{await chrome.alarms?.clear?.(ALARM);if(experimentDebuggerTabId===batch.tabId&&batch.activityStatus==='focus-emulation-enabled')batch.activityStatus='focus-emulation-released';await releaseFocusExperiment(batch.tabId);await releaseTab(batch.tabId);await chrome.storage.local.set({[KEY]:batch})}return batch; }
   function bounded(promise,ms=MESSAGE_TIMEOUT_MS){let timer;return Promise.race([promise,new Promise(resolve=>{timer=setTimeout(()=>resolve(null),ms)})]).finally(()=>clearTimeout(timer))}
   function phase(batch,mode,message){batch.pageMode=mode;batch.message=message;return batch}
   async function waitStatus(batch,message){if(batch.pageMode!=='waiting'||batch.message!==message){phase(batch,'waiting',message);await save(batch)}}
@@ -83,7 +129,7 @@
       const actual = tab.pendingUrl || tab.url;
       if (!pageMatches(actual, previous) && !(resumingSwitch && pageMatches(actual, next))) throw Error();
       await stopScanner(batch);
-      if (!pageMatches(actual, next)) await chrome.tabs.update(batch.tabId, {url:pageUrl(next)});
+      if (!pageMatches(actual, next)) { await releaseFocusExperiment(batch.tabId); await chrome.tabs.update(batch.tabId, {url:pageUrl(next)}); }
     } catch {
       batch.status = 'paused';
       batch.message = '切换前无法确认采集页，进度已保存。请检查原标签页后继续。';
@@ -128,7 +174,8 @@
   async function startScanner(batch,task){
     const injection=await bounded(chrome.scripting.executeScript({target:{tabId:batch.tabId},files:['store-scanner-core.js','category-core.js','category-scanner.js']}));
     if(injection===null)throw Error('扫描页面暂未响应');
-    const ack=await bounded(chrome.tabs.sendMessage(batch.tabId,{type:'categoryScanStart',batchId:batch.id,attemptId:batch.attemptId,categoryUrl:pageUrl(task),options:batch.options,observedSkus:task.observedSkus||[],pendingSkus:task.pendingSkus||[],recheckFromTop:!!task.pendingCount&&!task.pendingSkus?.length}));
+    const pageNativeHidden=batch.backgroundExperiment?await nativePageHidden(batch.tabId):false;
+    const ack=await bounded(chrome.tabs.sendMessage(batch.tabId,{type:'categoryScanStart',batchId:batch.id,attemptId:batch.attemptId,categoryUrl:pageUrl(task),options:batch.options,observedSkus:task.observedSkus||[],pendingSkus:task.pendingSkus||[],recheckFromTop:!!task.pendingCount&&!task.pendingSkus?.length,pageNativeHidden}));
     if(!ack?.ok)throw Error('扫描器未确认启动');
   }
   async function openCurrent(batch, create = false) {
@@ -140,6 +187,7 @@
         const existing = await chrome.tabs.get(batch.tabId);
         if (pageMatches(existing?.url, task)) {
           await protectTab(batch.tabId);batch.attemptId = uuid();phase(batch,'recovering','正在恢复类目扫描');await save(batch);
+          await enableFocusExperiment(batch);
           if(existing.status!=='loading'&&!existing.frozen&&!existing.discarded){
             try{await startScanner(batch,task)}catch{await waitStatus(batch,'页面读取器暂未响应，正在等待自动恢复。')}
           }
@@ -152,10 +200,12 @@
     }
     batch.attemptId = uuid();batch.watchdogSince=now();phase(batch,'waiting','等待类目页面加载');
     if (!batch.tabId || create) {
-      const tab = await chrome.tabs.create({ url: pageUrl(task), active: false });
+      const tab = await createTaskWindow(pageUrl(task));
       batch.tabId = tab.id;
       await protectTab(batch.tabId);
     } else await chrome.tabs.update(batch.tabId, { url: pageUrl(task) });
+    await save(batch);
+    await enableFocusExperiment(batch);
     await save(batch);
   }
   function normalizeSampleProduct(p, task) {
@@ -186,7 +236,7 @@
           }
           const id = `category-${uuid()}`;
           const stores = urls.map((url, i) => {const kind=sourceKind(url),label=m.categoryLabels&&Object.hasOwn(m.categoryLabels,url)&&typeof m.categoryLabels[url]==='string'?m.categoryLabels[url].trim().slice(0,120):'';return { sellerKey: core.keyFromUrl(url), url, pageUrl: url, sourceKind:kind, ...(label?{label,name:(kind==='china'?'中国专区 · ':'普通类目 · ')+label}:{}), status: i === 0 ? "scanning" : "pending", observedCount: 0, qualifiedCount: 0, pendingCount: 0, observedSkus: [], visitedPages: [] }});
-          batch = { id, sourceMode: "category", status: "running", currentIndex: 0, tabId: null, attemptId: null, options, stores, results: {}, updatedAt: now(), message: "类目扫描已开始", addedCount: 0 };
+          batch = { id, sourceMode: "category", status: "running", currentIndex: 0, tabId: null, attemptId: null, options, stores, results: {}, updatedAt: now(), message: "类目扫描已开始", addedCount: 0, backgroundExperiment: m.backgroundExperiment===true, activityStatus: m.backgroundExperiment===true?'starting':'native-background-only' };
           await openCurrent(batch, true);
           return { ok: true, batch: clone(batch) };
         }
@@ -200,6 +250,7 @@
         }
         case "categoryResume":
           if (!batch || batch.status !== "paused") throw Error("没有可继续的暂停类目批次");
+          if (typeof m.backgroundExperiment==='boolean') batch.backgroundExperiment=m.backgroundExperiment;
           if (Number.isInteger(batch.resumeIndex)) {
             batch.status = 'running';
             const previousTab = batch.tabId == null ? null : await chrome.tabs.get(batch.tabId).catch(()=>null);
@@ -219,14 +270,22 @@
         case "categorySample": {
           const task = assertActive(batch, m, sender);
           if (batch.status !== "running") throw Error("类目批次当前未运行");
+          const effectiveHidden=await effectivePageHidden(batch,m.pageHidden);
+          for (const [listField,countField] of [['discoverSkus','discoveredCount'],['erpReadySkus','erpReadyCount'],['labelHitSkus','labelHitCount']]) {
+            const key=listField==='discoverSkus'?'discoveredSkus':listField;
+            const set=new Set(task[key]||[]);
+            for (const sku of Array.isArray(m[listField])?m[listField]:[]) if (/^\d+$/.test(String(sku))) set.add(String(sku));
+            task[key]=[...set];task[countField]=set.size;
+          }
           const observed = new Set(task.observedSkus || []),beforeObserved=observed.size;
           for (const sku of m.observedSkus || []) if (/^\d+$/.test(String(sku))) observed.add(String(sku));
           task.observedSkus = [...observed]; task.observedCount = observed.size;
-          if (!m.pageHidden || observed.size > beforeObserved) {delete task.waitSince;delete task.waitReason;}
+          if (!effectiveHidden || observed.size > beforeObserved) {delete task.waitSince;delete task.waitReason;}
           task.pendingCount = Math.max(0, Number(m.pendingCount) || 0);
           if(Array.isArray(m.pendingSkus))task.pendingSkus=[...new Set(m.pendingSkus.map(String).filter(s=>/^\d+$/.test(s)&&!observed.has(s)))];
           batch.lastProgressAt=now();if(observed.size>beforeObserved)batch.lastNewSkuAt=batch.lastProgressAt;batch.recoveryAttempts=0;
-          phase(batch,m.pageHidden===true?'background':'foreground',m.pageHidden===true?'后台扫描类目商品（页面加载可能较慢）':'正在扫描类目商品');
+          task.activityStatus=batch.activityStatus||'native-background-only';
+          phase(batch,effectiveHidden?'background':'foreground',effectiveHidden?'后台扫描类目商品（页面加载可能较慢）':'正在扫描类目商品');
           const poolStored = await chrome.storage.local.get("ozonProductPoolV1");
           const pool = poolStored.ozonProductPoolV1 || storeCore.emptyPool();
           const qualifiedSeen = new Set(batch.qualifiedSkuIds || []);
@@ -248,7 +307,7 @@
           task.observedSkus = [...new Set([...task.observedSkus, ...Object.keys(output.products)])];
           const stop = finishAtTarget(batch);
           if (stop) await stopScanner(batch);
-          await save(batch); return { ok: true, stop, batch: clone(batch) };
+          await save(batch); return { ok: true, stop, pageNativeHidden: batch.backgroundExperiment?await nativePageHidden(batch.tabId):false, batch: clone(batch) };
         }
         case "categoryWait": {
           const task = assertActive(batch,m,sender);
@@ -257,7 +316,7 @@
           const known = Object.hasOwn(waitLabels,m.reason);
           phase(batch,'waiting',(known ? waitLabels[m.reason] : '正在等待类目页')+'，正在复查…');
           batch.lastProgressAt=now();batch.recoveryAttempts=0;
-          if (m.pageHidden === true && known && m.reason !== 'list_ambiguous') {
+          if (await effectivePageHidden(batch,m.pageHidden) && known && m.reason !== 'list_ambiguous') {
             task.waitSince ??= Date.now();
             if (Date.now()-task.waitSince >= STALL_MS) {
               task.status = task.revisitCount ? 'partial' : 'deferred';
@@ -275,9 +334,14 @@
           if (batch.status !== "running") throw Error("类目批次当前未运行");
           const nextUrl = m.reason === "next_page_available" && m.nextUrl && core.paginationUrl?.(m.nextUrl, task.url);
           if (nextUrl && Number(new URL(nextUrl).searchParams.get('page'))===Number(new URL(pageUrl(task)).searchParams.get('page')||1)+1 && nextUrl!==pageUrl(task)&&!task.visitedPages.includes(nextUrl)) {
-            task.visitedPages.push(pageUrl(task)); task.pageUrl = nextUrl;task.pendingCount=0;task.pendingSkus=[];delete task.waitSince;delete task.waitReason; phase(batch,'waiting','继续扫描下一页'); await stopScanner(batch); batch.attemptId=uuid();batch.watchdogSince=now();batch.recoveryAttempts=0;await save(batch);await chrome.tabs.update(batch.tabId,{url:nextUrl});return { ok: true, batch: clone(batch) };
+            task.visitedPages.push(pageUrl(task)); task.pageUrl = nextUrl;task.pendingCount=0;task.pendingSkus=[];delete task.waitSince;delete task.waitReason; phase(batch,'waiting','继续扫描下一页'); await stopScanner(batch); await releaseFocusExperiment(batch.tabId); batch.attemptId=uuid();batch.watchdogSince=now();batch.recoveryAttempts=0;await save(batch);await chrome.tabs.update(batch.tabId,{url:nextUrl});return { ok: true, batch: clone(batch) };
           }
-          if (m.complete === true && m.reason === "visible_catalog_end") {
+          const effectivelyHidden=batch.backgroundExperiment && (m.pageHidden===true || await nativePageHidden(batch.tabId));
+          if (m.complete === true && m.reason === "visible_catalog_end" && effectivelyHidden) {
+            await waitStatus(batch,'后台页面报告列表结束，但标签页或窗口仍未获得原生焦点；保留进度并等待可见确认。');
+            return {ok:true,batch:clone(batch)};
+          }
+          if (m.complete === true && m.reason === "visible_catalog_end" && !effectivelyHidden) {
             task.status = "completed"; delete task.waitSince; delete task.waitReason;
             await advance(batch);
             return {ok:true,batch:clone(batch)};
@@ -332,19 +396,27 @@
   async function onUpdated(tabId, info, tab) {
     return queue(async () => {
       const batch = await read();
-      if (!batch || batch.tabId !== tabId || batch.status !== "running") return;
+      if (!batch || batch.tabId !== tabId) return;
+      if (info?.url) await releaseFocusExperiment(tabId);
+      if (batch.status !== "running") return;
       if (info?.status !== "complete") return;
       const task = currentStore(batch);
       if (!task || !pageMatches(tab?.url || "", task)) { batch.status = "paused"; batch.message = "任务标签页导航离开类目范围，已暂停"; await stopScanner(batch); await save(batch); return; }
       try {
         await protectTab(tabId);
+        await enableFocusExperiment(batch);
         await startScanner(batch,task);
       } catch { await waitStatus(batch,'页面读取器暂未响应，正在等待自动恢复。'); }
     });
   }
   async function onRemoved(tabId) {
-    return queue(async () => { const batch = await read(); if (!batch || batch.tabId !== tabId || batch.status !== "running") return; await releaseTab(tabId);batch.status = "paused"; batch.tabId = null; batch.message = "类目任务标签页已关闭，已暂停"; await save(batch); });
+    return queue(async () => { const batch = await read(); if (!batch || batch.tabId !== tabId) return; await releaseFocusExperiment(tabId);await releaseTab(tabId);if(batch.status !== "running")return;batch.status = "paused"; batch.tabId = null; batch.message = "类目任务标签页已关闭，已暂停"; await save(batch); });
   }
+  chrome.debugger?.onDetach?.addListener?.((source) => {
+    if (source?.tabId !== experimentDebuggerTabId) return;
+    experimentDebuggerTabId=null;
+    void queue(async()=>{const batch=await read();if(!batch||batch.tabId!==source.tabId)return;batch.activityStatus='focus-emulation-detached';batch.backgroundExperiment=false;if(batch.status==='running'){await stopScanner(batch);batch.status='paused';batch.message='实验性焦点模拟已被分离，进度已保存并暂停';}await save(batch);});
+  });
   async function onRestart() {
     return queue(async () => { const batch = await read(); if (!batch || batch.status !== "running") return; batch.status = "paused"; batch.message = "浏览器重启后任务已暂停，请人工检查后继续"; await save(batch); });
   }
@@ -362,7 +434,7 @@
       if(since&&Date.now()-since<STALE_MS)return;
       await protectTab(b.tabId);
       let ack;
-      try{ack=await bounded(chrome.tabs.sendMessage(b.tabId,{type:'categoryScanTick',batchId:b.id,attemptId:b.attemptId}))}catch{ack={missing:true}}
+      try{ack=await bounded(chrome.tabs.sendMessage(b.tabId,{type:'categoryScanTick',batchId:b.id,attemptId:b.attemptId,pageNativeHidden:b.backgroundExperiment?await nativePageHidden(b.tabId):false}))}catch{ack={missing:true}}
       if(ack===null){await waitStatus(b,'后台页面暂未响应，已保留进度并等待恢复。');return}
       if(ack?.ok&&ack.running===true){await waitStatus(b,ack.pageHidden?'后台页面加载较慢，正在等待并检查采集进度。':'等待采集页面上报进度。');return}
       if((Number(b.recoveryAttempts)||0)>=RECOVERY_LIMIT){await waitStatus(b,'页面读取器暂未恢复，已保留进度；请检查采集页面。');return}
