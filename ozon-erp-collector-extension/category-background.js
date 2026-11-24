@@ -6,6 +6,15 @@
   const ALARM = 'ozon-category-runner';
   const PROTECTION_KEY = 'ozonCategoryScanProtectionV1';
   const STALE_MS = 15000, MESSAGE_TIMEOUT_MS = 4000, RECOVERY_LIMIT = 2;
+  const STALL_MS = 90000;
+  const waitLabels = {
+    catalog_loading: '主商品列表尚未加载',
+    hidden_bottom: '已到当前页底，未加载出下一段商品',
+    scroll_stalled: '已尝试滚动，页面位置没有变化',
+    review_pending: '商品字段尚未齐全',
+    no_new_sku: '滚动后仍只有已检查的商品',
+    list_ambiguous: '无法确认唯一的主商品列表'
+  };
   const core = scope.OzonCategoryCore;
   const scanner = scope.OzonStoreScannerCore;
   const storeCore = scope.OzonProductPoolCore;
@@ -37,7 +46,9 @@
   function finishAtTarget(batch) {
     if (qualifiedTotal(batch) < batch.options.targetCount) return false;
     batch.status = "completed"; batch.message = "已达到批次目标有效商品数";
-    for (const task of batch.stores) if (task.status === "pending" || task.status === "scanning") {
+    for (const task of batch.stores) if (task.status === 'deferred') {
+      task.status = 'partial'; task.note = '批次目标已达到，保留已采记录';
+    } else if (task.status === "pending" || task.status === "scanning") {
       task.status = task.qualifiedCount ? "completed" : "skipped";
       if (!task.qualifiedCount) task.skipReason = "批次目标已达到，未扫描";
     }
@@ -59,6 +70,60 @@
   }
   async function stopScanner(batch) {
     if (batch?.tabId) await bounded(chrome.tabs.sendMessage(batch.tabId, { type: "categoryScanStop", batchId: batch.id, attemptId: batch.attemptId })).catch(() => null);
+  }
+  // Store the checkpoint and intended destination before sending a navigation.
+  // A restart or failed navigation can then resume without losing either task.
+  async function switchTask(batch, index) {
+    const previous = currentStore(batch), next = batch.stores[index];
+    const resumingSwitch = batch.resumeIndex === index;
+    batch.resumeIndex = index;
+    await save(batch);
+    try {
+      const tab = await chrome.tabs.get(batch.tabId);
+      const actual = tab.pendingUrl || tab.url;
+      if (!pageMatches(actual, previous) && !(resumingSwitch && pageMatches(actual, next))) throw Error();
+      await stopScanner(batch);
+      if (!pageMatches(actual, next)) await chrome.tabs.update(batch.tabId, {url:pageUrl(next)});
+    } catch {
+      batch.status = 'paused';
+      batch.message = '切换前无法确认采集页，进度已保存。请检查原标签页后继续。';
+      await save(batch);
+      return;
+    }
+    batch.currentIndex = index;
+    delete batch.resumeIndex;
+    if (next.status === 'deferred') next.revisitCount = 1;
+    next.status = 'scanning';
+    delete next.note;
+    delete next.waitSince;
+    delete next.waitReason;
+    batch.attemptId = uuid();
+    batch.watchdogSince = now();
+    batch.recoveryAttempts = 0;
+    phase(batch,'waiting',next.revisitCount ? '正在回查已保存的类目' : '等待下一类目页面加载');
+    await save(batch);
+    // onUpdated handles loading pages. A same-page return needs an explicit start.
+    const tab = await chrome.tabs.get(batch.tabId).catch(()=>null);
+    if (tab?.status === 'complete' && pageMatches(tab.url,next) && !tab.pendingUrl && !tab.frozen && !tab.discarded) {
+      try { await startScanner(batch,next); }
+      catch { await waitStatus(batch,'页面读取器暂未响应，正在等待自动恢复。'); }
+    }
+  }
+  async function advance(batch) {
+    let next = batch.stores.findIndex(task=>task.status === 'pending');
+    if (next < 0) next = batch.stores.findIndex(task=>task.status === 'deferred');
+    if (next >= 0) return switchTask(batch,next);
+    const partial = batch.stores.findIndex(task=>task.status === 'partial');
+    if (partial >= 0) {
+      batch.status = 'paused';
+      if (currentStore(batch).status !== 'partial') batch.resumeIndex = partial;
+      batch.message = '本批仍有类目待人工检查，自动回查已结束。已采记录已保存，可检查后继续。';
+    } else {
+      batch.status = 'completed';
+      batch.message = '本批类目已扫描完成';
+    }
+    await stopScanner(batch);
+    await save(batch);
   }
   async function startScanner(batch,task){
     const injection=await bounded(chrome.scripting.executeScript({target:{tabId:batch.tabId},files:['store-scanner-core.js','category-core.js','category-scanner.js']}));
@@ -135,7 +200,21 @@
         }
         case "categoryResume":
           if (!batch || batch.status !== "paused") throw Error("没有可继续的暂停类目批次");
-          if (currentStore(batch)) {currentStore(batch).status = "scanning";delete currentStore(batch).note;}
+          if (Number.isInteger(batch.resumeIndex)) {
+            batch.status = 'running';
+            const previousTab = batch.tabId == null ? null : await chrome.tabs.get(batch.tabId).catch(()=>null);
+            if (!previousTab) {
+              if (batch.tabId != null) await releaseTab(batch.tabId);
+              batch.currentIndex = batch.resumeIndex;
+              delete batch.resumeIndex;
+              const next = currentStore(batch);
+              if (next.status === 'deferred') next.revisitCount = 1;
+              next.status = 'scanning'; delete next.note; delete next.waitSince; delete next.waitReason;
+              await openCurrent(batch,true);
+            } else await switchTask(batch,batch.resumeIndex);
+            return {ok:true,batch:clone(batch)};
+          }
+          if (currentStore(batch)) {const task=currentStore(batch);task.status = "scanning";delete task.note;delete task.waitSince;delete task.waitReason;}
           batch.status = "running"; batch.message = "继续扫描"; await openCurrent(batch); return { ok: true, batch: clone(batch) };
         case "categorySample": {
           const task = assertActive(batch, m, sender);
@@ -143,6 +222,7 @@
           const observed = new Set(task.observedSkus || []),beforeObserved=observed.size;
           for (const sku of m.observedSkus || []) if (/^\d+$/.test(String(sku))) observed.add(String(sku));
           task.observedSkus = [...observed]; task.observedCount = observed.size;
+          if (!m.pageHidden || observed.size > beforeObserved) {delete task.waitSince;delete task.waitReason;}
           task.pendingCount = Math.max(0, Number(m.pendingCount) || 0);
           if(Array.isArray(m.pendingSkus))task.pendingSkus=[...new Set(m.pendingSkus.map(String).filter(s=>/^\d+$/.test(s)&&!observed.has(s)))];
           batch.lastProgressAt=now();if(observed.size>beforeObserved)batch.lastNewSkuAt=batch.lastProgressAt;batch.recoveryAttempts=0;
@@ -171,23 +251,37 @@
           await save(batch); return { ok: true, stop, batch: clone(batch) };
         }
         case "categoryWait": {
-          assertActive(batch,m,sender);if(batch.status!=='running')throw Error('类目批次当前未运行');
-          phase(batch,'waiting',m.reason==='review_pending'?'自动复查未加载完整的商品…':m.pageHidden===true?'后台商品列表加载中，正在自动等待…':'商品列表加载中，正在自动等待并重试…');
-          batch.lastProgressAt=now();batch.recoveryAttempts=0;await save(batch);return {ok:true};
+          const task = assertActive(batch,m,sender);
+          if(batch.status!=='running') throw Error('类目批次当前未运行');
+          task.waitReason = m.reason;
+          const known = Object.hasOwn(waitLabels,m.reason);
+          phase(batch,'waiting',(known ? waitLabels[m.reason] : '正在等待类目页')+'，正在复查…');
+          batch.lastProgressAt=now();batch.recoveryAttempts=0;
+          if (m.pageHidden === true && known && m.reason !== 'list_ambiguous') {
+            task.waitSince ??= Date.now();
+            if (Date.now()-task.waitSince >= STALL_MS) {
+              task.status = task.revisitCount ? 'partial' : 'deferred';
+              task.note = waitLabels[m.reason];
+              delete task.waitSince;
+              await advance(batch);
+              return {ok:true,stop:true};
+            }
+          } else delete task.waitSince;
+          await save(batch);
+          return {ok:true};
         }
         case "categoryPageDone": {
           const task = assertActive(batch, m, sender);
           if (batch.status !== "running") throw Error("类目批次当前未运行");
           const nextUrl = m.reason === "next_page_available" && m.nextUrl && core.paginationUrl?.(m.nextUrl, task.url);
           if (nextUrl && Number(new URL(nextUrl).searchParams.get('page'))===Number(new URL(pageUrl(task)).searchParams.get('page')||1)+1 && nextUrl!==pageUrl(task)&&!task.visitedPages.includes(nextUrl)) {
-            task.visitedPages.push(pageUrl(task)); task.pageUrl = nextUrl;task.pendingCount=0;task.pendingSkus=[]; phase(batch,'waiting','继续扫描下一页'); await stopScanner(batch); batch.attemptId=uuid();batch.watchdogSince=now();batch.recoveryAttempts=0;await save(batch);await chrome.tabs.update(batch.tabId,{url:nextUrl});return { ok: true, batch: clone(batch) };
+            task.visitedPages.push(pageUrl(task)); task.pageUrl = nextUrl;task.pendingCount=0;task.pendingSkus=[];delete task.waitSince;delete task.waitReason; phase(batch,'waiting','继续扫描下一页'); await stopScanner(batch); batch.attemptId=uuid();batch.watchdogSince=now();batch.recoveryAttempts=0;await save(batch);await chrome.tabs.update(batch.tabId,{url:nextUrl});return { ok: true, batch: clone(batch) };
           }
-          await stopScanner(batch);
           if (m.complete === true && m.reason === "visible_catalog_end") {
-            task.status = "completed"; batch.message = "当前类目已完成";
-            batch.currentIndex++;
-            if (currentStore(batch)) { currentStore(batch).status = "scanning";batch.attemptId=uuid();batch.watchdogSince=now();batch.recoveryAttempts=0;phase(batch,'waiting','等待下一类目页面加载');await save(batch);await chrome.tabs.update(batch.tabId,{url:pageUrl(currentStore(batch))}); } else batch.status = "completed";
-          } else { task.status = "partial";batch.status = "paused";const verificationWhy={http_denied:'检测到站点访问受限（HTTP 状态提示），需人工检查',access_restricted:'检测到站点访问受限，需人工检查',security_prompt:'检测到站点安全验证，需人工完成'};
+            task.status = "completed"; delete task.waitSince; delete task.waitReason;
+            await advance(batch);
+            return {ok:true,batch:clone(batch)};
+          } else { await stopScanner(batch);delete task.waitSince;delete task.waitReason;task.status = "partial";batch.status = "paused";const verificationWhy={http_denied:'检测到站点访问受限（HTTP 状态提示），需人工检查',access_restricted:'检测到站点访问受限，需人工检查',security_prompt:'检测到站点安全验证，需人工完成',login_required:'页面要求登录，请在采集页人工处理'};
             const why=(m.reason==='manual-verification'&&Object.hasOwn(verificationWhy,m.verificationDetail)?verificationWhy[m.verificationDetail]:null)||{"manual-verification":"需人工完成站点验证或登录","catalog_list_unavailable":"未识别唯一主商品列表","scan_bound_reached":"达到单页扫描上限（非完成）","pending_cards":"仍有商品字段待复查","reader_error":"页面读取失败","sample_not_persisted":"未确认数据已保存"}[m.reason]||"未确认扫描完成";task.note=why;batch.message=why+"，已暂停，检查页面后可继续。"; }
           await save(batch); return { ok: true, batch: clone(batch) };
         }
@@ -272,6 +366,7 @@
       if(ack===null){await waitStatus(b,'后台页面暂未响应，已保留进度并等待恢复。');return}
       if(ack?.ok&&ack.running===true){await waitStatus(b,ack.pageHidden?'后台页面加载较慢，正在等待并检查采集进度。':'等待采集页面上报进度。');return}
       if((Number(b.recoveryAttempts)||0)>=RECOVERY_LIMIT){await waitStatus(b,'页面读取器暂未恢复，已保留进度；请检查采集页面。');return}
+      delete task.waitSince;
       b.recoveryAttempts=(Number(b.recoveryAttempts)||0)+1;b.attemptId=uuid();b.watchdogSince=now();phase(b,'recovering','正在从已保存进度恢复同一类目页面。');await save(b);
       try{await startScanner(b,task)}catch{await waitStatus(b,'页面读取器暂未响应，正在等待自动恢复。')}
     });

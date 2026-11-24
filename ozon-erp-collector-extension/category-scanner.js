@@ -26,6 +26,11 @@
     // A product SKU or currency amount is not an HTTP error. Recognize the
     // numeric status only in page-level or explicit error context.
     const heading=textOf(doc?.querySelector?.('h1'));
+    const loginHeading=/^(?:登录(?:\s*Ozon|账号)?|请先登录|sign in(?: to Ozon)?|log in(?: to Ozon)?|войти(?: в Ozon)?|вход(?: в Ozon)?)$/i;
+    if(loginHeading.test(heading)) return 'login_required';
+    for(const dialog of doc.querySelectorAll?.('[role="dialog"],dialog[open]')||[]){
+      if(visible(dialog) && loginHeading.test(textOf(dialog.querySelector?.('h1,h2,h3,[role="heading"]')))) return 'login_required';
+    }
     if(/\b403\b/.test(title)||/^403(?:\s+(?:forbidden|access denied))?$/i.test(heading)||/^\s*403\s*(?:\r?\n|$)/.test(body)||/\b(?:http(?:\s+error)?|error|status)\s*[:：]?\s*403\b|\b403\s+forbidden\b|ошибка\s*403\b/i.test(body))return 'http_denied';
     return '';
   }
@@ -44,7 +49,7 @@
     }
     return false;
   }
-  function pickList(doc) {
+  function mainCandidates(doc) {
     const candidates = new Set();
     for (const selector of SELECTORS) for (const el of doc.querySelectorAll(selector)) {
       if (!visible(el) || isForbidden(el)) continue;
@@ -58,6 +63,9 @@
       }
       candidates.add(el);
     }
+    return candidates;
+  }
+  function pickList(doc, candidates=mainCandidates(doc)) {
     // The explicit paginator owns virtual rows even when later rows do not
     // repeat the tileGridDesktop marker. Do not expand to an arbitrary parent.
     const paginators = [...candidates].filter(el => el.getAttribute?.('data-widget') === 'infiniteVirtualPaginator');
@@ -159,11 +167,12 @@
     const url = core.exactPageUrl(globalScope.location.href);
     if (!core.samePage(globalScope.location.href, baseUrl) || !url || url!==msg.categoryUrl) return done(msg, false, 'wrong_category_page');
     const reader = createReader(globalScope.document, core), sent=new Set(),observed = new Set(msg.observedSkus||[]),pending=new Set(msg.pendingSkus||[]);
-    let scrolls = 0, stable = 0, bottomStable = 0, lastHeight = -1, noListPolls = 0,reviewPasses=0,bottomSince=0,previousHidden=hidden();
+    let scrolls = 0, stable = 0, bottomStable = 0, lastHeight = -1, noListPolls = 0,ambiguousPolls=0,reviewPasses=0,bottomSince=0,previousHidden=hidden(),zeroNewObserved=0;
     let recheckFromTop=!!msg.recheckFromTop;
     const wait=ms=>waitForRun(run,ms);
     const settle=()=>hidden()?BACKGROUND_SETTLE_MS:FOREGROUND_SETTLE_MS;
     const reportWait=reason=>new Promise(resolve=>globalScope.chrome.runtime.sendMessage({type:'categoryWait',batchId:msg.batchId,attemptId:msg.attemptId,categoryUrl:url,reason,pageHidden:hidden()},response=>resolve(response||{})));
+    const waitStopped=ack=>ack.ok!==true||ack.stop===true||ack.stopped===true||activeRun!==run;
     for (let sample = 0; sample < MAX_SAMPLES && scrolls <= MAX_SCROLLS; sample++) {
       if (activeRun!==run) return;
       if(core.exactPageUrl(globalScope.location.href)!==url)return done(msg,false,'wrong_category_page');
@@ -171,17 +180,26 @@
       const verification=verificationDetail(globalScope.document);
       if(verification)return done(msg,false,'manual-verification','',verification);
       if(recheckFromTop){recheckFromTop=false;globalScope.scrollTo(0,0);}
-      let list = reader.pickList();
+      const candidates = mainCandidates(globalScope.document);
+      const list = pickList(globalScope.document,candidates);
+      if(!list&&candidates.size>1){
+        noListPolls=0;ambiguousPolls++;stable=0;bottomStable=0;lastHeight=-1;
+        if(ambiguousPolls>=LIST_WAIT_POLLS)return done(msg,false,'catalog_list_unavailable');
+        const ack=await reportWait('list_ambiguous');if(waitStopped(ack))return;
+        await wait(pageHidden?BACKGROUND_RETRY_MS:LIST_WAIT_MS);sample--;continue;
+      }
+      ambiguousPolls=0;
       const result=reader.read(url,msg.options||{},list);
       const endMarker = list?.querySelector?.('[data-testid*="no-more"], [data-testid="end-of-list"], [data-testid="catalog-list-end"]');
       if(!list||(!result.available&&!visible(endMarker))){
         if(noListPolls>=LIST_WAIT_POLLS&&!pageHidden)return done(msg,false,'catalog_list_unavailable');
         if(noListPolls>=LIST_WAIT_POLLS)noListPolls=0;
-        if(noListPolls%5===0){const ack=await reportWait('catalog_loading');if(ack.ok!==true||activeRun!==run)return;}
+        if(noListPolls%5===0){const ack=await reportWait('catalog_loading');if(waitStopped(ack))return;}
         noListPolls++;stable=0;bottomStable=0;lastHeight=-1;
         await wait(pageHidden?BACKGROUND_SETTLE_MS:LIST_WAIT_MS);sample--;continue;
       }
       noListPolls = 0;
+      const newObserved=result.observedSkus.some(sku=>!observed.has(sku));
       for(const sku of result.pendingSkus)if(!observed.has(sku))pending.add(sku);
       for(const sku of result.observedSkus){observed.add(sku);pending.delete(sku)}
       const products=result.products.filter(p=>!sent.has(p.sku));
@@ -191,6 +209,7 @@
       if (ack.ok !== true) return done(msg, false, 'sample_not_persisted');
       if(ack.stop===true||ack.stopped===true||activeRun!==run)return;
       for(const p of products)sent.add(p.sku);
+      if(pageHidden&&result.available){if(newObserved)zeroNewObserved=0;else zeroNewObserved++;}
       const height = globalScope.document.documentElement?.scrollHeight || 0;
       const atBottom = globalScope.innerHeight + globalScope.scrollY >= height - 8;
       if (atBottom && height === lastHeight) { stable++; bottomStable++;if(!bottomSince)bottomSince=Date.now(); } else { stable = 0; bottomStable = 0;bottomSince=0; }
@@ -200,22 +219,23 @@
       const reachedEnd = confirmedBottom && stable >= 2 && visible(endMarker);
       if(nextUrl||reachedEnd){
         if(pending.size&&reviewPasses<MAX_REVIEW_PASSES){
-          reviewPasses++;const reviewAck=await reportWait('review_pending');if(reviewAck.ok!==true||activeRun!==run)return;
+          reviewPasses++;const reviewAck=await reportWait('review_pending');if(waitStopped(reviewAck))return;
           globalScope.scrollTo(0,0);stable=0;bottomStable=0;bottomSince=0;lastHeight=-1;
           await wait(settle());continue;
         }
-        if(pending.size&&pageHidden){const waiting=await reportWait('review_pending');if(waiting.ok!==true||activeRun!==run)return;await wait(BACKGROUND_RETRY_MS);sample--;continue;}
+        if(pending.size&&pageHidden){const waiting=await reportWait('review_pending');if(waitStopped(waiting))return;await wait(BACKGROUND_RETRY_MS);sample--;continue;}
         if(pending.size)return done(msg,false,'pending_cards');
         return nextUrl?done(msg,false,'next_page_available',nextUrl):done(msg,true,'visible_catalog_end');
       }
       // Hidden lazy-loaded lists can stop briefly at the current document end.
       // Wait for layout/explicit pagination evidence instead of exhausting
       // the scan budget on repeated scrolls against the same bottom.
-      if(pageHidden&&atBottom){if(confirmedBottom){const waiting=await reportWait('catalog_loading');if(waiting.ok!==true||activeRun!==run)return;}await wait(confirmedBottom?BACKGROUND_RETRY_MS:BACKGROUND_SETTLE_MS);sample--;continue;}
+      if(pageHidden&&atBottom){if(confirmedBottom){const waiting=await reportWait('hidden_bottom');if(waitStopped(waiting))return;}await wait(confirmedBottom?BACKGROUND_RETRY_MS:BACKGROUND_SETTLE_MS);sample--;continue;}
       if (sample === MAX_SAMPLES - 1 || scrolls >= MAX_SCROLLS) break;
       const beforeScroll=globalScope.scrollY;globalScope.scrollBy(0, Math.max(200, Math.floor(globalScope.innerHeight * 0.65)));
-      if(pageHidden&&Math.abs(globalScope.scrollY-beforeScroll)<5){const waiting=await reportWait('catalog_loading');if(waiting.ok!==true||activeRun!==run)return;await wait(BACKGROUND_RETRY_MS);sample--;continue;}
+      if(pageHidden&&Math.abs(globalScope.scrollY-beforeScroll)<5){const waiting=await reportWait('scroll_stalled');if(waitStopped(waiting))return;await wait(BACKGROUND_RETRY_MS);sample--;continue;}
       scrolls++;
+      if(pageHidden&&zeroNewObserved>=8){zeroNewObserved=0;const waiting=await reportWait('no_new_sku');if(waitStopped(waiting))return;await wait(BACKGROUND_RETRY_MS);sample--;continue;}
       await wait(settle());
     }
     return done(msg, false, 'scan_bound_reached');

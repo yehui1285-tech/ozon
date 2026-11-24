@@ -71,7 +71,42 @@ wake('hidden-a');await new Promise(setImmediate);assert.equal(reported.filter(m=
 reported.length=0;bg.document.documentElement.scrollHeight=600;bg.scrollY=0;let hiddenScrolls=0;bg.scrollBy=()=>{hiddenScrolls++};bg.chrome.runtime.sendMessage=(m,cb)=>{reported.push(m);cb({ok:true})};
 backgroundListener({type:'categoryScanStart',batchId:'hidden-b',attemptId:'hidden-end',categoryUrl:bg.location.href},{},()=>{});await new Promise(setImmediate);
 for(let i=0;i<10;i++){fakeNow+=12000;wake('hidden-end');await new Promise(setImmediate);}
-assert.equal(hiddenScrolls,0);assert.ok(reported.some(m=>m.type==='categoryWait'));assert.ok(!reported.some(m=>m.type==='categoryPageDone'));
+assert.equal(hiddenScrolls,0);assert.ok(reported.some(m=>m.type==='categoryWait'&&m.reason==='hidden_bottom'));assert.ok(!reported.some(m=>m.type==='categoryPageDone'));
 bg.document.title='captcha';fakeNow+=12000;wake('hidden-end');await new Promise(setImmediate);
 assert.equal(reported.at(-1).reason,'manual-verification');assert.equal(timers.size,0);
+// Repeated readable products while the hidden page scrolls forward are a
+// separate scheduler signal from a scroll that cannot move.
+reported.length=0;bg.document.title='Ozon';bg.document.documentElement.scrollHeight=100000;bg.scrollY=0;bg.scrollBy=function(_x,y){this.scrollY+=y};
+bg.chrome.runtime.sendMessage=(m,cb)=>{reported.push(m);cb({ok:true})};
+backgroundListener({type:'categoryScanStart',batchId:'hidden-b',attemptId:'no-new-sku',categoryUrl:bg.location.href},{},()=>{});await new Promise(setImmediate);
+for(let i=0;i<10&&!reported.some(m=>m.type==='categoryWait'&&m.reason==='no_new_sku');i++){fakeNow+=5000;wake('no-new-sku');await new Promise(setImmediate);}
+assert.ok(reported.some(m=>m.type==='categoryWait'&&m.reason==='no_new_sku'));
+assert.ok(!reported.some(m=>m.type==='categoryPageDone'),'repeated observed items must not imply catalog completion');
+// Two plausible visible main lists produce an explicit ambiguity wait and
+// never get scrolled or treated as a catalog end.
+reported.length=0;bg.scrollY=0;let ambiguousScrolls=0;bg.scrollBy=()=>{ambiguousScrolls++};
+bg.document.querySelectorAll=s=>s.includes('tileGridDesktop')?[mainList,makeEl({widget:'tileGridDesktop',children:[card('77777','other-list')]})]:[];
+backgroundListener({type:'categoryScanStart',batchId:'hidden-b',attemptId:'ambiguous',categoryUrl:bg.location.href},{},()=>{});await new Promise(setImmediate);
+assert.ok(reported.some(m=>m.type==='categoryWait'&&m.reason==='list_ambiguous'));
+assert.equal(ambiguousScrolls,0);
+assert.ok(!reported.some(m=>m.type==='categoryPageDone'),'ambiguity waits before its independent retry bound');
+backgroundListener({type:'categoryScanStop',batchId:'hidden-b',attemptId:'ambiguous'},{},()=>{});await new Promise(setImmediate);
+reported.length=0;bg.chrome.runtime.sendMessage=(m,cb)=>{reported.push(m);cb(m.type==='categoryWait'?{ok:true,stop:true}:{ok:true})};
+backgroundListener({type:'categoryScanStart',batchId:'hidden-b',attemptId:'wait-stop',categoryUrl:bg.location.href},{},()=>{});await new Promise(setImmediate);
+assert.ok(reported.some(m=>m.type==='categoryWait'&&m.reason==='list_ambiguous'));
+assert.ok(!reported.some(m=>m.type==='categoryPageDone'),'categoryWait stop acknowledgement must terminate without a done event');
+assert.equal(timers.size,0);
+reported.length=0;bg.chrome.runtime.sendMessage=(m,cb)=>{reported.push(m);cb({ok:true})};
+backgroundListener({type:'categoryScanStart',batchId:'hidden-b',attemptId:'ambiguous-bound',categoryUrl:bg.location.href},{},()=>{});await new Promise(setImmediate);
+for(let i=0;i<35&&!reported.some(m=>m.type==='categoryPageDone');i++){fakeNow+=12000;wake('ambiguous-bound');await new Promise(setImmediate);}
+assert.equal(reported.find(m=>m.type==='categoryPageDone')?.reason,'catalog_list_unavailable','persistent ambiguity must pause after its own bounded retries');
+assert.equal(ambiguousScrolls,0);
+reported.length=0;
+const loginDialog=makeEl();
+loginDialog.querySelector=()=>makeEl({text:'登录'});
+bg.document.querySelectorAll=selector=>selector.includes('role="dialog"')?[loginDialog]:[mainList];
+backgroundListener({type:'categoryScanStart',batchId:'hidden-b',attemptId:'login',categoryUrl:bg.location.href},{},()=>{});
+await new Promise(setImmediate);
+assert.equal(reported.at(-1).reason,'manual-verification');
+assert.equal(reported.at(-1).verificationDetail,'login_required');
 console.log('category scanner real-core synthetic DOM tests passed');

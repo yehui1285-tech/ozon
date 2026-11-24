@@ -4,7 +4,8 @@ let history = [], busy = false, refreshSequence = 0, actionRevision = 0, refresh
 const core=globalThis.OzonCategoryCore;
 const catalog=globalThis.OzonCategoryCatalog;
 let catalogData=null, treeSelection=null, confirmedSource='china', draftSelection=null, favorites=[], navPath=[];
-const labels={running:'运行中',paused:'已暂停',completed:'已完成',stopped:'已停止',pending:'待开始',loading:'打开页面',scanning:'扫描中',partial:'部分完成',failed:'失败',skipped:'已跳过'};
+const labels={running:'运行中',paused:'已暂停',completed:'已完成',stopped:'已停止',pending:'待开始',loading:'打开页面',scanning:'扫描中',partial:'部分完成',deferred:'待回查',failed:'失败',skipped:'已跳过'};
+const waitReasons={catalog_loading:'商品列表仍在加载',hidden_bottom:'页面在后台，列表底部尚未确认',scroll_stalled:'页面滚动暂时停滞',review_pending:'仍有商品字段待复查',list_ambiguous:'商品列表范围不明确',no_new_sku:'本轮尚未发现新商品'};
 const pageModes={foreground:'前台',background:'后台',waiting:'等待中',recovering:'恢复中'};
 const sourceInput=()=>document.querySelector('[name="catalogSource"]:checked');
 const sourceValue=()=>sourceInput()?.value||'china';
@@ -18,6 +19,21 @@ function send(message) {
   }));
 }
 function esc(value) { return String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function renderTaskCard(task,batch){
+  const status=task.status||'pending';
+  const reason=['deferred','partial','paused'].includes(status)||batch?.status==='paused'
+    ? waitReasons[task.waitReason]||task.error||task.message||task.note||(task.waitReason?'等待条件暂未分类':'')
+    : task.error||task.message||task.note;
+  const revisitCount=Math.max(0,Number(task.revisitCount)||0);
+  return `<article class="store">
+    <div class="store-top"><strong>${esc(task.name||task.label||task.url||'类目')}</strong><span>${esc(labels[status]||status||'等待')}</span></div>
+    <div class="store-url">${esc(task.pageUrl||task.url||'')}</div>
+    <div class="counts">已检查 ${Number(task.observedCount||0)} · 新候选 ${Number(task.qualifiedCount||0)} · 待复查 ${Number(task.pendingCount||0)}</div>
+    ${status==='deferred'?'<p class="store-reason">先扫待开始类目，再回查此项</p>':''}
+    ${revisitCount>0?`<p class="store-reason">自动回查 ${revisitCount}/1</p>`:''}
+    ${reason?`<p class="store-reason">${esc(reason)}</p>`:''}
+  </article>`;
+}
 const sourceName=source=>source==='china'?'中国专区':'普通 Ozon 类目';
 function pathFor(node,selection){const path=[];for(let n=node;n;n=selection.byId.get(n.parentId))path.unshift(n);return path}
 function displayPath(node,selection){return pathFor(node,selection).map(catalog.names).join(' / ')}
@@ -66,7 +82,9 @@ function render(batch, archive=history) {
   if(batch){const progressAt=formatTimestamp(batch.lastProgressAt),newSkuAt=formatTimestamp(batch.lastNewSkuAt);if(progressAt)summaryParts.push(`最近上报 ${progressAt}`);if(newSkuAt)summaryParts.push(`最近新增 SKU ${newSkuAt}`);if(batch.pageMode)summaryParts.push(`页面${pageModes[batch.pageMode]||'未知'}`)}
   $("summary").textContent=batch?summaryParts.join(' · '):"暂无类目批次";
   $("message").textContent = batch?.message || "";
-  $("batch").innerHTML = stores.length ? `<div class="store-list">${stores.map(s=>`<article class="store"><div class="store-top"><strong>${esc(s.name||s.label||s.url||"类目")}</strong><span>${esc(labels[s.status]||s.status||"等待")}</span></div><div class="store-url">${esc(s.pageUrl||s.url||"")}</div><div class="counts">已检查 ${Number(s.observedCount||0)} · 新候选 ${Number(s.qualifiedCount||0)} · 待复查 ${Number(s.pendingCount||0)}</div>${s.error||s.message||s.note?`<p class="store-reason">${esc(s.error||s.message||s.note)}</p>`:""}</article>`).join("")}</div>` : `<div class="empty">${batch ? "批次已建立，等待类目进度…" : "创建任务后，这里会显示每个类目的进度和结果。"}</div>`;
+  $("batch").innerHTML = stores.length
+    ? `<div class="store-list">${stores.map(task=>renderTaskCard(task,batch)).join('')}</div>`
+    : `<div class="empty">${batch ? "批次已建立，等待类目进度…" : "创建任务后，这里会显示每个类目的进度和结果。"}</div>`;
   const active = ["running","paused","scanning"].includes(batch?.status);
   const finishedBatch = ["completed","stopped","failed"].includes(batch?.status);
   $("start").disabled=busy||active;

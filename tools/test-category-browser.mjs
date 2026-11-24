@@ -40,6 +40,9 @@ try{
  await manager.evaluate(()=>{state.lastProgressAt='2026-11-24T10:20:30.000Z';state.lastNewSkuAt='2026-11-24T10:21:30.000Z';state.pageMode='background';for(const fn of changeListeners)fn({ozonCategoryBatchV1:{}},'local')});
  await manager.waitForFunction(()=>document.querySelector('#summary').textContent.includes('最近新增 SKU'));
  const progressSummary=await manager.locator('#summary').innerText();assert.match(progressSummary,/最近上报/);assert.match(progressSummary,/最近新增 SKU/);assert.match(progressSummary,/页面后台/);
+ await manager.evaluate(()=>{state.message='等待类目列表继续加载';state.stores[0]={...state.stores[0],status:'deferred',waitReason:'hidden_bottom',revisitCount:1};state.stores.push({url:'https://www.ozon.ru/category/queued-3456/',status:'pending',observedCount:0,qualifiedCount:0,pendingCount:0});for(const fn of changeListeners)fn({ozonCategoryBatchV1:{}},'local')});
+ await manager.getByText('待回查',{exact:true}).waitFor();assert.match(await manager.locator('.store-list').innerText(),/页面在后台，列表底部尚未确认/);assert.match(await manager.locator('.store-list').innerText(),/自动回查 1\/1/);assert.match(await manager.locator('.store-list').innerText(),/先扫待开始类目，再回查此项/);assert.doesNotMatch(await manager.locator('.store-list').innerText(),/首轮扫描|未开始类目会自动回查/);assert.equal(await manager.locator('#message').innerText(),'等待类目列表继续加载');
+ await manager.evaluate(()=>{state.stores[0]={...state.stores[0],waitReason:'unmapped_reason',note:'需人工复核的具体原因'};for(const fn of changeListeners)fn({ozonCategoryBatchV1:{}},'local')});assert.match(await manager.locator('.store-list').innerText(),/需人工复核的具体原因/);assert.doesNotMatch(await manager.locator('.store-list').innerText(),/unmapped_reason/);
  await manager.evaluate(()=>{holdNextGet=true;window.dispatchEvent(new Event('focus'))});
  await manager.waitForFunction(()=>getQueue.length===1);
  await manager.locator('#pause').click();assert.match(await manager.locator('#summary').innerText(),/已暂停/);
