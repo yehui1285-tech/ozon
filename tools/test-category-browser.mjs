@@ -6,8 +6,9 @@ import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {createRequire} from 'node:module';
 const require=createRequire(import.meta.url),{chromium}=require(process.env.OZON_PLAYWRIGHT_MODULE||'playwright');
-const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ozon-category-browser-'));
-execFileSync(process.execPath,['tools/build-standalone.mjs',dir],{stdio:'pipe'});
+const workbench=process.env.OZON_CATEGORY_EDITION==='workbench';
+const dir=workbench?path.resolve('ozon-erp-collector-extension'):fs.mkdtempSync(path.join(os.tmpdir(),'ozon-category-browser-'));
+if(!workbench)execFileSync(process.execPath,['tools/build-standalone.mjs',dir],{stdio:'pipe'});
 const browser=await chromium.launch({headless:true,...(process.env.OZON_BROWSER_PATH?{executablePath:process.env.OZON_BROWSER_PATH}:{})});
 try{
  const manager=await browser.newPage(),errors=[];manager.on('pageerror',e=>errors.push(e.message));
@@ -17,8 +18,9 @@ try{
   Object.defineProperty(window,'chrome',{configurable:true,value:{runtime:{sendMessage(m,cb){calls.push(m);if(m.type==='categoryGet')return cb({ok:true,batch:state,history:historyData});if(m.type==='categoryStart'){state={id:'category-fixture',status:'running',options:{targetCount:m.targetCount},stores:m.urls.map(url=>({url,status:'scanning',observedCount:0,qualifiedCount:0,pendingCount:0})),tabId:9};return cb({ok:true,batch:state})}if(m.type==='categoryPause'){state.status='paused';return cb({ok:true,batch:state})}if(m.type==='categoryResume'){state.status='running';return cb({ok:true,batch:state})}if(m.type==='categoryStop'){state.status='stopped';return cb({ok:true,batch:state})}if(m.type==='categoryDeleteBatch'){if(state?.id===m.batchId)state=null;else historyData=historyData.filter(x=>x.id!==m.batchId);return cb({ok:true,batch:state,history:historyData,message:'已删除所选本机类目批次'})}if(m.type==='categoryCleanupEmpty'){const before=historyData.length;historyData=historyData.filter(x=>Number(x.qualifiedCount||x.count||0)!==0);const currentEmpty=state&&['completed','stopped','failed'].includes(state.status)&&Number(state.qualifiedSkuIds?.length||0)===0&&state.stores.every(s=>Number(s.qualifiedCount||0)===0);if(currentEmpty)state=null;return cb({ok:true,batch:state,history:historyData,deletedCount:before-historyData.length+(currentEmpty?1:0),message:'已清理空批次'})}cb({ok:false,error:'unexpected'})}},storage:{local:{async get(k){return {[k]:favoriteStorage[k]}},async set(v){Object.assign(favoriteStorage,v)}},onChanged:{addListener(fn){changeListeners.push(fn)}}},tabs:{},windows:{}}});
  });
  await manager.goto('https://catalog-fixture.invalid/category.html');
- await manager.waitForFunction(()=>document.querySelectorAll('#catalogTree details').length>0);
- assert.equal(await manager.locator('#syncWorkbench').count(),0);
+ await manager.waitForFunction(()=>document.querySelector('#openCatalog')&&!document.querySelector('#openCatalog').disabled,{},{timeout:3000});
+ assert.equal(await manager.locator('#catalogDialog').isVisible(),false,'catalog is hidden until opened');
+ assert.equal(await manager.locator('#syncWorkbench').count(),workbench?1:0);
  assert.equal(await manager.locator('#deleteHistoryBatch').count(),1,'finished history batches have a dedicated delete action');
  assert.equal(await manager.locator('#cleanupEmptyBatches').count(),1,'empty finished batches can be cleaned in one action');
  await manager.locator('#urls').fill('https://www.ozon.ru/category/tools-1234/\nhttps://www.ozon.ru/category/car-2345/');
@@ -43,13 +45,33 @@ try{
  assert.equal(await manager.locator('#cleanupEmptyBatches').isDisabled(),true,'cleanup is disabled when no empty finished batches remain');
  // Select a whole China category as one task, persist a local named combination, and retain manual links.
  await manager.locator('#urls').fill('https://www.ozon.ru/category/car-8500/');
- await manager.locator('#catalogSource').selectOption('china');await manager.locator('#catalogSearch').fill('汽车用品');
- await manager.locator('#catalogTree label').filter({hasText:/^汽车用品$/}).first().locator('input').check();
- assert.match(await manager.locator('#catalogCount').innerText(),/已选 1/);
+ await manager.locator('#openCatalog').click();assert.equal(await manager.locator('#catalogDialog').isVisible(),true);
+ await manager.locator('#catalogSource').selectOption('china');
+ await manager.locator('#catalogLevel1').getByRole('button',{name:'汽车用品',exact:true}).click();
+ await manager.locator('#catalogLevel2').getByRole('button',{name:'汽车配件与用品',exact:true}).click();
+ assert.ok(await manager.locator('#catalogLevel3').getByRole('checkbox',{name:'汽车内饰',exact:true}).isVisible());
+ await manager.locator('#catalogSearch').fill('Автоаксессуары');assert.ok(await manager.locator('#catalogLevel2').getByRole('button',{name:'汽车配件与用品',exact:true}).isVisible());
+ await manager.locator('#catalogSearch').fill('汽车用品 / 汽车配件与用品 / 汽车内饰');assert.ok(await manager.locator('#catalogLevel3').getByRole('checkbox',{name:'汽车内饰',exact:true}).isVisible());
+ await manager.locator('#catalogLevel3').getByRole('checkbox',{name:'汽车内饰',exact:true}).check();
+ assert.match(await manager.locator('#catalogDraftCount').innerText(),/已选 1/);
+ assert.match(await manager.locator('#catalogDraftSelected').innerText(),/汽车用品.*汽车配件与用品.*汽车内饰/);
+ await manager.locator('#catalogSearch').fill('');
+ if(process.env.OZON_CATEGORY_PREVIEW){await manager.setViewportSize({width:1440,height:900});await manager.screenshot({path:process.env.OZON_CATEGORY_PREVIEW});}
+ await manager.setViewportSize({width:430,height:820});assert.ok(await manager.locator('#catalogDone').isVisible());assert.ok(await manager.locator('#catalogDialog').evaluate(el=>el.getBoundingClientRect().right<=innerWidth));await manager.setViewportSize({width:1280,height:720});
+ await manager.locator('#catalogCancel').click();assert.match(await manager.locator('#catalogCount').innerText(),/已选 0/);
+ await manager.locator('#openCatalog').click();await manager.locator('#catalogSource').selectOption('china');await manager.locator('#catalogSearch').fill('8500');
+ await manager.locator('#catalogLevel1').getByRole('checkbox',{name:'汽车用品',exact:true}).check();
+ assert.match(await manager.locator('#catalogDraftCount').innerText(),/已选 1/);
  await manager.locator('#favoriteName').fill('汽车组合');await manager.locator('#saveFavorite').click();
  await manager.waitForFunction(()=>document.querySelector('#favoriteSelect').options.length===2);
- await manager.locator('#catalogClear').click();assert.match(await manager.locator('#catalogCount').innerText(),/已选 0/);
- await manager.locator('#favoriteSelect').selectOption({index:1});await manager.locator('#loadFavorite').click();assert.match(await manager.locator('#catalogCount').innerText(),/已选 1/);
+ await manager.locator('#catalogClear').click();assert.match(await manager.locator('#catalogDraftCount').innerText(),/已选 0/);
+ await manager.locator('#favoriteSelect').selectOption({index:1});await manager.locator('#loadFavorite').click();assert.match(await manager.locator('#catalogDraftCount').innerText(),/已选 1/);
+ await manager.evaluate(()=>{document.getElementById('urls').value=Array.from({length:20},(_,i)=>`https://www.ozon.ru/category/demo-${20000+i}/`).join('\n')});
+ await manager.locator('#catalogDone').click();assert.equal(await manager.locator('#catalogDialog').isVisible(),true);assert.match(await manager.locator('#catalogFeedback').innerText(),/合计最多 20/);
+ await manager.evaluate(()=>{document.getElementById('urls').value='https://www.ozon.ru/category/car-8500/'});
+ await manager.locator('#catalogDone').click();assert.equal(await manager.locator('#catalogDialog').isVisible(),false);assert.match(await manager.locator('#catalogCount').innerText(),/已选 1/);
+ assert.match(await manager.locator('#catalogSelected').innerText(),/汽车用品/);
+ await manager.locator('#openCatalog').click();await manager.locator('#catalogSource').selectOption('ordinary');await manager.keyboard.press('Escape');assert.match(await manager.locator('#catalogCount').innerText(),/已选 1/);assert.match(await manager.locator('#catalogSourceLabel').innerText(),/中国专区/);
  assert.equal(await manager.locator('#urls').inputValue(),'https://www.ozon.ru/category/car-8500/');
  await manager.locator('#start').click();await manager.getByText('运行中',{exact:false}).first().waitFor();
  const treeRequest=await manager.evaluate(()=>calls.filter(m=>m.type==='categoryStart').at(-1));
@@ -143,5 +165,5 @@ try{
  await cn.evaluate(()=>{document.querySelector('.tsHeadline600Large').textContent='您可能喜欢';document.querySelector('[data-widget="infiniteVirtualPaginator"]').remove()});
  assert.equal((await chinaRead()).available,false,'recommendation-only page must not be scanned');
  assert.deepEqual(errors,[]);
- console.log('Isolated Chromium category manager and actual main-list card reading passed.');
+ console.log(`Isolated Chromium ${workbench?'workbench':'standalone'} category manager and actual main-list card reading passed.`);
 }finally{await browser.close()}

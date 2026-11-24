@@ -13,12 +13,21 @@
       <h2>新建类目任务</h2>
       <section class="catalog" aria-labelledby="catalogTitle">
         <div class="section-head"><h3 id="catalogTitle">类目目录</h3><span id="catalogCount">已选 0 / 20</span></div>
-        <label for="catalogSource">目录来源</label><select id="catalogSource"><option value="ordinary">普通 Ozon 类目</option><option value="china">中国专区</option></select>
-        <p class="catalog-note" id="catalogProvenance"></p>
-        <p class="catalog-note">勾选类目本身可扫描一个大类，展开可选择子类目；“选末级”将该分支下末级类目一起加入（最多 20 个）。</p>
-        <div class="catalog-tools"><input id="catalogSearch" type="search" placeholder="搜索中文或俄文类目" aria-label="搜索类目"><button id="catalogClear" type="button">清空树形选择</button></div>
-        <div id="catalogTree" class="catalog-tree" role="tree" aria-label="Ozon 类目树"></div>
-        <div class="favorite-tools"><input id="favoriteName" maxlength="40" placeholder="组合名称"><button id="saveFavorite" type="button">保存当前树形组合</button><select id="favoriteSelect" aria-label="本机保存的组合"><option value="">选择本机组合</option></select><button id="loadFavorite" type="button">载入</button><button id="deleteFavorite" type="button">删除</button></div>
+        <div class="catalog-launch"><button id="openCatalog" type="button" disabled>选择类目</button><span id="catalogSourceLabel">普通 Ozon 类目</span><span id="catalogLoadState" role="status">正在读取目录…</span></div>
+        <div id="catalogSelected" class="catalog-selected" aria-label="已确认类目"></div>
+        <dialog id="catalogDialog" class="catalog-dialog" aria-labelledby="catalogDialogTitle">
+          <div class="dialog-heading"><div><h2 id="catalogDialogTitle">选择类目</h2><p>点击名称向右展开；勾选任一级类目为一个扫描任务，不自动拆分下级。</p></div><button id="catalogDone" class="primary" type="button">完成选择</button></div>
+          <div class="catalog-tools"><label for="catalogSource">目录来源</label><select id="catalogSource"><option value="ordinary">普通 Ozon 类目</option><option value="china">中国专区</option></select><input id="catalogSearch" type="search" placeholder="搜索中文、俄文、类目编号或完整路径" aria-label="搜索类目"></div>
+          <div class="catalog-selection-status"><strong id="catalogDraftCount">已选 0 / 20</strong><span id="catalogFeedback" role="status" aria-live="polite"></span><button id="catalogClear" type="button">清空选择</button></div>
+          <div class="catalog-columns" aria-label="三级联动类目">
+            <section class="catalog-column"><div class="catalog-column-title"><strong>一级类目</strong></div><div class="catalog-level" id="catalogLevel1" aria-label="一级类目"></div></section>
+            <section class="catalog-column"><div class="catalog-column-title"><strong id="catalogTitle2">二级类目</strong><button id="catalogLeaves1" type="button" hidden>选末级</button></div><div class="catalog-level" id="catalogLevel2" aria-label="二级类目"></div></section>
+            <section class="catalog-column"><div class="catalog-column-title"><strong id="catalogTitle3">三级类目</strong><button id="catalogLeaves2" type="button" hidden>选末级</button></div><div class="catalog-level" id="catalogLevel3" aria-label="三级类目"></div></section>
+          </div>
+          <div class="catalog-picked"><strong>已选类目</strong><div id="catalogDraftSelected" class="catalog-selected" aria-label="本次选择的完整路径"></div></div>
+          <div class="favorite-tools"><input id="favoriteName" maxlength="40" placeholder="组合名称"><button id="saveFavorite" type="button">保存组合</button><select id="favoriteSelect" aria-label="本机保存的组合"><option value="">选择本机组合</option></select><button id="loadFavorite" type="button">载入</button><button id="deleteFavorite" type="button">删除组合</button></div>
+          <div class="dialog-footer"><p class="catalog-note" id="catalogProvenance"></p><button id="catalogCancel" type="button">取消</button></div>
+        </dialog>
       </section>
       <label for="urls">自定义类目链接（可选） <span>与所选类目合计最多 20 个</span></label>
       <textarea id="urls" rows="3" placeholder="https://www.ozon.ru/category/..."></textarea>

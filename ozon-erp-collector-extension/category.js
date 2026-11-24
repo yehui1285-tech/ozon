@@ -3,7 +3,7 @@ let state = null;
 let history = [], busy = false;
 const core=globalThis.OzonCategoryCore;
 const catalog=globalThis.OzonCategoryCatalog;
-let catalogData=null, treeSelection=null, treeNodes=new Map(), favorites=[], expandedTree=new Set();
+let catalogData=null, treeSelection=null, confirmedSource='ordinary', draftSelection=null, favorites=[], navPath=[];
 const labels={running:'运行中',paused:'已暂停',completed:'已完成',stopped:'已停止',pending:'待开始',loading:'打开页面',scanning:'扫描中',partial:'部分完成',failed:'失败',skipped:'已跳过'};
 function send(message) {
   return new Promise((resolve, reject) => chrome.runtime.sendMessage(message, response => {
@@ -13,21 +13,41 @@ function send(message) {
   }));
 }
 function esc(value) { return String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
-function selectedCount(){return treeSelection?.selected.size||0}
-function syncCatalogUrls(){ $('catalogCount').textContent=`树形已选 ${selectedCount()} / ${catalog.MAX}；手动链接会在开始时合并` }
-function renderTree(){
-  if(!treeSelection)return;
-  const query=$('catalogSearch').value.trim().toLocaleLowerCase();
-  const isVisible=n=>!query||catalog.names(n).toLocaleLowerCase().includes(query)||n.nameRu.toLocaleLowerCase().includes(query)||n.children.some(isVisible);
-  function row(n,depth=0){if(!isVisible(n))return '';const checked=treeSelection.selected.has(n.id);const expanded=!!query||expandedTree.has(n.id);return `<div class="tree-row" role="treeitem" aria-level="${depth+1}"><span class="tree-indent" style="--depth:${depth}"></span>${n.children.length?`<details data-node="${esc(n.id)}" ${expanded?'open':''}><summary>${esc(catalog.names(n))}${checked?' · 已选':''}</summary><div class="tree-child">${checkbox(n,checked)}<button type="button" class="tree-branch" data-branch="${esc(n.id)}">选末级</button>${n.children.map(c=>row(c,depth+1)).join('')}</div></details>`:checkbox(n,checked)}</div>`}
-  function checkbox(n,checked){return `<label class="tree-choice"><input type="checkbox" data-id="${esc(n.id)}" ${checked?'checked':''}><span>${esc(catalog.names(n))}</span></label>`}
-  $('catalogTree').innerHTML=treeSelection.roots.map(n=>row(n)).join('')||'<div class="empty">没有匹配的类目。</div>';
-  $('catalogTree').querySelectorAll('details[data-node]').forEach(d=>d.addEventListener('toggle',()=>{if(!query){if(d.open)expandedTree.add(d.dataset.node);else expandedTree.delete(d.dataset.node)}}));
-  $('catalogTree').querySelectorAll('input[data-id]').forEach(input=>input.addEventListener('change',()=>{const node=treeNodes.get(input.dataset.id);try{treeSelection.toggle(node,input.checked);renderTree()}catch(e){input.checked=false;$('message').textContent=e.message}}));
-  $('catalogTree').querySelectorAll('button[data-branch]').forEach(button=>button.addEventListener('click',()=>{try{treeSelection.addLeaves(treeNodes.get(button.dataset.branch));renderTree()}catch(e){$('message').textContent=e.message}}));syncCatalogUrls();
+const sourceName=source=>source==='china'?'中国专区':'普通 Ozon 类目';
+function pathFor(node,selection){const path=[];for(let n=node;n;n=selection.byId.get(n.parentId))path.unshift(n);return path}
+function displayPath(node,selection){return pathFor(node,selection).map(catalog.names).join(' / ')}
+function newSelection(source,ids=[]){const selection=catalog.makeSelection(catalogData[source]||[]);let missing=0;for(const id of ids){const node=selection.byId.get(id);if(node)selection.add(node);else missing++}return {selection,missing}}
+function setDraft(source,ids=[]){const result=newSelection(source,ids);draftSelection=result.selection;$('catalogSource').value=source;navPath=[];$('catalogSearch').value='';const first=[...draftSelection.selected.values()][0];if(first)navPath=pathFor(first,draftSelection).map(n=>n.id);return result.missing}
+function selectedCount(selection=treeSelection){return selection?.selected.size||0}
+function renderSelected(container,selection,remove){const items=[...(selection?.selected.values()||[])];container.innerHTML=items.length?items.map(n=>`<span class="catalog-chip"><span title="${esc(displayPath(n,selection))}">${esc(displayPath(n,selection))}</span><button type="button" data-remove="${esc(n.id)}" aria-label="移除 ${esc(displayPath(n,selection))}">×</button></span>`).join(''):'<span class="catalog-muted">尚未选择类目</span>';container.querySelectorAll('[data-remove]').forEach(btn=>btn.onclick=()=>remove(selection.byId.get(btn.dataset.remove)))}
+function syncCatalogUrls(){ $('catalogCount').textContent=`已选 ${selectedCount()} / ${catalog.MAX}`;$('catalogSourceLabel').textContent=sourceName(confirmedSource);renderSelected($('catalogSelected'),treeSelection,node=>{treeSelection.remove(node);syncCatalogUrls()}) }
+function normalizeSearch(s){return String(s||'').trim().toLocaleLowerCase().replace(/\s*(?:[>›/→]+)\s*/g,'/')}
+function categoryNumber(n){try{const u=new URL(n.url);return u.searchParams.get('category')||u.pathname.match(/-(\d+)\/?$/)?.[1]||''}catch{return ''}}
+function nodeMatch(n,query){const path=pathFor(n,draftSelection);return [catalog.names(n),n.nameRu,categoryNumber(n),n.id,path.map(catalog.names).join('/'),path.map(p=>p.nameRu).join('/'),path.map(categoryNumber).join('/')].some(value=>normalizeSearch(value).includes(query))}
+function renderPicker(resetFrom=4){
+  if(!draftSelection)return;
+  const query=normalizeSearch($('catalogSearch').value);const visible=new Set();
+  function visit(n){const child=n.children.map(visit).some(Boolean),match=!query||nodeMatch(n,query)||child;if(match)visible.add(n.id);return match}
+  draftSelection.roots.forEach(visit);
+  const roots=draftSelection.roots.filter(n=>visible.has(n.id));
+  const root=roots.find(n=>n.id===navPath[0]);const second=(root?.children||[]).find(n=>n.id===navPath[1]&&visible.has(n.id));
+  if(!root)navPath=[];else if(!second)navPath=[root.id];
+  const lists=[roots,(root?.children||[]).filter(n=>visible.has(n.id)),(second?.children||[]).filter(n=>visible.has(n.id))];
+  $('catalogTitle2').textContent=root?catalog.names(root):'二级类目';$('catalogTitle3').textContent=second?catalog.names(second):'三级类目';
+  $('catalogLeaves1').hidden=!root?.children.length;$('catalogLeaves2').hidden=!second?.children.length;
+  const focused=document.activeElement,focusId=focused?.dataset?.check||focused?.dataset?.nav,focusKey=focused?.dataset?.check?'check':'nav';
+  lists.forEach((nodes,i)=>{const level=i+1,box=$('catalogLevel'+level),scroll=level<resetFrom?box.scrollTop:0;
+    box.innerHTML=nodes.length?nodes.map(n=>{const checked=draftSelection.selected.has(n.id),active=navPath[i]===n.id;return `<div class="catalog-row${active?' active':''}${checked?' checked':''}"><input type="checkbox" data-check="${esc(n.id)}" aria-label="${esc(catalog.names(n))}" ${checked?'checked':''}><button type="button" class="catalog-node" data-nav="${esc(n.id)}" aria-pressed="${active}" title="${esc(displayPath(n,draftSelection))} · ${esc(n.nameRu)}"><span>${esc(catalog.names(n))}</span>${n.children.length?'<span class="catalog-chevron" aria-hidden="true">›</span>':''}</button></div>`}).join(''):`<div class="catalog-empty">${level===1?'没有匹配的类目':level===2&&!root?'点击左侧一级类目名称':level===3&&!second?'点击左侧二级类目名称':'没有下级类目'}</div>`;
+    box.scrollTop=scroll;
+    box.querySelectorAll('[data-nav]').forEach(btn=>btn.onclick=()=>{const node=draftSelection.byId.get(btn.dataset.nav);navPath=pathFor(node,draftSelection).map(n=>n.id);renderPicker(level+1)});
+    box.querySelectorAll('[data-check]').forEach(input=>input.onchange=()=>{try{draftSelection.toggle(draftSelection.byId.get(input.dataset.check),input.checked);$('catalogFeedback').textContent='';renderPicker()}catch(e){input.checked=false;$('catalogFeedback').textContent=e.message}});
+    if(focusId){const target=[...box.querySelectorAll(`[data-${focusKey}]`)].find(el=>el.dataset[focusKey]===focusId);target?.focus({preventScroll:true})}
+  });
+  $('catalogDraftCount').textContent=`已选 ${selectedCount(draftSelection)} / ${catalog.MAX}`;
+  renderSelected($('catalogDraftSelected'),draftSelection,node=>{draftSelection.remove(node);$('catalogFeedback').textContent='';renderPicker()});
 }
-async function loadCatalog(){try{const response=await fetch('category-catalog.json');catalogData=await response.json();$('catalogProvenance').textContent=catalogData.provenance?.note||'本机类目快照';initCatalog();}catch(e){$('catalogProvenance').textContent='类目目录无法读取，请重载扩展后重试。';$('message').textContent=e.message}}
-function initCatalog(){if(!catalogData)return;const source=$('catalogSource').value;const nodes=catalogData[source]||[];treeSelection=catalog.makeSelection(nodes);treeNodes=treeSelection.byId;expandedTree=new Set();renderTree()}
+function searchPicker(){const query=normalizeSearch($('catalogSearch').value);if(query){const nodes=[...draftSelection.byId.values()];const first=nodes.find(n=>normalizeSearch(categoryNumber(n))===query)||nodes.find(n=>nodeMatch(n,query));navPath=first?pathFor(first,draftSelection).map(n=>n.id):[]}renderPicker(1)}
+async function loadCatalog(){try{const response=await fetch('category-catalog.json');if(!response.ok)throw Error('类目目录无法读取');catalogData=await response.json();$('catalogProvenance').textContent=catalogData.provenance?.note||'本机类目快照';treeSelection=newSelection(confirmedSource).selection;syncCatalogUrls();$('openCatalog').disabled=false;$('catalogLoadState').textContent='选择后可直接开始扫描'}catch(e){$('catalogLoadState').textContent='类目目录无法读取，请重载扩展后重试。';$('message').textContent=e.message}}
 async function refreshFavorites(){favorites=await catalog.readFavorites();const select=$('favoriteSelect');const keep=select.value;select.replaceChildren(new Option('选择本机组合',''),...favorites.map(f=>new Option(`${f.name} · ${f.source==='china'?'中国专区':'普通 Ozon'}`,f.id)));if(favorites.some(f=>f.id===keep))select.value=keep}
 function categoryLabels(){const labels={};for(const n of treeSelection?.selected.values()||[])labels[core.normalizeUrl(n.url)]=catalog.names(n).slice(0,120);return labels}
 function render(batch, archive=history) {
@@ -78,11 +98,17 @@ async function exportCsv(batchId){try{const r=await send({type:'categoryExport',
 $("exportBatch").onclick=()=>exportCsv(state?.id);$("exportHistoryBatch").onclick=()=>exportCsv($("historyBatch").value);
 $("openScanTab").onclick=async()=>{try{if(!Number.isInteger(state?.tabId))return;const tab=await chrome.tabs.get(state.tabId);if(!tab)throw Error('采集页面已关闭');await chrome.tabs.update(tab.id,{active:true});if(tab.windowId!=null)await chrome.windows.update(tab.windowId,{focused:true});}catch(e){$("message").textContent=e.message}};
 chrome.storage.onChanged.addListener((changes,area)=>{if(area==='local'&&(changes.ozonCategoryBatchV1||changes.ozonCategoryBatchHistoryV1))void refresh()});
-// Tree selection is independent until Start is pressed; switching sources preserves manual links.
-$('catalogSource').onchange=()=>{initCatalog();$('message').textContent='已切换目录来源；手动链接保持不变。'};
-$('catalogSearch').oninput=renderTree;$('catalogClear').onclick=()=>{treeSelection?.clear();renderTree()};
-$('saveFavorite').onclick=async()=>{const name=$('favoriteName').value.trim();if(!name){$('message').textContent='请先填写组合名称。';return}if(!selectedCount()){ $('message').textContent='请选择至少一个目录类目。';return}favorites=await catalog.readFavorites();const item={id:crypto.randomUUID(),name,source:$('catalogSource').value,ids:[...treeSelection.selected.keys()]};favorites=[...favorites.filter(f=>f.name!==name||f.source!==item.source),item].slice(-30);await catalog.writeFavorites(favorites);await refreshFavorites();$('message').textContent=`已保存“${name}”到本机。`};
-$('loadFavorite').onclick=()=>{const f=favorites.find(x=>x.id===$('favoriteSelect').value);if(!f||!catalogData)return;if(f.source!==$('catalogSource').value){$('catalogSource').value=f.source;initCatalog()}try{treeSelection.clear();let missing=0;for(const id of f.ids){const node=treeNodes.get(id);if(node&&!treeSelection.selected.has(id)){treeSelection.add(node);for(let p=node;p;p=treeNodes.get(p.parentId))expandedTree.add(p.id)}else if(!node)missing++}renderTree();$('message').textContent=`已载入“${f.name}”${missing?`，${missing} 项已不在目录中需复核`:''}。`}catch(e){treeSelection.clear();renderTree();$('message').textContent=`组合超过当前上限，未载入：${e.message}`}};
-$('deleteFavorite').onclick=async()=>{const id=$('favoriteSelect').value;if(!id)return;await catalog.writeFavorites(favorites.filter(f=>f.id!==id));await refreshFavorites();$('message').textContent='已删除本机组合。'};
+// Modal selection is a draft. Completing applies it; cancel/Escape leaves the
+// previous committed source and selection and all manual links untouched.
+const dialog=$('catalogDialog'),feedback=$('catalogFeedback');
+$('openCatalog').onclick=()=>{if(!catalogData||dialog.open)return;setDraft(confirmedSource,[...(treeSelection?.selected.keys()||[])]);feedback.textContent='';dialog.showModal();renderPicker(1);$('catalogSearch').focus()};
+$('catalogCancel').onclick=()=>dialog.close();dialog.addEventListener('close',()=>{draftSelection=null;navPath=[];$('openCatalog').focus()});
+$('catalogDone').onclick=()=>{if(!draftSelection)return;const combined=core.parseUrls([...$('urls').value.split(/\r?\n/),...draftSelection.urls()]);if(combined.overflowCount){feedback.textContent='与手动链接合计最多 20 个类目，请减少选择后再完成。';return}treeSelection=draftSelection;confirmedSource=$('catalogSource').value;syncCatalogUrls();dialog.close()};
+$('catalogSource').onchange=()=>{const had=selectedCount(draftSelection)>0;setDraft($('catalogSource').value);feedback.textContent=had?'已切换目录，本次原选择已清空；取消可保留此前确认结果。':'已切换目录；手动链接保持不变。';renderPicker(1)};
+$('catalogSearch').oninput=searchPicker;$('catalogClear').onclick=()=>{draftSelection?.clear();feedback.textContent='';renderPicker()};
+for(const [id,depth] of [['catalogLeaves1',0],['catalogLeaves2',1]])$(id).onclick=()=>{const node=draftSelection?.byId.get(navPath[depth]);if(!node)return;try{draftSelection.addLeaves(node);feedback.textContent='';renderPicker()}catch(e){feedback.textContent=e.message}};
+$('saveFavorite').onclick=async()=>{const name=$('favoriteName').value.trim();if(!name){feedback.textContent='请先填写组合名称。';return}if(!selectedCount(draftSelection)){feedback.textContent='请选择至少一个目录类目。';return}const item={id:crypto.randomUUID(),name,source:$('catalogSource').value,ids:[...draftSelection.selected.keys()]};try{favorites=await catalog.readFavorites();favorites=[...favorites.filter(f=>f.name!==name||f.source!==item.source),item].slice(-30);await catalog.writeFavorites(favorites);await refreshFavorites();feedback.textContent=`已保存“${name}”到本机。`}catch(e){feedback.textContent=e.message}};
+$('loadFavorite').onclick=()=>{const f=favorites.find(x=>x.id===$('favoriteSelect').value);if(!f||!catalogData)return;try{const missing=setDraft(f.source,f.ids);renderPicker(1);feedback.textContent=`已载入“${f.name}”${missing?`，${missing} 项已不在目录中需复核`:''}。`}catch(e){feedback.textContent=`组合未载入：${e.message}`}};
+$('deleteFavorite').onclick=async()=>{const id=$('favoriteSelect').value;if(!id)return;try{await catalog.writeFavorites(favorites.filter(f=>f.id!==id));await refreshFavorites();feedback.textContent='已删除本机组合。'}catch(e){feedback.textContent=e.message}};
 void refreshFavorites();void loadCatalog();
 void refresh();
