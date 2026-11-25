@@ -42,8 +42,9 @@ function updateFile(relativePath, prefix, values, indent) {
   const arrayStart = text.indexOf("[", start + prefix.length);
   const arrayEnd = findArrayEnd(text, arrayStart);
   const current = text.slice(start, arrayEnd + 1);
-  const next = generatedBlock(prefix, values, indent);
-  if (current === next) return false;
+  const eol = text.includes("\r\n") ? "\r\n" : "\n";
+  const next = generatedBlock(prefix, values, indent).replace(/\n/g, eol);
+  if (current.replace(/\r\n/g, "\n") === next.replace(/\r\n/g, "\n")) return false;
   if (checkOnly) throw new Error(`${relativePath} 的运费规则未与 shared/freight-rules.json 同步`);
   fs.writeFileSync(file, text.slice(0, start) + next + text.slice(arrayEnd + 1), "utf8");
   return true;

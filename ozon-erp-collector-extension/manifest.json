@@ -9,8 +9,7 @@
     "activeTab",
     "tabs",
     "scripting",
-    "alarms",
-    "debugger"
+    "alarms"
   ],
   "host_permissions": [
     "https://www.ozon.ru/*",

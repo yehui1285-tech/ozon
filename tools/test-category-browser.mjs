@@ -33,6 +33,7 @@ try{
  assert.equal(await manager.locator('#deleteHistoryBatch').count(),1,'finished history batches have a dedicated delete action');
  assert.equal(await manager.locator('#cleanupEmptyBatches').count(),1,'empty finished batches can be cleaned in one action');
  assert.equal(await manager.locator('#pageMinRub').count(),1,'native Ozon minimum RUB field is available');assert.equal(await manager.locator('#pageMaxRub').count(),1,'native Ozon maximum RUB field is available');
+ assert.equal(await manager.locator('#backgroundExperiment').isDisabled(),true,'unsupported debugger experiment is visibly disabled');assert.match(await manager.locator('.notice').allInnerTexts().then(x=>x.join(' ')),/试验模式已停用/,'management UI explains the unavailable experiment');
  await manager.locator('#urls').fill('https://www.ozon.ru/category/tools-1234/\nhttps://www.ozon.ru/category/car-2345/');
  await manager.locator('#targetCount').fill('3');await manager.locator('#minPrice').fill('20');
  await manager.locator('#pageMinRub').fill('1000');await manager.locator('#start').click();assert.match(await manager.locator('#message').innerText(),/同时填写/,'a one-sided RUB range is rejected');assert.equal(await manager.evaluate(()=>calls.filter(m=>m.type==='categoryStart').length),0);
@@ -59,9 +60,8 @@ try{
  await manager.locator('#pause').click();assert.match(await manager.locator('#summary').innerText(),/已暂停/);
  await manager.evaluate(()=>getQueue.shift()({ok:true,batch:{...state,status:'running',lastProgressAt:'2026-11-24T10:19:00.000Z'},history:historyData}));
  await manager.waitForTimeout(50);assert.match(await manager.locator('#summary').innerText(),/已暂停/,'a stale poll cannot overwrite the completed user action');
- await manager.locator('#backgroundExperiment').check();
  await manager.locator('#resume').click();
- const resumeRequest=await manager.evaluate(()=>calls.filter(m=>m.type==='categoryResume').at(-1));assert.equal(resumeRequest.backgroundExperiment,true,'paused batch can opt into background activity');
+ const resumeRequest=await manager.evaluate(()=>calls.filter(m=>m.type==='categoryResume').at(-1));assert.equal(resumeRequest.backgroundExperiment,false,'UI cannot request the unavailable experiment');
  const request=await manager.evaluate(()=>calls.find(m=>m.type==='categoryStart'));assert.equal(request.targetCount,3);assert.equal(request.minPrice,20);assert.equal(request.pageMinRub,1000);assert.equal(request.pageMaxRub,5000);assert.equal(request.urls.length,2);assert.equal(request.backgroundExperiment,false);assert.match(await manager.locator('#summary').innerText(),/页面筛选 1000–5000 ₽/,'batch summary shows configured page filter');
  await manager.evaluate(()=>{state.stores[0].pagePriceStatus='unconfirmed';for(const fn of changeListeners)fn({ozonCategoryBatchV1:{}},'local')});assert.match(await manager.locator('.store-list').innerText(),/页面价格筛选未确认/,'task card surfaces an unconfirmed page filter state');
  await manager.evaluate(()=>{Object.assign(state.stores[0],{discoveredCount:100,erpReadyCount:60,labelHitCount:4});for(const fn of changeListeners)fn({ozonCategoryBatchV1:{}},'local')});

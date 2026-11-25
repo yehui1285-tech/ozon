@@ -5,7 +5,9 @@ import vm from "node:vm";
 const data = {}, sessionData={}, alarms=new Map();
 let created = [], reloads=0, sentMessages=[], debuggerCommands=[], debuggerAttached=new Set(), debuggerDetachListener=null, nextTabId=71, nextWindowId=9, windowFocused=false, tickMode='running';
 const storage = { async get(k) { return k ? { ...(data[k] ? { [k]: data[k] } : {}) } : { ...data }; }, async set(v) { Object.assign(data, v); }, async remove(k) { for (const key of Array.isArray(k) ? k : [k]) delete data[key]; } };
+let declaredDebugger=true;
 const chrome = {
+  runtime:{getManifest:()=>({version:'0.6.69',permissions:declaredDebugger?['debugger']:[]})},
   storage: { local: storage,session:{async get(k){return {[k]:sessionData[k]}},async set(v){Object.assign(sessionData,v)},async remove(k){delete sessionData[k]}} },
   alarms:{async get(n){return alarms.get(n)},async create(n,o){alarms.set(n,o)},async clear(n){alarms.delete(n)}},
   tabs: {
@@ -405,5 +407,21 @@ created.find(t=>t.id===batch.tabId).url=rch;
 await runner.onUpdated(batch.tabId,{status:'complete',url:rch},{url:rch});
 batch=(await runner.handle({type:'categoryGet'})).batch;
 assert.equal(batch.status,'paused');assert.equal(batch.stores[0].pagePriceStatus,'unconfirmed');assert.match(batch.message,/价格/);
+await runner.handle({type:'categoryStop'});
+// Chrome's official manifest cannot grant debugger access optionally. Even a
+// stale API object or previously enabled batch must not use experiment mode.
+declaredDebugger=false;
+const previousDebuggerCalls=debuggerCommands.length;
+await runner.handle({type:'categoryStart',urls:[rn],targetCount:2,backgroundExperiment:true,confirmArchiveOverflow:true});
+batch=(await runner.handle({type:'categoryGet'})).batch;
+assert.equal(batch.status,'running','unavailable experiment does not interrupt scanning');
+assert.equal(batch.activityStatus,'unavailable','the attempted experiment reports its unavailable status');
+assert.equal(batch.backgroundExperiment,false,'unavailable mode must use ordinary scanner visibility semantics');
+assert.equal(debuggerAttached.has(batch.tabId),false,'no debugger is attached to the downgraded task when Chrome provides no debugger permission');
+assert.equal(debuggerCommands.length,previousDebuggerCalls,'a stale API object is not authorization');
+assert.ok(sentMessages.some(x=>x.message.type==='categoryScanStart'),'ordinary scanner starts after experiment downgrade');
+await runner.handle({type:'categoryPause'});data.ozonCategoryBatchV1.backgroundExperiment=true;
+await runner.handle({type:'categoryResume'});batch=(await runner.handle({type:'categoryGet'})).batch;
+assert.equal(batch.backgroundExperiment,false,'legacy persisted experiment setting downgrades on resume');
 await runner.handle({type:'categoryStop'});
 console.log("category background runner tests passed");

@@ -88,7 +88,7 @@ async function refreshFavorites(){favorites=await catalog.readFavorites();const 
 function categoryLabels(){const labels={};for(const n of treeSelection?.selected.values()||[])labels[core.normalizeUrl(n.url)]=catalog.names(n).slice(0,120);return labels}
 function render(batch, archive=history) {
   const expandedDiagnostics=batch?.id===state?.id?new Set([...$('batch').querySelectorAll('.diagnostic[open]')].map(item=>item.dataset.categoryKey)):new Set();
-  if(batch?.id!==state?.id||batch?.status==='running') $("backgroundExperiment").checked=batch?.backgroundExperiment===true;
+  $("backgroundExperiment").checked=false;
   state = batch || null;
   history=Array.isArray(archive)?archive:[];
   const stores = Array.isArray(batch?.stores) ? batch.stores : [];
@@ -137,7 +137,7 @@ function render(batch, archive=history) {
     void perform({type,batchId:state.id,sellerKey,...(action==='resume'?{backgroundExperiment:$('backgroundExperiment').checked}:{})});
   });
   $("start").disabled=busy||active;
-  $("backgroundExperiment").disabled=busy||batch?.status==='running'||batch?.status==='scanning';
+  $("backgroundExperiment").disabled=true;
   $("pause").disabled = busy||!active || batch.status === "paused";
   $("resume").disabled = busy||batch?.status !== "paused";
   $("stop").disabled = busy||!active;

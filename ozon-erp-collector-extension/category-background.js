@@ -47,7 +47,18 @@
       return {tabStatus:tab.status||'unknown',frozen:known(tab.frozen),discarded:known(tab.discarded),tabActive:known(tab.active),windowFocused:known(win?.focused),pageReportedHidden:typeof pageReportedHidden==='boolean'?pageReportedHidden:previous.pageReportedHidden??null,pageFocused:typeof pageFocused==='boolean'?pageFocused:previous.pageFocused??null,pageReportedAt:typeof pageReportedHidden==='boolean'?now():previous.pageReportedAt||null,checkedAt:now()};
     } catch{return null;}
   }
-  async function read() { return (await chrome.storage.local.get(KEY))[KEY] || null; }
+  // Chrome does not support requesting debugger as an optional permission.
+  // The trial code is retained but this release declares no debugger access.
+  // Downgrade legacy stored flags even if a stale API object is exposed.
+  function reconcileExperiment(batch){
+    if(batch?.backgroundExperiment&&(!chrome.runtime?.getManifest?.().permissions?.includes('debugger')||!chrome.debugger?.attach||!chrome.debugger?.sendCommand)){
+      batch.backgroundExperiment=false;
+      batch.activityStatus='unavailable';
+      batch.experimentMessage='当前版本不具备调试权限，使用普通后台扫描';
+    }
+    return batch;
+  }
+  async function read() { return reconcileExperiment((await chrome.storage.local.get(KEY))[KEY] || null); }
   async function protectTab(tabId){
     if(!Number.isInteger(tabId)||!chrome.storage.session?.get)return;
     try{const stored=await chrome.storage.session.get(PROTECTION_KEY),record=stored[PROTECTION_KEY]||{};const tab=await chrome.tabs.get(tabId);if(!Object.hasOwn(record,tabId)){record[tabId]=tab.autoDiscardable!==false;await chrome.storage.session.set({[PROTECTION_KEY]:record})}if(tab.autoDiscardable!==false)await chrome.tabs.update(tabId,{autoDiscardable:false})}catch{}
@@ -63,6 +74,7 @@
     try { await chrome.debugger.detach({tabId}); } catch {}
   }
   async function enableFocusExperiment(batch) {
+    reconcileExperiment(batch);
     if (!batch?.backgroundExperiment || !Number.isInteger(batch.tabId)) return;
     if (experimentDebuggerTabId===batch.tabId) return;
     if (!chrome.debugger?.attach || !chrome.debugger?.sendCommand) { batch.activityStatus='unavailable'; return; }
@@ -101,7 +113,7 @@
     if (win?.tabs?.[0]) return win.tabs[0];
     return chrome.tabs.create({url,active:false});
   }
-  async function save(batch) { batch.updatedAt = now();await chrome.storage.local.set({[KEY]:batch});if(batch.status==='running'){const alarm=await chrome.alarms?.get?.(ALARM);if(!alarm||alarm.periodInMinutes!==0.5)await chrome.alarms?.create?.(ALARM,{periodInMinutes:0.5})}else{await chrome.alarms?.clear?.(ALARM);if(experimentDebuggerTabId===batch.tabId&&batch.activityStatus==='focus-emulation-enabled')batch.activityStatus='focus-emulation-released';await releaseFocusExperiment(batch.tabId);await releaseTab(batch.tabId);await chrome.storage.local.set({[KEY]:batch})}return batch; }
+  async function save(batch) { reconcileExperiment(batch);batch.updatedAt = now();await chrome.storage.local.set({[KEY]:batch});if(batch.status==='running'){const alarm=await chrome.alarms?.get?.(ALARM);if(!alarm||alarm.periodInMinutes!==0.5)await chrome.alarms?.create?.(ALARM,{periodInMinutes:0.5})}else{await chrome.alarms?.clear?.(ALARM);if(experimentDebuggerTabId===batch.tabId&&batch.activityStatus==='focus-emulation-enabled')batch.activityStatus='focus-emulation-released';await releaseFocusExperiment(batch.tabId);await releaseTab(batch.tabId);await chrome.storage.local.set({[KEY]:batch})}return batch; }
   function bounded(promise,ms=MESSAGE_TIMEOUT_MS){let timer;return Promise.race([promise,new Promise(resolve=>{timer=setTimeout(()=>resolve(null),ms)})]).finally(()=>clearTimeout(timer))}
   function phase(batch,mode,message){batch.pageMode=mode;batch.message=message;return batch}
   async function waitStatus(batch,message){if(batch.pageMode!=='waiting'||batch.message!==message){phase(batch,'waiting',message);await save(batch)}}

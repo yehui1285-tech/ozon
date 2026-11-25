@@ -9,6 +9,8 @@ execFileSync(process.execPath,["tools/build-standalone.mjs",dir],{stdio:"pipe"})
 const read=name=>fs.readFileSync(path.join(dir,name),"utf8");
 const manifest=JSON.parse(read("manifest.json"));
 assert.equal(manifest.name,"OZON 独立选品助手");
+assert.ok(!manifest.permissions.includes("debugger"),"standalone build does not request debugger access by default");
+assert.ok(!manifest.optional_permissions?.includes("debugger"),"unsupported debugger optional permission is not declared");
 assert.ok(!fs.existsSync(path.join(dir,"workbench-bridge.js")));
 assert.ok(!manifest.host_permissions.some(url=>url.includes("yehui1285")));
 for(const name of fs.readdirSync(dir)){

@@ -6,7 +6,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dest = process.argv[2] && path.resolve(process.argv[2]);
 if (!dest || !fs.existsSync(dest) || fs.readdirSync(dest).length) throw new Error("Specify an empty output directory");
 const extension = path.join(root, "ozon-erp-collector-extension");
-const read = name => fs.readFileSync(path.join(extension, name), "utf8");
+const read = name => fs.readFileSync(path.join(extension, name), "utf8").replace(/\r\n/g, "\n");
 const write = (name, text) => fs.writeFileSync(path.join(dest, name), text, "utf8");
 const replace = (text, before, after) => {
   if (!text.includes(before)) throw new Error("Standalone source anchor missing: " + before.slice(0, 80));
@@ -67,7 +67,7 @@ let category = read("category.html").replace(/<button id="syncWorkbench">[^<]+<\
 write("category.html",withLocalNav(category,"category.html",'<main class="shell">'));
 
 // Reuse the exact local pricing code and freight rules; extension pages need external JS under MV3 CSP.
-const web = name => fs.readFileSync(path.join(root,"web-src",name),"utf8");
+const web = name => fs.readFileSync(path.join(root,"web-src",name),"utf8").replace(/\r\n/g, "\n");
 let html = web("index.template.html");
 html = replace(html, "<style>\n__OZON_STYLES__\n</style>", '<link rel="stylesheet" href="pricing.css">');
 html = replace(html, "<script>\n__OZON_APP__\n</script>", '<script src="pricing-core.js"></script><script src="quick-pricing-core.js"></script><script src="pricing-app.js"></script>');

@@ -5,6 +5,10 @@ Push-Location $root
 try {
   node tools/sync-freight-rules.mjs --check
   node tools/build-web.mjs --check
+  node tools/test-build-eol.mjs
+  if ($LASTEXITCODE -ne 0) { throw "Build line-ending regression failed" }
+  node tools/test-workbench-core-sync.mjs
+  if ($LASTEXITCODE -ne 0) { throw "Workbench shared core gate failed" }
   node tools/test-freight-rules.mjs
   node tools/test-commission-rules.mjs
   node tools/test-black-price.mjs
