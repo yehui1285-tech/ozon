@@ -135,4 +135,27 @@ backgroundListener({type:'categoryScanStart',batchId:'hidden-b',attemptId:'login
 await new Promise(setImmediate);
 assert.equal(reported.at(-1).reason,'manual-verification');
 assert.equal(reported.at(-1).verificationDetail,'login_required');
+// Real Ozon filter labels and controls in the same price group; currency is
+// explicit, never inferred from a product or a different sidebar field.
+const lo=makeEl({tag:'INPUT'}),hi=makeEl({tag:'INPUT'}),radio=makeEl({tag:'INPUT'});
+lo.value='500';hi.value='2\u202f500';
+const priceGroup=makeEl({text:'价格\n到250 ₽\n500–2 500 ₽\n不重要',children:[lo,hi,radio]});
+priceGroup.querySelectorAll=selector=>selector.includes('input[type="radio"]')?[radio]:selector.includes('input[type="text"]')?[lo,hi]:[];
+const priceDocument={querySelectorAll:selector=>selector.includes('input[type="text"]')?[lo,hi]:[]};
+const range={pageMinRub:500,pageMaxRub:2500};
+assert.equal(context.OzonCategoryScanner.confirmRubPrice(priceDocument,range),true);
+hi.value='3 000';assert.equal(context.OzonCategoryScanner.confirmRubPrice(priceDocument,range),false);
+hi.value='2500';priceGroup.innerText='价格\n500–2500 ¥';assert.equal(context.OzonCategoryScanner.confirmRubPrice(priceDocument,range),false);
+priceGroup.innerText='Цена\n500–2 500 ₽';assert.equal(context.OzonCategoryScanner.confirmRubPrice(priceDocument,range),true);
+reported.length=0;bg.location.href='https://www.ozon.ru/category/demo-123/?currency_price=500.000%3B2500.000';
+bg.document.querySelectorAll=s=>s.includes('tileGridDesktop')?[mainList]:[];
+backgroundListener({type:'categoryScanStart',batchId:'hidden-b',attemptId:'price-unconfirmed',categoryUrl:bg.location.href,options:range},{},()=>{});
+await new Promise(setImmediate);assert.equal(reported[0].reason,'price_filter_loading');assert.ok(!reported.some(m=>m.type==='categorySample'));
+for(let i=0;i<35&&!reported.some(m=>m.type==='categoryPageDone');i++){fakeNow+=12000;wake('price-unconfirmed');await new Promise(setImmediate)}
+assert.equal(reported.at(-1).reason,'price_filter_unconfirmed');assert.ok(!reported.some(m=>m.type==='categorySample'));
+reported.length=0;
+bg.document.querySelectorAll=s=>s.includes('input[type="text"]')?[lo,hi]:s.includes('tileGridDesktop')?[mainList]:[];
+bg.chrome.runtime.sendMessage=(m,cb)=>{reported.push(m);cb({ok:true,stop:m.type==='categorySample'})};
+backgroundListener({type:'categoryScanStart',batchId:'hidden-b',attemptId:'price-confirmed',categoryUrl:bg.location.href,options:range},{},()=>{});
+await new Promise(setImmediate);assert.equal(reported[0].type,'categorySample');assert.equal(reported[0].pagePriceConfirmed,true);
 console.log('category scanner real-core synthetic DOM tests passed');

@@ -35,7 +35,10 @@
         <label>本批目标新品数<input id="targetCount" type="number" min="1" max="500" value="20"></label>
         <label>最低价格（可选，CNY ¥）<input id="minPrice" type="number" min="0" step="0.01" placeholder="不限制"></label>
         <label>最高价格（可选，CNY ¥）<input id="maxPrice" type="number" min="0" step="0.01" placeholder="不限制"></label>
+        <label>页面最低价（可选，RUB ₽）<input id="pageMinRub" type="number" min="0" max="10000000" step="1" placeholder="不限制"></label>
+        <label>页面最高价（可选，RUB ₽）<input id="pageMaxRub" type="number" min="0" max="10000000" step="1" placeholder="不限制"></label>
       </div>
+      <p class="notice">卢布区间用于 Ozon 网页预筛选，两端均填写或均留空；人民币区间仍用于采集后的复核，不自动换算汇率。</p>
       <label for="backgroundExperiment" style="display:flex;align-items:center;gap:8px"><input id="backgroundExperiment" type="checkbox" style="width:auto">后台持续采集（试验，不抢前台）</label>
       <p class="notice">新批次使用独立采集窗口。开启试验后，浏览器可能显示调试连接提示；完全遮挡时以新增商品、ERP 就绪和标签命中为准。站点验证仍需人工处理。</p>
       <div class="actions"><button class="primary" id="start">开始类目选品</button><button id="pause">暂停</button><button id="resume">继续</button><button class="danger" id="stop">停止</button></div>

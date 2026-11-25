@@ -7,6 +7,7 @@ let catalogData=null, treeSelection=null, confirmedSource='china', draftSelectio
 const labels={running:'运行中',paused:'已暂停',completed:'已完成',stopped:'已停止',pending:'待开始',loading:'打开页面',scanning:'扫描中',partial:'部分完成',deferred:'待回查',failed:'失败',skipped:'已跳过'};
 const waitReasons={catalog_loading:'商品列表仍在加载',hidden_bottom:'页面在后台，列表底部尚未确认',scroll_stalled:'页面滚动暂时停滞',review_pending:'仍有商品字段待复查',list_ambiguous:'商品列表范围不明确',no_new_sku:'本轮尚未发现新商品'};
 const pageModes={foreground:'前台',background:'后台',waiting:'等待中',recovering:'恢复中'};
+const pagePriceStatusLabels={confirmed:'页面价格筛选已确认',unconfirmed:'页面价格筛选未确认',pending:'页面价格筛选待确认'};
 const activityLabels={'starting':'正在连接','native-background-only':'普通后台','focus-emulation-enabled':'试验模式已连接','focus-emulation-unavailable':'试验连接不可用','unavailable':'试验连接不可用','focus-emulation-detached':'试验连接已结束','focus-emulation-released':'试验连接已释放'};
 const sourceInput=()=>document.querySelector('[name="catalogSource"]:checked');
 const sourceValue=()=>sourceInput()?.value||'china';
@@ -30,6 +31,7 @@ function renderTaskCard(task,batch){
     ? waitReasons[task.waitReason]||task.error||task.message||task.note||(task.waitReason?'等待条件暂未分类':'')
     : task.error||task.message||task.note);
   const revisitCount=Math.max(0,Number(task.revisitCount)||0);
+  const pagePriceStatus=pagePriceStatusLabels[task.pagePriceStatus]||'';
   const dc=task.diagnosticCounts&&typeof task.diagnosticCounts==='object'?task.diagnosticCounts:null;
   const diagnostic=dc?`<details class="diagnostic" data-category-key="${esc(task.sellerKey||task.url||'')}"><summary>唯一 SKU 诊断（${Object.values(dc).reduce((n,v)=>n+(Number(v)||0),0)}）</summary><div class="diagnostic-chips">${Object.entries(diagnosticLabels).filter(([k])=>Number(dc[k])>0).map(([k,v])=>`<span class="diagnostic-chip">${v} ${Number(dc[k])}</span>`).join('')||'<span>暂无原因计数</span>'}</div></details>`:'';
   const isScheduled=batch?.status==='paused'&&Number.isInteger(batch.resumeIndex)&&(batch.stores||[])[batch.resumeIndex]===task;
@@ -39,6 +41,7 @@ function renderTaskCard(task,batch){
     <div class="store-url">${esc(task.pageUrl||task.url||'')}</div>
     <div class="counts">已检查 ${Number(task.observedCount||0)} · 新候选 ${Number(task.qualifiedCount||0)} · ${status==='skipped'?'历史待复查':'待复查'} ${Number(task.pendingCount||0)}</div>
     <div class="counts">发现商品 ${task.discoveredCount??'—'} · ERP 就绪 ${task.erpReadyCount??'—'} · 标签命中 ${task.labelHitCount??'—'}</div>
+    ${pagePriceStatus?`<div class="counts">${pagePriceStatus}</div>`:''}
     ${diagnostic}
     ${status==='deferred'?'<p class="store-reason">先扫待开始类目，再回查此项</p>':''}
     ${revisitCount>0?`<p class="store-reason">自动回查 ${revisitCount}/1</p>`:''}
@@ -93,6 +96,7 @@ function render(batch, archive=history) {
   const checked = stores.reduce((a,s)=>a+Number(s.observedCount||0),0);
   const eligible = stores.filter(s=>!s.removedFromQueue&&s.status!=='skipped'&&s.status!=='completed').reduce((a,s)=>a+Number(s.pendingCount||0),0);
   const summaryParts=batch?[labels[batch.status]||batch.status,`新候选 ${selected}/${batch.options?.targetCount||'—'}`,`已检查 ${checked}`,`待复查 ${eligible}`]:[];
+  if(batch){const min=batch.options?.pageMinRub,max=batch.options?.pageMaxRub;summaryParts.push(min==null&&max==null?'页面筛选 未设置':`页面筛选 ${min??'不限'}–${max??'不限'} ₽`)}
   if(batch){const progressAt=formatTimestamp(batch.lastProgressAt),newSkuAt=formatTimestamp(batch.lastNewSkuAt);if(progressAt)summaryParts.push(`最近上报 ${progressAt}`);if(newSkuAt)summaryParts.push(`最近新增 SKU ${newSkuAt}`);if(batch.pageMode)summaryParts.push(`页面${pageModes[batch.pageMode]||'未知'}`)}
   if(batch?.activityStatus)summaryParts.push(activityLabels[batch.activityStatus]||'等待采集连接');
   const diagTotals={};for(const store of stores)for(const [key,value] of Object.entries(store.diagnosticCounts||{}))diagTotals[key]=(diagTotals[key]||0)+(Number(value)||0);
@@ -154,7 +158,7 @@ function render(batch, archive=history) {
 async function refresh() { if(busy)return;if(refreshInFlight){refreshPending=true;return}refreshInFlight=true;const sequence=++refreshSequence,revision=actionRevision;try { const r=await send({type:"categoryGet"});if(!busy&&sequence===refreshSequence&&revision===actionRevision)render(r.batch||r.state||null,r.history); } catch(e) { if(!busy&&sequence===refreshSequence&&revision===actionRevision)$("message").textContent=e.message; } finally {refreshInFlight=false;if(refreshPending){refreshPending=false;if(!busy)void refresh()}} }
 $("start").onclick = async () => {
   try{const treeUrls=treeSelection?.urls()||[];const manual=$('urls').value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);const parsed=core.parseUrls([...manual,...treeUrls]);if(!parsed.urls.length||parsed.invalid.length||parsed.overflowCount)throw Error('请提供 1–20 个有效 Ozon 类目链接，修正无效或超限地址。');
-    const options=core.validateOptions({targetCount:$("targetCount").value,minPrice:$("minPrice").value,maxPrice:$("maxPrice").value});
+    const options=core.validateOptions({targetCount:$("targetCount").value,minPrice:$("minPrice").value,maxPrice:$("maxPrice").value,pageMinRub:$("pageMinRub").value,pageMaxRub:$("pageMaxRub").value});
     const needsArchiveConfirmation=history.length>=5&&!!state;
     if(needsArchiveConfirmation&&!confirm('历史类目批次已达 5 份，新任务可能替换最早批次；请先将需要的历史商品入池或同步。是否继续？'))return;
     await perform({type:"categoryStart",urls:parsed.urls,categoryLabels:categoryLabels(),...options,backgroundExperiment:$("backgroundExperiment").checked,confirmArchiveOverflow:needsArchiveConfirmation});

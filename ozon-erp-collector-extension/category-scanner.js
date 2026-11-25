@@ -49,6 +49,28 @@
     }
     return false;
   }
+  // Confirm only the page's own visible price group: two editable numeric
+  // inputs, exact localized heading, and explicit ruble preset choices.
+  function confirmRubPrice(doc, options={}) {
+    const range=globalScope.OzonCategoryCore?.rubRange(options);if(!range)return true;
+    const inputSelector='input[type="text"],input[type="number"]';
+    const controls=Array.from(doc.querySelectorAll?.(inputSelector)||[]).filter(el=>visible(el)&&!el.disabled&&!el.readOnly&&!isForbidden(el));
+    const groups=new Set();
+    for(const input of controls){
+      for(let group=input.parentElement,depth=0;group&&depth<9;group=group.parentElement,depth++){
+        if(!visible(group)||isForbidden(group))continue;
+        const fields=controls.filter(el=>group.contains?.(el));if(fields.length>2)break;
+        const content=textOf(group),heading=content.split(/\r?\n/).map(s=>s.trim()).find(Boolean);
+        if(fields.length!==2||!/^(?:价格|Цена|Price)$/i.test(heading||'')||!/(?:₽|\bRUB\b|руб\.?)/i.test(content)||/[¥￥$€]/.test(content))continue;
+        if(!Array.from(group.querySelectorAll?.('input[type="radio"],[role="radio"]')||[]).some(visible))continue;
+        groups.add(group);break;
+      }
+    }
+    if(groups.size!==1)return false;
+    const group=[...groups][0],fields=Array.from(group.querySelectorAll(inputSelector)).filter(el=>controls.includes(el));
+    const value=el=>{const raw=String(el?.value??'').trim().replace(/[\s\u00a0\u202f]/g,'');return /^\d{1,8}$/.test(raw)?Number(raw):null;};
+    return fields.length===2&&value(fields[0])===range.pageMinRub&&value(fields[1])===range.pageMaxRub;
+  }
   function mainCandidates(doc) {
     const candidates = new Set();
     for (const selector of SELECTORS) for (const el of doc.querySelectorAll(selector)) {
@@ -193,7 +215,7 @@
     return href || '';
   }
   function createReader(doc, core) { return { read: (url, options, list=pickList(doc)) => readCards(list, core, url, options), next: (url) => pagination(doc, core, url), pickList: () => pickList(doc) }; }
-  globalScope.OzonCategoryScanner = Object.freeze({ createReader, readCards, pickList, MAX_SAMPLES, MAX_SCROLLS });
+  globalScope.OzonCategoryScanner = Object.freeze({ createReader, readCards, pickList, confirmRubPrice, MAX_SAMPLES, MAX_SCROLLS });
 
   const core = globalScope.OzonCategoryCore;
   if (!core || !globalScope.chrome?.runtime?.onMessage || !core.exactPageUrl(globalScope.location?.href || '') || globalScope.__ozonCategoryListenerInstalled) return;
@@ -233,6 +255,7 @@
     const reader = createReader(globalScope.document, core), sent=new Set(),observed = new Set(msg.observedSkus||[]),pending=new Set(msg.pendingSkus||[]);
     let scrolls = 0, stable = 0, bottomStable = 0, lastHeight = -1, noListPolls = 0,ambiguousPolls=0,reviewPasses=0,bottomSince=0,previousHidden=hidden(),zeroNewObserved=0;
     let recheckFromTop=!!msg.recheckFromTop;
+    const rubRange=core.rubRange(msg.options);let pagePriceConfirmed=!rubRange,pricePolls=0;
     const wait=ms=>waitForRun(run,ms);
     const settle=()=>hidden()?BACKGROUND_SETTLE_MS:FOREGROUND_SETTLE_MS;
     const reportWait=reason=>new Promise(resolve=>globalScope.chrome.runtime.sendMessage({type:'categoryWait',batchId:msg.batchId,attemptId:msg.attemptId,categoryUrl:url,reason,...pageState()},response=>resolve(response||{})));
@@ -243,6 +266,14 @@
       const pageHidden=hidden();if(previousHidden&&!pageHidden){noListPolls=0;stable=0;bottomStable=0;bottomSince=0;reviewPasses=0}previousHidden=pageHidden;
       const verification=verificationDetail(globalScope.document);
       if(verification)return done(msg,false,'manual-verification','',verification);
+      if(!pagePriceConfirmed){
+        if(confirmRubPrice(globalScope.document,msg.options))pagePriceConfirmed=true;
+        else {
+          if(++pricePolls>=LIST_WAIT_POLLS)return done(msg,false,'price_filter_unconfirmed');
+          if(pricePolls===1||pricePolls%5===0){const ack=await reportWait('price_filter_loading');if(waitStopped(ack))return;}
+          await wait(pageHidden?BACKGROUND_SETTLE_MS:LIST_WAIT_MS);sample--;continue;
+        }
+      }
       if(recheckFromTop){recheckFromTop=false;globalScope.scrollTo(0,0);}
       const candidates = mainCandidates(globalScope.document);
       const list = pickList(globalScope.document,candidates);
@@ -268,7 +299,7 @@
       for(const sku of result.observedSkus){observed.add(sku);pending.delete(sku)}
       const products=result.products.filter(p=>!sent.has(p.sku));
       const categoryName=textOf(globalScope.document.querySelector?.('h1')).slice(0,120);
-      const ack = await new Promise((resolve) => globalScope.chrome.runtime.sendMessage({ type: 'categorySample', batchId: msg.batchId, attemptId: msg.attemptId, categoryUrl: url,categoryName,products,observedSkus: result.observedSkus,discoverSkus:result.discoverSkus,erpReadySkus:result.erpReadySkus,labelHitSkus:result.labelHitSkus,pendingSkus:[...pending],pendingCount:pending.size,skuDecisions:result.skuDecisions,...pageState() }, (response) => resolve(response || {})));
+      const ack = await new Promise((resolve) => globalScope.chrome.runtime.sendMessage({ type: 'categorySample', batchId: msg.batchId, attemptId: msg.attemptId, categoryUrl: url,categoryName,products,observedSkus: result.observedSkus,discoverSkus:result.discoverSkus,erpReadySkus:result.erpReadySkus,labelHitSkus:result.labelHitSkus,pendingSkus:[...pending],pendingCount:pending.size,skuDecisions:result.skuDecisions,...(rubRange?{pagePriceConfirmed}:{}),...pageState() }, (response) => resolve(response || {})));
       if(activeRun!==run)return;
       if (ack.ok !== true) return done(msg, false, 'sample_not_persisted');
       if(ack.stop===true||ack.stopped===true||activeRun!==run)return;

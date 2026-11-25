@@ -7,7 +7,7 @@
       if(u.origin!=='https://www.ozon.ru'||u.username||u.password)return null;
       if(u.pathname==='/highlight/tovary-iz-kitaya-935133/' || u.pathname==='/highlight/tovary-iz-kitaya-935133'){
         const params=[...u.searchParams],ids=u.searchParams.getAll('category'),pages=u.searchParams.getAll('page');
-        if(u.hash||ids.length!==1||!/^\d{1,16}$/.test(ids[0])||pages.length>1||params.some(([k])=>!['category','page'].includes(k)))return null;
+        if(u.hash||ids.length!==1||!/^\d{1,16}$/.test(ids[0])||pages.length>1||params.some(([k])=>!['category','page','currency_price','__rr','abt_att'].includes(k))||!validPageParams(u,true))return null;
         if(pages.length&&(!/^\d{1,4}$/.test(pages[0])||Number(pages[0])<1||Number(pages[0])>1000))return null;
         return {id:ids[0],kind:'china',url:u.origin+'/highlight/tovary-iz-kitaya-935133/?category='+ids[0],parsed:u};
       }
@@ -19,13 +19,41 @@
   const keyFromUrl=url=>{const c=category(url);return c?(c.kind==='china'?'china-category:':'category:')+c.id:''};
   const normalizeUrl=url=>category(url)?.url||'';
   const samePage=(url,expected)=>{const key=keyFromUrl(url);return !!key&&key===keyFromUrl(expected)};
-  function paginationUrl(url,expected){
-    const c=category(url);if(!c||!samePage(url,expected)||c.parsed.hash)return '';
-    const params=[...c.parsed.searchParams],pages=c.parsed.searchParams.getAll('page');
-    if(params.length!==(c.kind==='china'?2:1)||pages.length!==1||!/^\d{1,4}$/.test(pages[0]))return '';
-    const page=Number(pages[0]);return page>=1&&page<=1000?c.url+(c.kind==='china'?'&':'?')+'page='+page:'';
+  function rubBound(value){
+    if(value===null||value===undefined||String(value).trim()==='')return null;
+    const raw=String(value).trim();if(!/^\d{1,8}$/.test(raw)||Number(raw)>10000000)throw Error('卢布预筛选请输入 0–10,000,000 的整数');return Number(raw);
   }
-  function exactPageUrl(url){const c=category(url);if(!c||c.parsed.hash)return '';if(c.kind==='normal')return c.parsed.search?paginationUrl(url,c.url):c.parsed.href===c.url?c.url:'';return c.parsed.searchParams.has('page')?paginationUrl(url,c.url):c.url;}
+  function rubRange(raw={}){
+    const pageMinRub=rubBound(raw.pageMinRub),pageMaxRub=rubBound(raw.pageMaxRub);
+    if(pageMinRub===null&&pageMaxRub===null)return null;
+    if(pageMinRub===null||pageMaxRub===null||pageMinRub>pageMaxRub)throw Error('卢布预筛选需同时填写有效最低价与最高价，最低价不能高于最高价');
+    return {pageMinRub,pageMaxRub};
+  }
+  function urlRange(u){
+    const vals=u.searchParams.getAll('currency_price');if(!vals.length)return '';
+    const m=vals.length===1&&vals[0].match(/^(\d{1,8})(?:\.0{1,3})?;(\d{1,8})(?:\.0{1,3})?$/);if(!m)return null;
+    try{const r=rubRange({pageMinRub:m[1],pageMaxRub:m[2]});return `${r.pageMinRub}.000;${r.pageMaxRub}.000`;}catch{return null}
+  }
+  function validPageParams(u,china){
+    const allowed=['page','currency_price','__rr','abt_att',...(china?['category']:[])];
+    return [...u.searchParams].every(([key,val])=>allowed.includes(key)&&u.searchParams.getAll(key).length===1&&(!['__rr','abt_att'].includes(key)||val==='1'))&&urlRange(u)!==null;
+  }
+  function canonicalPage(c){
+    if(!c||c.parsed.hash||!validPageParams(c.parsed,c.kind==='china'))return '';
+    const u=new URL(c.url),price=urlRange(c.parsed),page=c.parsed.searchParams.get('page');
+    if(price)u.searchParams.set('currency_price',price);
+    if(page!==null){if(!/^\d{1,4}$/.test(page)||Number(page)<1||Number(page)>1000)return '';u.searchParams.set('page',String(Number(page)));}
+    return u.href;
+  }
+  function pricePageUrl(url,options={}){
+    const c=category(url);if(!c)return '';const r=rubRange(options);if(!r)return c.url;
+    const u=new URL(c.url);u.searchParams.set('currency_price',`${r.pageMinRub}.000;${r.pageMaxRub}.000`);return u.href;
+  }
+  function paginationUrl(url,expected){
+    const c=category(url),e=category(expected),canonical=canonicalPage(c);if(!canonical||!canonicalPage(e)||!samePage(url,expected)||!c.parsed.searchParams.has('page')||urlRange(c.parsed)!==urlRange(e.parsed))return '';
+    return canonical;
+  }
+  function exactPageUrl(url){return canonicalPage(category(url));}
   function parseUrls(raw,max=20){
     const urls=[],invalid=[],seen=new Set();let duplicateCount=0,overflowCount=0;
     for(const value of (Array.isArray(raw)?raw.map(String):String(raw||'').split(/\r?\n/)).map(s=>s.trim()).filter(Boolean)){
@@ -41,7 +69,7 @@
     const limit=(value)=>{if(value===null||value===undefined||String(value).trim()==='')return null;if(!/^\d+(?:\.\d{1,2})?$/.test(String(value).trim()))throw Error('请输入有效人民币金额');const n=Number(value);if(!Number.isFinite(n)||n<0||n>1000000)throw Error('人民币价格区间无效');return n};
     const minPrice=limit(raw.minPrice),maxPrice=limit(raw.maxPrice);
     if(minPrice!==null&&maxPrice!==null&&minPrice>maxPrice)throw Error('最低价不能高于最高价');
-    return {targetCount,minPrice,maxPrice};
+    return {targetCount,minPrice,maxPrice,...rubRange(raw)};
   }
   function capturedPrice(raw){
     let t=String(raw??'').trim().replace(/^[¥￥]\s*|\s*[¥￥]$/g,'').replace(/[\s\u00a0\u202f]/g,'');
@@ -61,5 +89,5 @@
     if(scanner.classifyShippingRisk([product.name,product.category,product.rawRiskText].filter(Boolean).join('\n')).type==='suspected_prohibited')return false;
     return priceAllowed(product,options);
   }
-  scope.OzonCategoryCore=Object.freeze({keyFromUrl,normalizeUrl,samePage,paginationUrl,exactPageUrl,parseUrls,validateOptions,priceAllowed,qualifiedProduct,capturedPrice});
+  scope.OzonCategoryCore=Object.freeze({keyFromUrl,normalizeUrl,samePage,paginationUrl,exactPageUrl,pricePageUrl,rubRange,parseUrls,validateOptions,priceAllowed,qualifiedProduct,capturedPrice});
 })(globalThis);
