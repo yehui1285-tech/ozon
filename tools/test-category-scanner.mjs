@@ -53,6 +53,12 @@ assert.deepEqual(Array.from(result.observedSkus).sort(), ['10001', '10002', '100
 assert.deepEqual(Array.from(result.discoverSkus).sort(), ['10001', '10002', '10003', '10005', '20001', '20002', '20003', '20004', '20005', '99999']);
 assert.deepEqual(Array.from(result.erpReadySkus).sort(), ['10001', '10002', '10003', '10005', '20001', '20002', '20005']);
 assert.deepEqual(Array.from(result.labelHitSkus).sort(), ['10001', '10003', '10005', '20001', '20003', '20005']);
+assert.equal(result.skuDecisions['10001'], 'eligible');
+assert.equal(result.skuDecisions['10002'], 'no_label');
+assert.equal(result.skuDecisions['10003'], 'transport_blocked');
+assert.equal(result.skuDecisions['20003'], 'erp_pending');
+assert.equal(result.skuDecisions['20005'], 'data_pending');
+assert.equal(reader.read(context.location.href, { minPrice: 500 }).skuDecisions['10001'], 'price_outside');
 assert.equal(result.products.find((p) => p.sku === '20001')?.competitor, '', 'missing competitor price remains blank');
 assert.equal(result.products.find((p) => p.sku === '20001')?.competitorReady, false, 'missing competitor price is not marked ready');
 assert.ok(result.pendingSkus.includes('20003'), 'incomplete ERP panel remains pending');
@@ -81,7 +87,7 @@ const bg={URL,Date:ClockDate,location:{href:'https://www.ozon.ru/category/demo-1
 bg.globalThis=bg;for(const src of [scannerCore,categoryCore,categoryScanner])vm.runInNewContext(src,bg);
 backgroundListener({type:'categoryScanStart',batchId:'hidden-b',attemptId:'hidden-a',categoryUrl:bg.location.href},{},()=>{});
 await new Promise(setImmediate);
-assert.equal(reported.filter(m=>m.type==='categorySample').length,1);assert.equal(reported[0].pageHidden,true);assert.deepEqual([...timers.values()].map(t=>t.ms),[4000]);
+assert.equal(reported.filter(m=>m.type==='categorySample').length,1);assert.equal(reported[0].pageHidden,true);assert.equal(reported[0].pageReportedHidden,true);assert.ok(reported[0].skuDecisions&&typeof reported[0].skuDecisions==='object');assert.deepEqual([...timers.values()].map(t=>t.ms),[4000]);
 let tick;const wake=(attemptId)=>backgroundListener({type:'categoryScanTick',batchId:'hidden-b',attemptId},{},r=>tick=r);
 wake('hidden-a');await new Promise(setImmediate);assert.equal(tick.running,true);assert.equal(reported.length,1,'early tick must preserve the settling interval');
 fakeNow+=5000;wake('wrong-attempt');await new Promise(setImmediate);assert.equal(tick.running,false);assert.equal(reported.length,1,'stale attempt cannot wake scanner');

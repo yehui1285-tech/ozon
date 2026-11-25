@@ -85,8 +85,9 @@
     return null;
   }
   function readCards(list, core, categoryUrl, options = {}) {
-    if (!list) return { products: [], observedSkus: [], discoverSkus:[], erpReadySkus:[], labelHitSkus:[], pendingSkus: [], pendingCount: 0, available: false };
-    const products = [], observed = new Set(), discovered = new Set(), erpReady = new Set(), labelHit = new Set(),pending=new Set();
+    if (!list) return { products: [], observedSkus: [], discoverSkus:[], erpReadySkus:[], labelHitSkus:[], pendingSkus: [], pendingCount: 0, skuDecisions:{}, available: false };
+    const products = [], observed = new Set(), discovered = new Set(), erpReady = new Set(), labelHit = new Set(),pending=new Set(),skuDecisions={},decisionRank={erp_pending:0,no_label:1,data_pending:2,price_outside:3,transport_blocked:3,eligible:4};
+    const decide=(sku,reason)=>{if(!(sku in skuDecisions)||(decisionRank[reason]??0)>(decisionRank[skuDecisions[sku]]??0))skuDecisions[sku]=reason};
     const boundary=[...(list.querySelectorAll?.(headingSelector)||[])].find(el=>recommendationHeading.test(textOf(el))&&visible(el));
     const productSku=href=>{try{const u=new URL(href);return u.origin==='https://www.ozon.ru'&&!u.username&&!u.password?u.pathname.match(/^\/product\/(?:[^/]+-)?(\d+)\/?$/)?.[1]||'':''}catch{return ''}};
     const findCard=(anchor,sku)=>{
@@ -140,6 +141,7 @@
       const link = globalScope.OzonStoreScannerCore?.canonicalProductLink(anchor.href) || '',sku=productSku(link);
       if(!sku)continue;
       discovered.add(sku);
+      decide(sku,'erp_pending');
       const scoped=findCard(anchor,sku);if(!scoped){if(!observed.has(sku))pending.add(sku);continue;}
       const {card,raw,panelReady,qualified}=scoped;
       const parsed = globalScope.OzonStoreScannerCore?.parseCardText(raw);
@@ -161,7 +163,8 @@
       if(!panelReady){if(!observed.has(sku))pending.add(sku);continue;}
       erpReady.add(sku);
       const name = [anchor,...(card.querySelectorAll?.('a[href*="/product/"]')||[])].filter(a=>productSku(a.href)===sku).map(a=>(textOf(a)||a.getAttribute?.('aria-label')||'').replace(/\s+/g,' ').trim()).filter(Boolean).sort((a,b)=>b.length-a.length)[0]||'';
-      if(!parsed.qualified){observed.add(sku);pending.delete(sku);continue;}
+      if(!parsed.qualified){decide(sku,'no_label');observed.add(sku);pending.delete(sku);continue;}
+      decide(sku,'data_pending');
       if (!name) { pending.add(sku); continue; }
       const rawRiskText = `${parsed.category}\n${name}\n${raw}`;
       const shippingRisk = globalScope.OzonStoreScannerCore?.classifyShippingRisk(rawRiskText) || {};
@@ -174,9 +177,13 @@
       const complete=globalScope.OzonCategoryCore.capturedPrice(parsed.price)>0&&parsed.commissions?.length>0&&parsed.monthlySales&&parsed.fulfillment&&dimensionCount>=3&&/\d/.test(weightValue)&&!/(?:加载中|暂无|--|—|-)/i.test(`${parsed.dimensions} ${weightValue}`)&&name;
       if(!complete){if(!observed.has(sku))pending.add(sku);continue;}
       observed.add(sku);pending.delete(sku);
-      if(parsed.qualified&&core.qualifiedProduct?.(product,options))products.push(product);
+      if(parsed.qualified){
+        if(core.qualifiedProduct?.(product,options)){decide(sku,'eligible');products.push(product);}
+        else if(!['clear','land_only'].includes(shippingRisk?.type)||globalScope.OzonStoreScannerCore?.classifyShippingRisk([product.name,product.category,product.rawRiskText].filter(Boolean).join('\n'))?.type==='suspected_prohibited')decide(sku,'transport_blocked');
+        else if(!globalScope.OzonCategoryCore.priceAllowed(product,options))decide(sku,'price_outside');
+      }
     }
-    return { products, observedSkus: [...observed], discoverSkus:[...discovered], erpReadySkus:[...erpReady], labelHitSkus:[...labelHit], pendingSkus:[...pending],pendingCount:pending.size, available: anchors.length > 0 };
+    return { products, observedSkus: [...observed], discoverSkus:[...discovered], erpReadySkus:[...erpReady], labelHitSkus:[...labelHit], pendingSkus:[...pending],pendingCount:pending.size, skuDecisions, available: anchors.length > 0 };
   }
   function pagination(doc, core, categoryUrl) {
     const links = [...doc.querySelectorAll('a[rel="next"], a[data-testid*="pagination-next"], a[href*="page="]')]
@@ -193,7 +200,10 @@
   globalScope.__ozonCategoryListenerInstalled = true;
   let activeRun = null;
   let nativeHidden=false;
-  const hidden=()=>globalScope.document?.hidden===true||nativeHidden;
+  const pageReportedHidden=()=>globalScope.document?.hidden===true;
+  const pageFocused=()=>typeof globalScope.document?.hasFocus==='function'?Boolean(globalScope.document.hasFocus()):undefined;
+  const hidden=()=>pageReportedHidden()||nativeHidden;
+  const pageState=()=>({pageHidden:hidden(),pageReportedHidden:pageReportedHidden(),...(pageFocused()===undefined?{}:{pageFocused:pageFocused()})});
   function waitForRun(run,ms){return new Promise(resolve=>{
     const readyAt=Date.now()+ms;let timer;
     const finish=()=>{if(run.wait?.finish!==finish)return;globalScope.clearTimeout?.(timer);run.wait=null;resolve()};
@@ -207,7 +217,7 @@
     if(message?.type==='categoryScanTick'){
       const running=!!activeRun&&activeRun.batchId===message.batchId&&activeRun.attemptId===message.attemptId;
       if(running&&typeof message.pageNativeHidden==='boolean')nativeHidden=message.pageNativeHidden;
-      reply?.({ok:true,running,pageHidden:hidden()});if(running)activeRun.wait?.wake();return false;
+      reply?.({ok:true,running,...pageState()});if(running)activeRun.wait?.wake();return false;
     }
     if (message?.type !== 'categoryScanStart') return false;
     if(activeRun?.batchId===message.batchId&&activeRun?.attemptId===message.attemptId){reply?.({ok:true,accepted:true});return false;}
@@ -225,7 +235,7 @@
     let recheckFromTop=!!msg.recheckFromTop;
     const wait=ms=>waitForRun(run,ms);
     const settle=()=>hidden()?BACKGROUND_SETTLE_MS:FOREGROUND_SETTLE_MS;
-    const reportWait=reason=>new Promise(resolve=>globalScope.chrome.runtime.sendMessage({type:'categoryWait',batchId:msg.batchId,attemptId:msg.attemptId,categoryUrl:url,reason,pageHidden:hidden()},response=>resolve(response||{})));
+    const reportWait=reason=>new Promise(resolve=>globalScope.chrome.runtime.sendMessage({type:'categoryWait',batchId:msg.batchId,attemptId:msg.attemptId,categoryUrl:url,reason,...pageState()},response=>resolve(response||{})));
     const waitStopped=ack=>ack.ok!==true||ack.stop===true||ack.stopped===true||activeRun!==run;
     for (let sample = 0; sample < MAX_SAMPLES && scrolls <= MAX_SCROLLS; sample++) {
       if (activeRun!==run) return;
@@ -258,7 +268,7 @@
       for(const sku of result.observedSkus){observed.add(sku);pending.delete(sku)}
       const products=result.products.filter(p=>!sent.has(p.sku));
       const categoryName=textOf(globalScope.document.querySelector?.('h1')).slice(0,120);
-      const ack = await new Promise((resolve) => globalScope.chrome.runtime.sendMessage({ type: 'categorySample', batchId: msg.batchId, attemptId: msg.attemptId, categoryUrl: url,categoryName,products,observedSkus: result.observedSkus,discoverSkus:result.discoverSkus,erpReadySkus:result.erpReadySkus,labelHitSkus:result.labelHitSkus,pendingSkus:[...pending],pendingCount:pending.size,pageHidden }, (response) => resolve(response || {})));
+      const ack = await new Promise((resolve) => globalScope.chrome.runtime.sendMessage({ type: 'categorySample', batchId: msg.batchId, attemptId: msg.attemptId, categoryUrl: url,categoryName,products,observedSkus: result.observedSkus,discoverSkus:result.discoverSkus,erpReadySkus:result.erpReadySkus,labelHitSkus:result.labelHitSkus,pendingSkus:[...pending],pendingCount:pending.size,skuDecisions:result.skuDecisions,...pageState() }, (response) => resolve(response || {})));
       if(activeRun!==run)return;
       if (ack.ok !== true) return done(msg, false, 'sample_not_persisted');
       if(ack.stop===true||ack.stopped===true||activeRun!==run)return;

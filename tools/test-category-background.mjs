@@ -327,4 +327,56 @@ assert.equal(batch.resumeIndex,2,'a skipped scheduled task selects the remaining
 batch=(await runner.handle({type:'categoryResume'})).batch;
 assert.equal(batch.currentIndex,2,'Continue must not restart the previously completed card');
 assert.equal(batch.stores[1].status,'skipped');
+
+// V1.49 diagnostic outcomes retain final candidate reasons and expose a bounded, safe export.
+await runner.handle({type:'categoryStop'});
+const diagUrl='https://www.ozon.ru/category/tools-8502/';
+batch=(await runner.handle({type:'categoryStart',urls:[diagUrl],targetCount:2,confirmArchiveOverflow:true})).batch;
+data.ozonProductPoolV1={products:{'99010':{sku:'99010'}},history:{'99011':{sku:'99011'}}};
+const diagAttempt=batch.attemptId,diagTab=batch.tabId;
+batch=(await runner.handle({type:'categorySample',batchId:batch.id,attemptId:diagAttempt,categoryUrl:diagUrl,discoverSkus:['99100','99101','99010','99011','99102','99103'],erpReadySkus:['99100','99101','99010','99011','99102','99103'],labelHitSkus:['99100','99010','99011','99102','99103'],pageReportedHidden:true,skuDecisions:{'99100':'eligible','99101':'no_label','99010':'eligible','99011':'eligible','99102':'eligible','99103':'eligible'},products:[
+ {sku:'99100',name:'A',link:'https://www.ozon.ru/product/a-99100',price:'20',qualified:true,shippingRisk:{type:'clear'}},
+ {sku:'99010',name:'pool duplicate',link:'https://www.ozon.ru/product/a-99010',price:'20',qualified:true,shippingRisk:{type:'clear'}},
+ {sku:'99011',name:'history duplicate',link:'https://www.ozon.ru/product/a-99011',price:'20',qualified:true,shippingRisk:{type:'clear'}},
+ {sku:'99102',name:'B',link:'https://www.ozon.ru/product/a-99102',price:'20',qualified:true,shippingRisk:{type:'clear'}},
+ {sku:'99103',name:'over target',link:'https://www.ozon.ru/product/a-99103',price:'20',qualified:true,shippingRisk:{type:'clear'}}
+]},{tab:{id:diagTab,url:diagUrl}})).batch;
+const diagnostic=(await runner.handle({type:'categoryDiagnostic',batchId:batch.id})).diagnostic;
+assert.ok(diagnostic.tasks[0].examples.accepted.includes('99100'));
+assert.ok(diagnostic.tasks[0].examples.pool_duplicate.includes('99010'));
+assert.ok(diagnostic.tasks[0].examples.history_duplicate.includes('99011'));
+assert.ok(diagnostic.tasks[0].examples.target_limit.includes('99103'));
+assert.equal(batch.stores[0].diagnosticCounts.no_label,1);
+assert.deepEqual({...batch.stores[0].diagnosticCounts},{accepted:2,no_label:1,pool_duplicate:1,history_duplicate:1,target_limit:1});
+assert.equal(diagnostic.browser.tabStatus,'complete');assert.equal(diagnostic.browser.tabActive,false);assert.equal(diagnostic.browser.windowFocused,false);
+assert.equal(diagnostic.counters.unknownLegacyCount,0);
+assert.ok(diagnostic.lastDiscoveryAt&&diagnostic.lastErpReadyAt&&diagnostic.lastLabelHitAt&&diagnostic.lastAcceptedAt,'batch timestamps reflect real count increases');
+assert.ok((batch.diagnosticEvents||[]).some(e=>e.type==='start'));
+assert.ok((await runner.handle({type:'categoryDiagnostic',batchId:batch.id})).diagnostic.tasks[0].examples.accepted.length<=5);
+data.ozonCategoryBatchV1.diagnosticEvents=Array.from({length:130},(_,i)=>({at:new Date(i).toISOString(),type:'explicit_wait',detail:'wait'}));
+assert.equal((await runner.handle({type:'categoryDiagnostic',batchId:batch.id})).diagnostic.events.length,120,'diagnostic export bounds event history');
+await assert.rejects(()=>runner.handle({type:'categoryDiagnostic',batchId:'missing'}),/找不到/);
+
+// Actual scanner payload, a second heartbeat with the same SKU, and browser freeze.
+batch=(await runner.handle({type:'categoryStart',urls:[diagUrl],targetCount:20,confirmArchiveOverflow:true})).batch;
+const phaseSample={type:'categorySample',batchId:batch.id,attemptId:batch.attemptId,categoryUrl:diagUrl,discoverSkus:['99200','99201','99202','99203','99204'],erpReadySkus:['99201','99202','99203','99204'],labelHitSkus:['99202','99203','99204'],observedSkus:['99201','99202','99203'],pendingCount:2,pendingSkus:['99200','99204'],pageReportedHidden:true,pageFocused:false,skuDecisions:{'99200':'erp_pending','99201':'no_label','99202':'price_outside','99203':'transport_blocked','99204':'data_pending'},products:[]};
+const diagSender={tab:{id:batch.tabId,url:diagUrl}};
+batch=(await runner.handle(phaseSample,diagSender)).batch;
+const stageCounts=JSON.stringify(batch.stores[0].diagnosticCounts),progressAt=batch.lastProgressAt,discoveredAt=batch.lastDiscoveryAt;
+assert.equal(batch.stores[0].diagnosticCounts.price_outside,1);assert.equal(batch.stores[0].diagnosticCounts.erp_pending,1);
+batch=(await runner.handle(phaseSample,diagSender)).batch;
+assert.equal(JSON.stringify(batch.stores[0].diagnosticCounts),stageCounts);assert.equal(batch.lastDiscoveryAt,discoveredAt);
+created.find(t=>t.id===batch.tabId).frozen=true;
+const lastReport=batch.lastProgressAt;
+await runner.onAlarm({name:'ozon-category-runner'});await runner.onAlarm({name:'ozon-category-runner'});
+batch=(await runner.handle({type:'categoryGet'})).batch;
+assert.equal(batch.diagnosticBrowser.frozen,true);assert.equal(batch.diagnosticBrowser.pageReportedHidden,true);assert.ok(batch.diagnosticBrowser.pageReportedAt);
+assert.equal(batch.lastProgressAt,lastReport);assert.equal(batch.lastDiscoveryAt,discoveredAt);assert.equal(JSON.stringify(batch.stores[0].diagnosticCounts),stageCounts);
+assert.equal(batch.diagnosticEvents.filter(e=>e.type==='watchdog_frozen').length,1);
+const frozenDiagnostic=(await runner.handle({type:'categoryDiagnostic',batchId:batch.id})).diagnostic;
+assert.equal(frozenDiagnostic.browser.frozen,true);assert.equal(frozenDiagnostic.counters.decisions.transport_blocked,1);
+created.find(t=>t.id===batch.tabId).frozen=false;
+await runner.handle({type:'categoryStop'});
+data.ozonCategoryBatchV1.stores[0].discoveredCount=8;
+assert.equal((await runner.handle({type:'categoryDiagnostic',batchId:batch.id})).diagnostic.counters.unknownLegacyCount,3);
 console.log("category background runner tests passed");

@@ -344,6 +344,8 @@ await assert.rejects(()=>context.startStoreBatch({urls:['https://www.ozon.ru/sel
 const sample={type:'categorySample',batchId:started.batch.id,attemptId:started.batch.attemptId,categoryUrl,categoryName:'工具',observedSkus:['555'],products:[{sku:'555',name:'工具',qualified:true,price:'90,00',link:'https://www.ozon.ru/product/tool-555/',shippingRisk:{type:'clear'}}]};
 assert.equal((await categoryRequest(sample,{tab:{id:999,url:categoryUrl}})).ok,false);
 const scanned=await categoryRequest(sample,{tab:{id:started.batch.tabId,url:categoryUrl}});assert.equal(scanned.stop,true);assert.equal(scanned.batch.status,'completed');
+const diagnosisDenied=await categoryRequest({type:'categoryDiagnostic',batchId:started.batch.id},{url:categoryUrl});assert.equal(diagnosisDenied.ok,false);
+const diagnosis=await categoryRequest({type:'categoryDiagnostic',batchId:started.batch.id});assert.equal(diagnosis.ok,true);assert.equal(diagnosis.diagnostic.batchId,started.batch.id);assert.equal(diagnosis.diagnostic.counters.acceptedCount,1);assert.equal(diagnosis.diagnostic.tasks[0].counts.accepted,1);assert.equal(Object.hasOwn(diagnosis.diagnostic,'results'),false);
 const addedCategory=await categoryRequest({type:'categoryAddPool',batchId:started.batch.id});assert.equal(addedCategory.ok,true);assert.equal(addedCategory.added,1);
 const categoryItem=(await context.getProductPool()).pool.products['555'];assert.equal(categoryItem.sourceMode,'category');assert.equal(categoryItem.storeName,'类目 · 工具');
 assert.equal((await categoryRequest({type:'categoryExport',batchId:started.batch.id})).csv.includes(categoryUrl),true);

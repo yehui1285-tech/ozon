@@ -24,6 +24,28 @@
   const now = () => new Date().toISOString();
   const uuid = () => scope.crypto.randomUUID();
   const clone = (v) => v == null ? v : JSON.parse(JSON.stringify(v));
+  const diagnosticOutcomes = new Set(['erp_pending','data_pending','no_label','price_outside','transport_blocked','eligible','erp_conflict','accepted','batch_duplicate','pool_duplicate','history_duplicate','target_limit','invalid_candidate']);
+  const readerOutcomes = new Set(['erp_pending','data_pending','no_label','price_outside','transport_blocked','eligible','erp_conflict']);
+  const finalOutcomes = new Set(['accepted','batch_duplicate','pool_duplicate','history_duplicate','target_limit','invalid_candidate']);
+  function diagnosisCounts(task) {
+    const decisions=task.diagnosticDecisions||{}, counts={};
+    for(const reason of Object.values(decisions))if(diagnosticOutcomes.has(reason))counts[reason]=(counts[reason]||0)+1;
+    const classified=Object.values(counts).reduce((sum,count)=>sum+count,0);
+    const known=Math.max(Number(task.discoveredCount)||0,(Number(task.observedCount)||0)+(Number(task.pendingCount)||0),classified);
+    if(known>classified)counts.unknown=known-classified;
+    return counts;
+  }
+  function diagnosticEvent(batch,type,detail='') { batch.diagnosticEvents ||= []; const stamp=now();if(['watchdog_frozen','tab_discarded'].includes(type)&&batch.diagnosticEvents.at(-1)?.type===type)return;batch.diagnosticEvents.push({at:stamp,type,detail:String(detail).slice(0,180)}); if(batch.diagnosticEvents.length>120)batch.diagnosticEvents=batch.diagnosticEvents.slice(-120); }
+  async function browserSnapshot(batch,pageReportedHidden,pageFocused) {
+    if(!Number.isInteger(batch?.tabId))return null;
+    try {
+      const tab=await chrome.tabs.get(batch.tabId);if(!pageMatches(tab.pendingUrl||tab.url||'',currentStore(batch)))return null;
+      const win=await chrome.windows?.get?.(tab.windowId).catch(()=>null);
+      const known=value=>typeof value==='boolean'?value:null;
+      const previous=batch.diagnosticBrowser||{};
+      return {tabStatus:tab.status||'unknown',frozen:known(tab.frozen),discarded:known(tab.discarded),tabActive:known(tab.active),windowFocused:known(win?.focused),pageReportedHidden:typeof pageReportedHidden==='boolean'?pageReportedHidden:previous.pageReportedHidden??null,pageFocused:typeof pageFocused==='boolean'?pageFocused:previous.pageFocused??null,pageReportedAt:typeof pageReportedHidden==='boolean'?now():previous.pageReportedAt||null,checkedAt:now()};
+    } catch{return null;}
+  }
   async function read() { return (await chrome.storage.local.get(KEY))[KEY] || null; }
   async function protectTab(tabId){
     if(!Number.isInteger(tabId)||!chrome.storage.session?.get)return;
@@ -130,6 +152,8 @@
   // A restart or failed navigation can then resume without losing either task.
   async function switchTask(batch, index, allowFreshWindow = false) {
     const previous = currentStore(batch), next = batch.stores[index];
+    diagnosticEvent(batch,'switch',`${previous?.sellerKey||'none'} -> ${next?.sellerKey||'unknown'}`);
+    batch.diagnosticBrowser=null;delete batch.recentWaitReason;
     const resumingSwitch = batch.resumeIndex === index;
     batch.resumeIndex = index;
     await save(batch);
@@ -257,7 +281,8 @@
           }
           const id = `category-${uuid()}`;
           const stores = urls.map((url, i) => {const kind=sourceKind(url),label=m.categoryLabels&&Object.hasOwn(m.categoryLabels,url)&&typeof m.categoryLabels[url]==='string'?m.categoryLabels[url].trim().slice(0,120):'';return { sellerKey: core.keyFromUrl(url), url, pageUrl: url, sourceKind:kind, ...(label?{label,name:(kind==='china'?'中国专区 · ':'普通类目 · ')+label}:{}), status: i === 0 ? "scanning" : "pending", observedCount: 0, qualifiedCount: 0, pendingCount: 0, observedSkus: [], visitedPages: [] }});
-          batch = { id, sourceMode: "category", status: "running", currentIndex: 0, tabId: null, attemptId: null, options, stores, results: {}, updatedAt: now(), message: "类目扫描已开始", addedCount: 0, backgroundExperiment: m.backgroundExperiment===true, activityStatus: m.backgroundExperiment===true?'starting':'native-background-only' };
+          batch = { id, sourceMode: "category", status: "running", currentIndex: 0, tabId: null, attemptId: null, options, stores, results: {}, updatedAt: now(), message: "类目扫描已开始", addedCount: 0, backgroundExperiment: m.backgroundExperiment===true, activityStatus: m.backgroundExperiment===true?'starting':'native-background-only', diagnosticEvents:[] };
+          diagnosticEvent(batch,'start');
           await openCurrent(batch, true);
           return { ok: true, batch: clone(batch) };
         }
@@ -269,10 +294,11 @@
           if (active?.status === 'scanning') active.status = active.pendingCount || active.observedCount ? 'partial' : 'pending';
           batch.status = m.type === "categoryStop" ? "stopped" : "paused";
           batch.message = m.type === "categoryStop" ? "已停止" : "已暂停";
-          await save(batch); return { ok: true, batch: clone(batch) };
+          diagnosticEvent(batch,m.type==='categoryStop'?'stop':'explicit_pause'); await save(batch); return { ok: true, batch: clone(batch) };
         }
         case "categoryResume":
           if (!batch || batch.status !== "paused") throw Error("没有可继续的暂停类目批次");
+          diagnosticEvent(batch,'resume');
           if (typeof m.backgroundExperiment==='boolean') batch.backgroundExperiment=m.backgroundExperiment;
           if (finishAtTarget(batch)) { await save(batch); return {ok:true,batch:clone(batch)}; }
           const resumeIndex=nextResumeIndex(batch);
@@ -335,6 +361,7 @@
           const task = assertActive(batch, m, sender);
           if (batch.status !== "running") throw Error("类目批次当前未运行");
           const effectiveHidden=await effectivePageHidden(batch,m.pageHidden);
+          const beforeDiscovered=task.discoveredCount||0,beforeErpReady=task.erpReadyCount||0,beforeHits=task.labelHitCount||0;
           for (const [listField,countField] of [['discoverSkus','discoveredCount'],['erpReadySkus','erpReadyCount'],['labelHitSkus','labelHitCount']]) {
             const key=listField==='discoverSkus'?'discoveredSkus':listField;
             const set=new Set(task[key]||[]);
@@ -353,13 +380,25 @@
           const poolStored = await chrome.storage.local.get("ozonProductPoolV1");
           const pool = poolStored.ozonProductPoolV1 || storeCore.emptyPool();
           const qualifiedSeen = new Set(batch.qualifiedSkuIds || []);
+          const beforeQualified=qualifiedSeen.size;
+          const decisions=task.diagnosticDecisions ||= {};
+          const discovered=new Set(task.discoveredSkus||[]);
+          if(m.skuDecisions && typeof m.skuDecisions==='object'&&!Array.isArray(m.skuDecisions)) {
+            for(const [sku,outcome] of Object.entries(m.skuDecisions)) if(/^\d{1,24}$/.test(sku)&&discovered.has(sku)&&readerOutcomes.has(outcome)&&!finalOutcomes.has(decisions[sku])) {
+              // A later incomplete rendering cannot erase a verified prior decision.
+              if(outcome==='erp_pending'&&decisions[sku]&&decisions[sku]!=='erp_pending')continue;
+              decisions[sku]=outcome;
+            }
+          }
           const remaining = Math.max(0, batch.options.targetCount - qualifiedSeen.size);
           const products = [];
           for (const raw of m.products || []) {
-            if (products.length >= remaining) break;
+            const sku=String(raw?.sku||'').trim();
+            if (products.length>=remaining) {if(/^\d{1,24}$/.test(sku)&&!finalOutcomes.has(decisions[sku]))decisions[sku]='target_limit';continue;}
             const product = normalizeSampleProduct(raw, batch);
-            if (!product || qualifiedSeen.has(product.sku) || pool.products?.[product.sku] || Object.hasOwn(pool.history || {}, product.sku)) continue;
-            qualifiedSeen.add(product.sku); products.push(product);
+            let reason='invalid_candidate';
+            if(product){if(qualifiedSeen.has(product.sku))reason=decisions[product.sku]==='accepted'||batch.results?.[task.sellerKey]?.products?.[product.sku]?'accepted':'batch_duplicate';else if(pool.products?.[product.sku])reason='pool_duplicate';else if(Object.hasOwn(pool.history||{},product.sku))reason='history_duplicate';else {reason='accepted';qualifiedSeen.add(product.sku);products.push(product);}}
+            if(/^\d{1,24}$/.test(sku)&&decisions[sku]!=='accepted')decisions[sku]=reason;
           }
           const title=typeof m.categoryName==='string'?m.categoryName.trim().slice(0,120):'';
           const kind=task.sourceKind||sourceKind(task.url), name=task.label||title||core.keyFromUrl(task.url);
@@ -368,16 +407,24 @@
           for (const p of products) if (!output.products[p.sku]) { output.products[p.sku] = p; output.batchCapture.skus.push(p.sku); }
           batch.qualifiedSkuIds = [...qualifiedSeen];
           task.qualifiedCount = Object.keys(output.products).length;
+          if((task.discoveredCount||0)>beforeDiscovered)task.lastDiscoveryAt=batch.lastDiscoveryAt=now();
+          if((task.erpReadyCount||0)>beforeErpReady)task.lastErpReadyAt=batch.lastErpReadyAt=now();
+          if((task.labelHitCount||0)>beforeHits)task.lastLabelHitAt=batch.lastLabelHitAt=now();
+          if(qualifiedSeen.size>beforeQualified){task.lastAcceptedAt=now();batch.lastAcceptedAt=task.lastAcceptedAt;}
+          task.diagnosticCounts=diagnosisCounts(task);
+          batch.diagnosticBrowser=await browserSnapshot(batch,m.pageReportedHidden,m.pageFocused);
           task.observedSkus = [...new Set([...task.observedSkus, ...Object.keys(output.products)])];
           const stop = finishAtTarget(batch);
-          if (stop) await stopScanner(batch);
+          if (stop) {diagnosticEvent(batch,'target_reached');await stopScanner(batch);}
           await save(batch); return { ok: true, stop, pageNativeHidden: batch.backgroundExperiment?await nativePageHidden(batch.tabId):false, batch: clone(batch) };
         }
         case "categoryWait": {
           const task = assertActive(batch,m,sender);
           if(batch.status!=='running') throw Error('类目批次当前未运行');
-          task.waitReason = m.reason;
           const known = Object.hasOwn(waitLabels,m.reason);
+          if(batch.recentWaitReason!==m.reason)diagnosticEvent(batch,'explicit_wait',known?waitLabels[m.reason]:'等待页面状态');
+          task.waitReason = m.reason;batch.recentWaitReason=known?m.reason:'unknown';
+          batch.diagnosticBrowser=await browserSnapshot(batch,m.pageReportedHidden,m.pageFocused);
           phase(batch,'waiting',(known ? waitLabels[m.reason] : '正在等待类目页')+'，正在复查…');
           batch.lastProgressAt=now();batch.recoveryAttempts=0;
           if (await effectivePageHidden(batch,m.pageHidden) && known && m.reason !== 'list_ambiguous') {
@@ -385,6 +432,7 @@
             if (Date.now()-task.waitSince >= STALL_MS) {
               task.status = task.revisitCount ? 'partial' : 'deferred';
               task.note = waitLabels[m.reason];
+              diagnosticEvent(batch,'stall_rotation',task.note);
               delete task.waitSince;
               await advance(batch);
               return {ok:true,stop:true};
@@ -406,11 +454,12 @@
             return {ok:true,batch:clone(batch)};
           }
           if (m.complete === true && m.reason === "visible_catalog_end" && !effectivelyHidden) {
+            diagnosticEvent(batch,'category_complete');
             task.status = "completed"; delete task.waitSince; delete task.waitReason;
             await advance(batch);
             return {ok:true,batch:clone(batch)};
           } else { await stopScanner(batch);delete task.waitSince;delete task.waitReason;task.status = "partial";batch.status = "paused";const verificationWhy={http_denied:'检测到站点访问受限（HTTP 状态提示），需人工检查',access_restricted:'检测到站点访问受限，需人工检查',security_prompt:'检测到站点安全验证，需人工完成',login_required:'页面要求登录，请在采集页人工处理'};
-            const why=(m.reason==='manual-verification'&&Object.hasOwn(verificationWhy,m.verificationDetail)?verificationWhy[m.verificationDetail]:null)||{"manual-verification":"需人工完成站点验证或登录","catalog_list_unavailable":"未识别唯一主商品列表","scan_bound_reached":"达到单页扫描上限（非完成）","pending_cards":"仍有商品字段待复查","reader_error":"页面读取失败","sample_not_persisted":"未确认数据已保存"}[m.reason]||"未确认扫描完成";task.note=why;batch.message=why+"，已暂停，检查页面后可继续。"; }
+            const why=(m.reason==='manual-verification'&&Object.hasOwn(verificationWhy,m.verificationDetail)?verificationWhy[m.verificationDetail]:null)||{"manual-verification":"需人工完成站点验证或登录","catalog_list_unavailable":"未识别唯一主商品列表","scan_bound_reached":"达到单页扫描上限（非完成）","pending_cards":"仍有商品字段待复查","reader_error":"页面读取失败","sample_not_persisted":"未确认数据已保存"}[m.reason]||"未确认扫描完成";task.note=why;batch.message=why+"，已暂停，检查页面后可继续。";diagnosticEvent(batch,m.reason==='manual-verification'?'manual_verification':m.reason==='reader_error'?'reader_failure':'scan_paused',why); }
           await save(batch); return { ok: true, batch: clone(batch) };
         }
         case "categoryAddPool": {
@@ -427,6 +476,18 @@
         case "categoryExport": {
           const id=m.batchId||batch?.id,source=batch?.id===id?batch:(await snapshotHistory()).find(x=>x.id===id);
           if(!source)throw Error('找不到类目批次');return {ok:true,csv:scanner.buildManualSourcingCsv({batch:source,stores:source.results||{}})};
+        }
+        case "categoryDiagnostic": {
+          const id=m.batchId||batch?.id,source=batch?.id===id?batch:(await snapshotHistory()).find(x=>x.id===id);
+          if(!source)throw Error('找不到类目批次');
+          const tasks=(source.stores||[]).map(t=>{
+            const counts=diagnosisCounts(t),examples={};
+            for(const [sku,outcome] of Object.entries(t.diagnosticDecisions||{}))if(/^\d{1,24}$/.test(sku)&&diagnosticOutcomes.has(outcome)){const list=examples[outcome]||=[];if(list.length<5)list.push(sku);}
+            return {key:t.sellerKey,status:t.status,removedFromQueue:t.removedFromQueue===true,counts,examples,observedCount:t.observedCount||0,discoveredCount:t.discoveredCount??null,erpReadyCount:t.erpReadyCount??null,labelHitCount:t.labelHitCount??null,pendingCount:t.pendingCount||0,qualifiedCount:t.qualifiedCount||0,waitReason:waitLabels[t.waitReason]||null,lastDiscoveryAt:t.lastDiscoveryAt||null,lastErpReadyAt:t.lastErpReadyAt||null,lastLabelHitAt:t.lastLabelHitAt||null,lastAcceptedAt:t.lastAcceptedAt||null,unknownDiscoveredCount:counts.unknown||0};
+          });
+          const browser=source===batch&&source.status==='running'?await browserSnapshot(source):source.diagnosticBrowser||null;
+          const totals={};for(const task of tasks)for(const [key,count] of Object.entries(task.counts))totals[key]=(totals[key]||0)+count;
+          return {ok:true,diagnostic:{schemaVersion:1,version:'1.49',extensionVersion:chrome.runtime?.getManifest?.().version||'0.6.68',generatedAt:now(),batchId:source.id,status:source.status,currentIndex:source.currentIndex,options:{targetCount:source.options?.targetCount,minPrice:source.options?.minPrice,maxPrice:source.options?.maxPrice},experimentEnabled:source.backgroundExperiment===true,activityStatus:source.activityStatus||null,pageMode:source.pageMode||null,recentWaitReason:source.recentWaitReason||null,counters:{storeCount:tasks.length,observedCount:tasks.reduce((n,t)=>n+t.observedCount,0),discoveredCount:tasks.reduce((n,t)=>n+(t.discoveredCount||0),0),erpReadyCount:tasks.reduce((n,t)=>n+(t.erpReadyCount||0),0),labelHitCount:tasks.reduce((n,t)=>n+(t.labelHitCount||0),0),acceptedCount:(source.qualifiedSkuIds||[]).length,unknownLegacyCount:totals.unknown||0,decisions:totals},lastProgressAt:source.lastProgressAt||null,lastNewSkuAt:source.lastNewSkuAt||null,lastDiscoveryAt:source.lastDiscoveryAt||null,lastErpReadyAt:source.lastErpReadyAt||null,lastLabelHitAt:source.lastLabelHitAt||null,lastAcceptedAt:source.lastAcceptedAt||null,tasks,browser,events:(source.diagnosticEvents||[]).slice(-120)}};
         }
         case "categoryDeleteBatch": {
           const id=String(m.batchId||"");
@@ -465,7 +526,7 @@
       if (batch.status !== "running") return;
       if (info?.status !== "complete") return;
       const task = currentStore(batch);
-      if (!task || !pageMatches(tab?.url || "", task)) { batch.status = "paused"; batch.message = "任务标签页导航离开类目范围，已暂停"; await stopScanner(batch); await save(batch); return; }
+      if (!task || !pageMatches(tab?.url || "", task)) { diagnosticEvent(batch,'tab_left_task');batch.status = "paused"; batch.message = "任务标签页导航离开类目范围，已暂停"; await stopScanner(batch); await save(batch); return; }
       try {
         await protectTab(tabId);
         await enableFocusExperiment(batch);
@@ -474,36 +535,37 @@
     });
   }
   async function onRemoved(tabId) {
-    return queue(async () => { const batch = await read(); if (!batch || batch.tabId !== tabId) return; await releaseFocusExperiment(tabId);await releaseTab(tabId);if(batch.status !== "running")return;batch.status = "paused"; batch.tabId = null; batch.message = "类目任务标签页已关闭，已暂停"; await save(batch); });
+    return queue(async () => { const batch = await read(); if (!batch || batch.tabId !== tabId) return; await releaseFocusExperiment(tabId);await releaseTab(tabId);if(batch.status !== "running")return;diagnosticEvent(batch,'tab_closed');batch.status = "paused"; batch.tabId = null; batch.message = "类目任务标签页已关闭，已暂停"; await save(batch); });
   }
   chrome.debugger?.onDetach?.addListener?.((source) => {
     if (source?.tabId !== experimentDebuggerTabId) return;
     experimentDebuggerTabId=null;
-    void queue(async()=>{const batch=await read();if(!batch||batch.tabId!==source.tabId)return;batch.activityStatus='focus-emulation-detached';batch.backgroundExperiment=false;if(batch.status==='running'){await stopScanner(batch);batch.status='paused';batch.message='实验性焦点模拟已被分离，进度已保存并暂停';}await save(batch);});
+    void queue(async()=>{const batch=await read();if(!batch||batch.tabId!==source.tabId)return;diagnosticEvent(batch,'detach','焦点模拟已分离');batch.activityStatus='focus-emulation-detached';batch.backgroundExperiment=false;if(batch.status==='running'){await stopScanner(batch);batch.status='paused';batch.message='实验性焦点模拟已被分离，进度已保存并暂停';}await save(batch);});
   });
   async function onRestart() {
-    return queue(async () => { const batch = await read(); if (!batch || batch.status !== "running") return; batch.status = "paused"; batch.message = "浏览器重启后任务已暂停，请人工检查后继续"; await save(batch); });
+    return queue(async () => { const batch = await read(); if (!batch || batch.status !== "running") return; diagnosticEvent(batch,'browser_restart');batch.status = "paused"; batch.message = "浏览器重启后任务已暂停，请人工检查后继续"; await save(batch); });
   }
   async function onAlarm(alarm) {
     if(alarm?.name!==ALARM)return;
     await queue(async()=>{
       const b=await read();if(b?.status!=='running')return;
       const task=currentStore(b);let tab;
-      try{tab=await chrome.tabs.get(b.tabId)}catch{await releaseTab(b.tabId);b.tabId=null;b.status='paused';b.message='类目任务标签页已关闭，已暂停';await save(b);return}
-      if(!task||(!pageMatches(tab.url,task)&&!(tab.status==='loading'&&pageMatches(tab.pendingUrl,task)))){b.status='paused';b.message='任务标签页导航离开类目范围，已暂停';await stopScanner(b);await save(b);return}
+      try{tab=await chrome.tabs.get(b.tabId)}catch{await releaseTab(b.tabId);diagnosticEvent(b,'tab_closed');b.tabId=null;b.status='paused';b.message='类目任务标签页已关闭，已暂停';await save(b);return}
+      if(!task||(!pageMatches(tab.url,task)&&!(tab.status==='loading'&&pageMatches(tab.pendingUrl,task)))){diagnosticEvent(b,'tab_left_task',tab.discarded?'原任务标签已丢弃':tab.frozen?'原任务标签已冻结':'无法核对任务地址');b.status='paused';b.message='任务标签页导航离开类目范围，已暂停';await stopScanner(b);await save(b);return}
       // Browser lifecycle restrictions are not site verification. Do not reload,
       // activate, or change tabs to bypass browser/site restrictions.
-      if(tab.frozen||tab.discarded||tab.status==='loading'){await waitStatus(b,tab.frozen||tab.discarded?'浏览器暂缓后台页面执行，已保留进度，页面可用后自动检查。':'等待类目页面加载');return}
+      b.diagnosticBrowser=await browserSnapshot(b);
+      if(tab.frozen||tab.discarded||tab.status==='loading'){if(tab.frozen||tab.discarded)diagnosticEvent(b,tab.discarded?'tab_discarded':'watchdog_frozen',tab.status||'');await save(b);await waitStatus(b,tab.frozen||tab.discarded?'浏览器暂缓后台页面执行，已保留进度，页面可用后自动检查。':'等待类目页面加载');return}
       const since=Math.max(Date.parse(b.lastProgressAt)||0,Date.parse(b.watchdogSince)||0);
-      if(since&&Date.now()-since<STALE_MS)return;
+      if(since&&Date.now()-since<STALE_MS){await save(b);return;}
       await protectTab(b.tabId);
       let ack;
       try{ack=await bounded(chrome.tabs.sendMessage(b.tabId,{type:'categoryScanTick',batchId:b.id,attemptId:b.attemptId,pageNativeHidden:b.backgroundExperiment?await nativePageHidden(b.tabId):false}))}catch{ack={missing:true}}
-      if(ack===null){await waitStatus(b,'后台页面暂未响应，已保留进度并等待恢复。');return}
-      if(ack?.ok&&ack.running===true){await waitStatus(b,ack.pageHidden?'后台页面加载较慢，正在等待并检查采集进度。':'等待采集页面上报进度。');return}
-      if((Number(b.recoveryAttempts)||0)>=RECOVERY_LIMIT){await waitStatus(b,'页面读取器暂未恢复，已保留进度；请检查采集页面。');return}
+      if(ack===null){if(b.diagnosticEvents?.at(-1)?.type!=='watchdog_no_response')diagnosticEvent(b,'watchdog_no_response');await save(b);await waitStatus(b,'后台页面暂未响应，已保留进度并等待恢复。');return}
+      if(ack?.ok&&ack.running===true){b.diagnosticBrowser=await browserSnapshot(b,ack.pageReportedHidden,ack.pageFocused);await save(b);await waitStatus(b,ack.pageHidden?'后台页面加载较慢，正在等待并检查采集进度。':'等待采集页面上报进度。');return}
+      if((Number(b.recoveryAttempts)||0)>=RECOVERY_LIMIT){if(b.diagnosticEvents?.at(-1)?.type!=='watchdog_reader_unavailable')diagnosticEvent(b,'watchdog_reader_unavailable');await save(b);await waitStatus(b,'页面读取器暂未恢复，已保留进度；请检查采集页面。');return}
       delete task.waitSince;
-      b.recoveryAttempts=(Number(b.recoveryAttempts)||0)+1;b.attemptId=uuid();b.watchdogSince=now();phase(b,'recovering','正在从已保存进度恢复同一类目页面。');await save(b);
+      b.recoveryAttempts=(Number(b.recoveryAttempts)||0)+1;b.attemptId=uuid();b.watchdogSince=now();diagnosticEvent(b,'watchdog_recover',`尝试 ${b.recoveryAttempts}`);phase(b,'recovering','正在从已保存进度恢复同一类目页面。');await save(b);
       try{await startScanner(b,task)}catch{await waitStatus(b,'页面读取器暂未响应，正在等待自动恢复。')}
     });
   }
