@@ -108,6 +108,18 @@ assert.equal(pendingCompetitor.competitorReady, false);
 const notQualified = core.parseCardText(`rFBS佣金：\n12%\n17%\n17%\nSKU：1\n月销量：1`);
 assert.equal(notQualified.qualified, false);
 
+const hiddenOptionalFields = core.parseCardText(`648,71 ¥\n毛子ERP\n选品标签： 符合要求\nrFBS佣金: 12% 14.5% 14,5%\n月销量: 24\n发货模式: FBO,FBS\n长 宽 高: 250 x 180 x 100mm\n重 量: 650g\n跟卖列表：33个卖家\n促销优惠 76%`);
+assert.equal(hiddenOptionalFields.qualified,true);
+assert.equal(hiddenOptionalFields.sku,'');
+assert.deepEqual(hiddenOptionalFields.commissions,['12%','14.5%','14,5%']);
+assert.deepEqual(core.parseCardText('rFBS佣金：10% / 14.5% / 17%\n月销量：2').commissions,['10%','14.5%','17%']);
+assert.equal(hiddenOptionalFields.monthlySales,'24');
+assert.equal(hiddenOptionalFields.fulfillment,'FBO,FBS');
+assert.equal(hiddenOptionalFields.weight,'650g');
+assert.equal(hiddenOptionalFields.competitorReady,false);
+assert.equal(core.parseCardText('选品标签： 不符合要求').qualified,false);
+assert.equal(core.parseCardText('商品描述： 符合要求').qualified,false);
+
 assert.deepEqual(core.classifyShippingRisk("专业汽车诊断仪"), {
   type: "suspected_prohibited",
   ruleId: "restricted-meters",
@@ -366,7 +378,7 @@ assert.match(batchHtmlSource, /id="shippingRisks"/);
 assert.match(batchHtmlSource, /禁运与运输限制复核/);
 
 const manifest = JSON.parse(fs.readFileSync(new URL("../ozon-erp-collector-extension/manifest.json", import.meta.url), "utf8"));
-assert.equal(manifest.version, "0.6.65");
+assert.equal(manifest.version, "0.6.66");
 assert.ok(manifest.permissions.includes("alarms"));
 assert.ok(manifest.permissions.includes("unlimitedStorage"));
 

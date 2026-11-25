@@ -114,6 +114,20 @@ try{
  await reader.evaluate(url=>startListener({type:'categoryScanStart',batchId:'fixture',attemptId:'a',categoryUrl:url,options:{minPrice:20,maxPrice:100,targetCount:3}},{},()=>{}),readerUrl);
  await reader.waitForFunction(()=>messages.some(x=>x.type==='categorySample'));
  const sample=await reader.evaluate(()=>messages.find(m=>m.type==='categorySample'));assert.deepEqual(sample.products.map(x=>x.sku),['100','103']);assert.ok(!sample.products.some(x=>['101','102','999'].includes(x.sku)));assert.equal(sample.categoryName,'工具');assert.deepEqual(errors,[]);
+ // Screenshot-style Maozi card: the user's display settings omit SKU and lowest-price rows.
+ const panel=(label,fields='')=>`<div class="actual-erp"><div>毛子ERP</div>${label?`<div>选品标签： <span style="background:#ff0000;color:white">${label}</span></div>`:''}<div>rFBS佣金： <span>12%</span> <span>14.5%</span> <span>14.5%</span></div><div>月销量：24</div><div>发货模式：FBO,FBS</div><div>长宽高：250 x 180 x 100mm</div><div>重量：650g</div><div>跟卖列表：33个卖家</div>${fields}</div>`;
+ const liveShape=(sku,title,amount,erp)=>`<article><a href="/product/headset-${sku}/">${title}</a><div>${amount} ¥</div>${erp}</article>`;
+ const screenshotCards=liveShape('301','1MORE 耳机','648,71',panel('符合要求'))+liveShape('302','OnePlus 耳机','125,69',panel(''))+liveShape('303','低价耳机','50,00',panel('符合要求'))+liveShape('304','身份冲突商品','648,71',panel('符合要求','<div>SKU：99999</div>'))+liveShape('305','未加载ERP','648,71','<div>正在加载</div>')+liveShape('306','隐藏标签','648,71',panel('符合要求').replace('background:#ff0000','display:none;background:#ff0000'))+liveShape('307','符合要求','648,71',panel(''))+liveShape('308','缺少重量','648,71',panel('符合要求').replace('<div>重量：650g</div>',''))+liveShape('309','双 ERP 面板','648,71',panel('符合要求')+panel(''));
+ await reader.evaluate(html=>{const section=document.querySelector('main section');window.labelFixtureOriginal=section.innerHTML;section.innerHTML=html;messages.length=0},screenshotCards);
+ await reader.evaluate(url=>startListener({type:'categoryScanStart',batchId:'fixture',attemptId:'screenshot-label',categoryUrl:url,options:{minPrice:100,targetCount:10}},{},()=>{}),readerUrl);
+ await reader.waitForFunction(()=>messages.some(m=>m.type==='categorySample'));
+ const screenshotSample=await reader.evaluate(()=>messages.find(m=>m.type==='categorySample'));
+ assert.deepEqual(screenshotSample.labelHitSkus.sort(),['301','303','308']);
+ assert.deepEqual(screenshotSample.products.map(p=>p.sku),['301']);
+ assert.equal(screenshotSample.products[0].competitorReady,false);
+ assert.deepEqual(screenshotSample.products[0].commissions,['12%','14.5%','14.5%']);
+ assert.ok(['304','305','308','309'].every(sku=>screenshotSample.pendingSkus.includes(sku)));
+ await reader.evaluate(()=>{document.querySelector('main section').innerHTML=window.labelFixtureOriginal;messages.length=0;});
  // Numeric values in ordinary product cards are not HTTP errors.
  await reader.evaluate(({normal,price})=>{messages.length=0;const section=document.querySelector('main section');window.savedCatalogMarkup=section.innerHTML;section.innerHTML=normal+price;}, {normal:card('5840376192','普通配件'),price:card('105','普通售价').replace('80.50 ¥','403.50 ¥')});
  await reader.evaluate(url=>startListener({type:'categoryScanStart',batchId:'fixture',attemptId:'ordinary-numbers',categoryUrl:url,options:{minPrice:20,maxPrice:500,targetCount:3}},{},()=>{}),readerUrl);

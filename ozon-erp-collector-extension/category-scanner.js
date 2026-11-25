@@ -91,11 +91,44 @@
     const productSku=href=>{try{const u=new URL(href);return u.origin==='https://www.ozon.ru'&&!u.username&&!u.password?u.pathname.match(/^\/product\/(?:[^/]+-)?(\d+)\/?$/)?.[1]||'':''}catch{return ''}};
     const findCard=(anchor,sku)=>{
       let card=anchor;for(let depth=0;card&&card!==list&&depth<11;depth++,card=card.parentElement){
-        const raw=textOf(card);if(raw.length>2400)break;
+        if(!visible(card))continue;
+        const raw=textOf(card);if(raw.length>3200)break;
+        const productAnchors=[...(card.querySelectorAll?.('a[href*="/product/"]')||[])].filter(visible);
+        const linkSkus=new Set(productAnchors.map(a=>productSku(a.href)).filter(Boolean));
+        // Never let a stale SKU or ERP fields from an adjacent product become
+        // evidence for this link. A candidate boundary owns exactly one link.
+        if(linkSkus.size>1)break;
+        if(linkSkus.size!==1||!linkSkus.has(sku))continue;
         const panelSkus=new Set([...raw.matchAll(/SKU\s*[:：]\s*(\d+)/g)].map(m=>m[1]));
-        const linkSkus=new Set([sku,...[...(card.querySelectorAll?.('a[href*="/product/"]')||[])].map(a=>productSku(a.href)).filter(Boolean)]);
-        if(panelSkus.size>1||linkSkus.size>1)break;
-        if(panelSkus.size===1&&panelSkus.has(sku)&&raw.includes('rFBS佣金：')&&raw.length>=40)return {card,raw};
+        if(panelSkus.size>1||(panelSkus.size===1&&!panelSkus.has(sku)))continue;
+        const brandCount=[...raw.matchAll(/毛子\s*ERP/ig)].length;
+        if(brandCount>1)continue;
+        const legacyExplicitSku=brandCount===0&&panelSkus.size===1&&panelSkus.has(sku)&&/rFBS佣金\s*[:：]/.test(raw);
+        if(brandCount!==1&&!legacyExplicitSku)continue;
+        const fieldLine=(label)=>raw.match(new RegExp(`(?:^|\\n)[ \\t]*${label}[ \\t]*[:：]?[ \\t]*([^\\n]*)`,'i'))?.[1]?.trim()||'';
+        const monthly=fieldLine('月销量');
+        const fulfillment=fieldLine('发货模式');
+        const loading=/(?:加载中|正在加载|loading|загрузка)/i.test(raw);
+        const realValue=value=>!!value&&!/^(?:暂无数据|暂无|无|--|—|-)$/i.test(value);
+        const supportedFulfillment=/(?:^|[\s,，/])(?:FBO|FBS|rFBS)(?:$|[\s,，/])/i.test(fulfillment);
+        const panelReady=realValue(monthly)&&/\d/.test(monthly)&&supportedFulfillment&&!loading;
+        const descendants=[];const visit=node=>{for(const child of node?.children||[]){descendants.push(child);visit(child)}};visit(card);
+        const exactRows=descendants.filter(node=>visible(node)&&/^选品标签\s*[:：]\s*符合要求$/.test(textOf(node).replace(/\s+/g,' ').trim()));
+        const exactBadge=exactRows.some(row=>{
+          for(let panel=row.parentElement;panel&&panel!==card;panel=panel.parentElement){
+            if(!visible(panel))return false;
+            if(!/毛子\s*ERP/i.test(textOf(panel)))continue;
+            const panelRows=exactRows.filter(other=>panel.contains?.(other));
+            return panelRows.length===1&&[...textOf(panel).matchAll(/毛子\s*ERP/ig)].length===1;
+          }
+          return false;
+        });
+        const legacyRows=descendants.filter(node=>visible(node)&&/^符合要求$/.test(textOf(node).trim())&&!/^选品标签/.test(textOf(node).trim()));
+        const legacyBadge=legacyExplicitSku&&legacyRows.some(row=>{
+          for(let parent=row.parentElement;parent&&parent!==card;parent=parent.parentElement)if(String(parent.tagName||'').toUpperCase()==='A')return false;
+          return true;
+        });
+        return {card,raw,panelReady,qualified:exactBadge||Boolean(legacyBadge)};
       }return null;
     };
     const anchors = [...list.querySelectorAll('a[href*="/product/"]')];
@@ -108,25 +141,40 @@
       if(!sku)continue;
       discovered.add(sku);
       const scoped=findCard(anchor,sku);if(!scoped){if(!observed.has(sku))pending.add(sku);continue;}
-      const {card,raw}=scoped;
+      const {card,raw,panelReady,qualified}=scoped;
       const parsed = globalScope.OzonStoreScannerCore?.parseCardText(raw);
-      if (!parsed?.sku || !/\/product\//.test(link)) {if(!observed.has(sku))pending.add(sku);continue;}
+      if (!parsed || !/\/product\//.test(link)) {if(!observed.has(sku))pending.add(sku);continue;}
+      // Category tiles often render the ERP fields without a colon. Keep this
+      // fallback local to the already isolated panel and each labeled line.
+      const lineValue=(label)=>raw.match(new RegExp(`(?:^|\\n)[ \\t]*${label}[ \\t]*[:：]?[ \\t]*([^\\n]+)`, 'i'))?.[1]?.trim()||'';
+      const commissionLine=raw.match(/(?:^|\n)[ \t]*rFBS佣金[ \t]*[:：]?[ \t]*([^\n]+)/i)?.[1]||'';
+      const commissions=[...commissionLine.matchAll(/(\d+(?:[.,]\d+)?)\s*%/g)].map(m=>`${m[1]}%`).slice(0,3);
+      parsed.qualified=qualified;
+      parsed.monthlySales ||= lineValue('月销量');
+      parsed.fulfillment ||= lineValue('发货模式');
+      parsed.dimensions ||= lineValue('长\\s*宽\\s*高');
+      parsed.weight ||= lineValue('重\\s*量');
+      if(!parsed.commissions?.length)parsed.commissions=commissions;
       const linkSku = new URL(link, globalScope.location?.href).pathname.match(/^\/product\/(?:[^/]+-)?(\d+)\/?$/)?.[1];
-      if (linkSku !== String(parsed.sku)) continue;
-      if (!(globalScope.OzonCategoryCore.capturedPrice(parsed.price) > 0)||!parsed.competitorReady||!parsed.commissions?.length) {if(!observed.has(sku))pending.add(sku);continue;}
-      erpReady.add(String(parsed.sku));
-      if (parsed.qualified) labelHit.add(String(parsed.sku));
+      if(linkSku!==sku||(parsed.sku&&linkSku!==String(parsed.sku)))continue;
+      if(parsed.qualified)labelHit.add(sku);
+      if(!panelReady){if(!observed.has(sku))pending.add(sku);continue;}
+      erpReady.add(sku);
       const name = [anchor,...(card.querySelectorAll?.('a[href*="/product/"]')||[])].filter(a=>productSku(a.href)===sku).map(a=>(textOf(a)||a.getAttribute?.('aria-label')||'').replace(/\s+/g,' ').trim()).filter(Boolean).sort((a,b)=>b.length-a.length)[0]||'';
+      if(!parsed.qualified){observed.add(sku);pending.delete(sku);continue;}
       if (!name) { pending.add(sku); continue; }
-      observed.add(String(parsed.sku));
-      pending.delete(sku);
       const rawRiskText = `${parsed.category}\n${name}\n${raw}`;
       const shippingRisk = globalScope.OzonStoreScannerCore?.classifyShippingRisk(rawRiskText) || {};
-      const product = { sku: String(parsed.sku), name, link, qualified: Boolean(parsed.qualified), price: parsed.price,
+      const product = { sku, name, link, qualified: Boolean(parsed.qualified), price: parsed.price,
         commissions: parsed.commissions || [], monthlySales: parsed.monthlySales, fulfillment: parsed.fulfillment,
         dimensions: parsed.dimensions, weight: parsed.weight, competitor: parsed.competitor,
         competitorReady: Boolean(parsed.competitorReady), shippingRisk, category: parsed.category, rawRiskText };
-      if (parsed.qualified && core.qualifiedProduct?.(product, options)) products.push(product);
+      const dimensionCount=[...String(parsed.dimensions||'').matchAll(/\d+(?:[.,]\d+)?/g)].length;
+      const weightValue=String(parsed.weight||'');
+      const complete=globalScope.OzonCategoryCore.capturedPrice(parsed.price)>0&&parsed.commissions?.length>0&&parsed.monthlySales&&parsed.fulfillment&&dimensionCount>=3&&/\d/.test(weightValue)&&!/(?:加载中|暂无|--|—|-)/i.test(`${parsed.dimensions} ${weightValue}`)&&name;
+      if(!complete){if(!observed.has(sku))pending.add(sku);continue;}
+      observed.add(sku);pending.delete(sku);
+      if(parsed.qualified&&core.qualifiedProduct?.(product,options))products.push(product);
     }
     return { products, observedSkus: [...observed], discoverSkus:[...discovered], erpReadySkus:[...erpReady], labelHitSkus:[...labelHit], pendingSkus:[...pending],pendingCount:pending.size, available: anchors.length > 0 };
   }

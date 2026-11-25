@@ -18,11 +18,20 @@ const makeEl = ({ text = '', href = '', cls = '', widget = '', children = [], ta
 };
 const card = (sku, name, label = '符合要求', category = '家居') => makeEl({
   text: `${label}\n399.00 ¥\n类目：${category}\nrFBS佣金：10%\nSKU：${sku}\nSKU：${sku}\n月销量：20\n发货模式：FBS\n长宽高：10×10×10\n重量：500g\n跟卖最低价：300`,
-  children: [makeEl({ tag: 'A', href: `https://www.ozon.ru/product/${name}-${sku}/`, text: name })],
+  children: [makeEl({ tag: 'A', href: `https://www.ozon.ru/product/${name}-${sku}/`, text: name }), makeEl({ text: label })],
 });
 const incomplete = card('10005', 'incomplete-item');
 incomplete.innerText = incomplete.textContent = incomplete.innerText.replace(/\n跟卖最低价：300/, '');
-const mainList = makeEl({ widget: 'tileGridDesktop', children: [card('10001', 'valid-item'), card('10002', 'bad-item', '无标签'), card('10003', 'danger-item', '符合要求', '枪支用品'), card('10004', 'wrong-sku'), incomplete ] });
+const screenshotCard = (sku, name, tag = '选品标签： 符合要求', extra = '') => makeEl({
+  text: `${tag}\n648,71 ¥\n毛子ERP\nrFBS佣金 12% 14.5% 14.5%\n月销量 24\n发货模式 FBO,FBS\n长 宽 高 250 x 180 x 100mm\n重 量 650g\n跟卖列表 33个卖家${extra}`,
+  children: [makeEl({ tag: 'A', href: `https://www.ozon.ru/product/${name}-${sku}/`, text: name }), makeEl({ text: `毛子ERP\n${tag}`, children: [makeEl({ text: tag })] })],
+});
+const screenshotPositive = screenshotCard('20001', 'screenshot-positive');
+const screenshotNegative = screenshotCard('20002', 'screenshot-negative', '选品标签： 不符合要求');
+const pendingPanel = makeEl({ text: '毛子ERP\n选品标签： 符合要求\nrFBS佣金 12%\n月销量 24\n发货模式： 加载中', children: [makeEl({ tag: 'A', href: 'https://www.ozon.ru/product/pending-panel-20003/', text: 'pending-panel' }), makeEl({ text: '毛子ERP\n选品标签： 符合要求', children: [makeEl({ text: '选品标签： 符合要求' })] })] });
+const missingRequired = makeEl({ text: '毛子ERP\n选品标签： 符合要求\n月销量：24\n发货模式：FBO\n长 宽 高：250 x 180 x 100mm\n重 量：650g', children: [makeEl({ tag: 'A', href: 'https://www.ozon.ru/product/missing-required-20005/', text: 'missing-required' }), makeEl({ text: '毛子ERP\n选品标签： 符合要求', children: [makeEl({ text: '选品标签： 符合要求' })] })] });
+const staleSkuCard = makeEl({ text: '毛子ERP\n选品标签： 符合要求\nrFBS佣金 12%\nSKU：29999\n月销量 24\n发货模式 FBO', children: [makeEl({ tag: 'A', href: 'https://www.ozon.ru/product/stale-sku-20004/', text: 'stale-sku' })] });
+const mainList = makeEl({ widget: 'tileGridDesktop', children: [card('10001', 'valid-item'), card('10002', 'bad-item', '无标签'), card('10003', 'danger-item', '符合要求', '枪支用品'), card('10004', 'wrong-sku'), incomplete, screenshotPositive, screenshotNegative, pendingPanel, staleSkuCard, missingRequired ] });
 // The final card deliberately has a SKU/link mismatch.
 mainList.children[3].children[0].href = 'https://www.ozon.ru/product/wrong-item-99999/';
 const recommendation = makeEl({ widget: 'tileGridDesktop', cls: 'recommendations', children: [card('99901', 'recommended')] });
@@ -39,11 +48,17 @@ assert.equal(listener({ type: 'categoryScanStart', batchId: 'b', attemptId: 'a',
 assert.equal(ack?.accepted, true, 'start must be acknowledged immediately');
 const reader = context.OzonCategoryScanner.createReader(context.document, context.OzonCategoryCore);
 const result = reader.read(context.location.href, {});
-assert.deepEqual(Array.from(result.products, (p) => p.sku), ['10001']);
-assert.deepEqual(Array.from(result.observedSkus).sort(), ['10001', '10002', '10003']);
-assert.deepEqual(Array.from(result.discoverSkus).sort(), ['10001', '10002', '10003', '10005', '99999']);
-assert.deepEqual(Array.from(result.erpReadySkus).sort(), ['10001', '10002', '10003']);
-assert.deepEqual(Array.from(result.labelHitSkus).sort(), ['10001', '10003']);
+assert.deepEqual(Array.from(result.products, (p) => p.sku).sort(), ['10001', '10005', '20001']);
+assert.deepEqual(Array.from(result.observedSkus).sort(), ['10001', '10002', '10003', '10005', '20001', '20002']);
+assert.deepEqual(Array.from(result.discoverSkus).sort(), ['10001', '10002', '10003', '10005', '20001', '20002', '20003', '20004', '20005', '99999']);
+assert.deepEqual(Array.from(result.erpReadySkus).sort(), ['10001', '10002', '10003', '10005', '20001', '20002', '20005']);
+assert.deepEqual(Array.from(result.labelHitSkus).sort(), ['10001', '10003', '10005', '20001', '20003', '20005']);
+assert.equal(result.products.find((p) => p.sku === '20001')?.competitor, '', 'missing competitor price remains blank');
+assert.equal(result.products.find((p) => p.sku === '20001')?.competitorReady, false, 'missing competitor price is not marked ready');
+assert.ok(result.pendingSkus.includes('20003'), 'incomplete ERP panel remains pending');
+assert.ok(result.pendingSkus.includes('20004'), 'panel with conflicting stale SKU is rejected');
+assert.ok(result.pendingSkus.includes('20005'), 'ERP panel missing required commission stays pending');
+assert.ok(!result.observedSkus.includes('20005'), 'incomplete required fields do not count as observed');
 assert.equal(result.products[0].link, 'https://www.ozon.ru/product/valid-item-10001/');
 assert.equal(context.OzonCategoryCore.paginationUrl(context.location.href, 'https://www.ozon.ru/category/demo-123/'), 'https://www.ozon.ru/category/demo-123/?page=2');
 const next = makeEl({ tag: 'A', href: 'https://www.ozon.ru/category/demo-123/?page=3', text: '›', attrs: { 'aria-label': 'Next page' } });

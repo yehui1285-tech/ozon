@@ -150,19 +150,21 @@
 
   function parseCardText(rawText) {
     const text = cleanText(rawText);
-    const commissionSection = text.match(/rFBS佣金：([\s\S]*?)SKU：/)?.[1] || "";
+    // ERP display settings can hide SKU. Read only the adjacent percentage
+    // values belonging to the commission row, never subsequent discounts.
+    const commissionSection = text.match(/rFBS佣金\s*[:：]\s*(\d+(?:[.,]\d+)?[ \t]*%(?:\s*(?:\/\s*)?\d+(?:[.,]\d+)?[ \t]*%){0,2})/)?.[1] || "";
     const competitor = competitorState(text);
     return {
-      qualified: /(?:^|\n)[ \t]*符合要求[ \t]*(?:\n|$)/.test(text),
-      category: firstMatch(text, /类目：\s*([^\n]+)/),
-      sku: firstMatch(text, /SKU：\s*(\d+)/),
+      qualified: /(?:^|\n)[ \t]*(?:选品标签[ \t]*[:：][ \t]*)?符合要求[ \t]*(?:\n|$)/.test(text),
+      category: firstMatch(text, /类目\s*[:：]\s*([^\n]+)/),
+      sku: firstMatch(text, /SKU\s*[:：]\s*(\d+)/),
       price: firstMatch(text, /(\d[\d\s\u00a0\u202f]*[,.]\d{2})\s*¥/),
       commissions: [...commissionSection.matchAll(/(\d+(?:[.,]\d+)?)\s*%/g)].map((match) => `${match[1]}%`).slice(0, 3),
-      monthlySales: firstMatch(text, /月销量：\s*([^\n]+)/),
-      fulfillment: firstMatch(text, /发货模式：\s*([^\n]+)/),
-      dimensions: firstMatch(text, /长\s*宽\s*高：\s*([^\n]+)/),
-      weight: firstMatch(text, /重\s*量：\s*([^\n]+)/),
-      listedAt: firstMatch(text, /上架时间：\s*([^\n]+)/),
+      monthlySales: firstMatch(text, /月销量\s*[:：]\s*([^\n]+)/),
+      fulfillment: firstMatch(text, /发货模式\s*[:：]\s*([^\n]+)/),
+      dimensions: firstMatch(text, /长\s*宽\s*高\s*[:：]\s*([^\n]+)/),
+      weight: firstMatch(text, /重\s*量\s*[:：]\s*([^\n]+)/),
+      listedAt: firstMatch(text, /上架时间\s*[:：]\s*([^\n]+)/),
       competitor: competitor.value,
       competitorReady: competitor.ready,
     };
