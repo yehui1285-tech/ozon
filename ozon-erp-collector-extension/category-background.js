@@ -83,6 +83,14 @@
   function phase(batch,mode,message){batch.pageMode=mode;batch.message=message;return batch}
   async function waitStatus(batch,message){if(batch.pageMode!=='waiting'||batch.message!==message){phase(batch,'waiting',message);await save(batch)}}
   function currentStore(batch) { return batch?.stores?.[batch.currentIndex] || null; }
+  function runnableTask(task) {
+    return !!task && !task.removedFromQueue && ['pending','deferred','partial','scanning','paused'].includes(task.status);
+  }
+  function nextResumeIndex(batch) {
+    if (Number.isInteger(batch.resumeIndex) && runnableTask(batch.stores[batch.resumeIndex])) return batch.resumeIndex;
+    if (runnableTask(currentStore(batch))) return batch.currentIndex;
+    return batch.stores.findIndex(runnableTask);
+  }
   function pageUrl(task) { return task?.pageUrl || task?.url || ""; }
   function pageMatches(actual, task) {
     return !!task && core.samePage(actual || "", task.url) && core.exactPageUrl(actual)===pageUrl(task);
@@ -107,6 +115,7 @@
   const historySummary = batch => ({ id: batch.id, status: batch.status, updatedAt: batch.updatedAt, qualifiedCount: qualifiedTotal(batch), storeCount: batch.stores?.length || 0 });
   function assertActive(batch, m, sender, requirePage = true) {
     if (!batch || batch.id !== m.batchId) throw Error("类目批次已变化");
+    if (batch.status !== 'running' || currentStore(batch)?.status !== 'scanning') throw Error('类目任务已暂停或不再活动');
     if (!batch.attemptId || batch.attemptId !== m.attemptId) throw Error("类目扫描尝试已失效");
     if (!batch.tabId || sender?.tab?.id !== batch.tabId) throw Error(`消息来自非类目任务标签页 (${sender?.tab?.id ?? "missing"}/${batch.tabId ?? "missing"})`);
     const task = currentStore(batch);
@@ -119,17 +128,26 @@
   }
   // Store the checkpoint and intended destination before sending a navigation.
   // A restart or failed navigation can then resume without losing either task.
-  async function switchTask(batch, index) {
+  async function switchTask(batch, index, allowFreshWindow = false) {
     const previous = currentStore(batch), next = batch.stores[index];
     const resumingSwitch = batch.resumeIndex === index;
     batch.resumeIndex = index;
     await save(batch);
     try {
-      const tab = await chrome.tabs.get(batch.tabId);
-      const actual = tab.pendingUrl || tab.url;
-      if (!pageMatches(actual, previous) && !(resumingSwitch && pageMatches(actual, next))) throw Error();
-      await stopScanner(batch);
-      if (!pageMatches(actual, next)) { await releaseFocusExperiment(batch.tabId); await chrome.tabs.update(batch.tabId, {url:pageUrl(next)}); }
+      const tab = batch.tabId == null ? null : await chrome.tabs.get(batch.tabId).catch(()=>null);
+      const actual = tab && (tab.pendingUrl || tab.url);
+      // Only reuse a tab whose native URL proves it belongs to this batch. If
+      // the owned tab was closed or navigated elsewhere, leave it alone and
+      // create a fresh task window for the explicitly selected category.
+      if (tab && (pageMatches(actual, previous) || ((resumingSwitch || allowFreshWindow) && pageMatches(actual, next)))) {
+        await stopScanner(batch);
+        if (!pageMatches(actual, next)) { await releaseFocusExperiment(batch.tabId); await chrome.tabs.update(batch.tabId, {url:pageUrl(next)}); }
+      } else if (allowFreshWindow) {
+        if (batch.tabId != null) { await releaseFocusExperiment(batch.tabId); await releaseTab(batch.tabId); }
+        const fresh = await createTaskWindow(pageUrl(next));
+        batch.tabId = fresh.id;
+        await protectTab(batch.tabId);
+      } else throw Error();
     } catch {
       batch.status = 'paused';
       batch.message = '切换前无法确认采集页，进度已保存。请检查原标签页后继续。';
@@ -146,7 +164,10 @@
     batch.attemptId = uuid();
     batch.watchdogSince = now();
     batch.recoveryAttempts = 0;
+    await protectTab(batch.tabId);
     phase(batch,'waiting',next.revisitCount ? '正在回查已保存的类目' : '等待下一类目页面加载');
+    await save(batch);
+    await enableFocusExperiment(batch);
     await save(batch);
     // onUpdated handles loading pages. A same-page return needs an explicit start.
     const tab = await chrome.tabs.get(batch.tabId).catch(()=>null);
@@ -244,6 +265,8 @@
         case "categoryStop": {
           if (!batch) return { ok: true, batch: null };
           await stopScanner(batch);
+          const active = currentStore(batch);
+          if (active?.status === 'scanning') active.status = active.pendingCount || active.observedCount ? 'partial' : 'pending';
           batch.status = m.type === "categoryStop" ? "stopped" : "paused";
           batch.message = m.type === "categoryStop" ? "已停止" : "已暂停";
           await save(batch); return { ok: true, batch: clone(batch) };
@@ -251,6 +274,14 @@
         case "categoryResume":
           if (!batch || batch.status !== "paused") throw Error("没有可继续的暂停类目批次");
           if (typeof m.backgroundExperiment==='boolean') batch.backgroundExperiment=m.backgroundExperiment;
+          if (finishAtTarget(batch)) { await save(batch); return {ok:true,batch:clone(batch)}; }
+          const resumeIndex=nextResumeIndex(batch);
+          if (resumeIndex<0) {
+            batch.status='completed'; batch.message='本批已无待扫描类目'; delete batch.resumeIndex;
+            await save(batch); return {ok:true,batch:clone(batch)};
+          }
+          if (resumeIndex!==batch.currentIndex) batch.resumeIndex=resumeIndex;
+          else if (!runnableTask(batch.stores[batch.resumeIndex])) delete batch.resumeIndex;
           if (Number.isInteger(batch.resumeIndex)) {
             batch.status = 'running';
             const previousTab = batch.tabId == null ? null : await chrome.tabs.get(batch.tabId).catch(()=>null);
@@ -267,6 +298,39 @@
           }
           if (currentStore(batch)) {const task=currentStore(batch);task.status = "scanning";delete task.note;delete task.waitSince;delete task.waitReason;}
           batch.status = "running"; batch.message = "继续扫描"; await openCurrent(batch); return { ok: true, batch: clone(batch) };
+        case "categoryTaskResume":
+        case "categoryTaskSkip":
+        case "categoryTaskRemove": {
+          if (!batch || batch.id !== m.batchId) throw Error('类目批次已变化');
+          if (!['paused','stopped'].includes(batch.status)) throw Error('仅可在已暂停或已停止的批次中操作类目卡片');
+          const matches = batch.stores.map((task,index)=>({task,index})).filter(x=>x.task.sellerKey===m.sellerKey);
+          if (matches.length !== 1) throw Error('未找到唯一的类目卡片');
+          const {task,index} = matches[0];
+          const active = currentStore(batch);
+          if (active?.status === 'scanning') active.status = active.pendingCount || active.observedCount ? 'partial' : 'pending';
+          if (m.type === 'categoryTaskResume') {
+            if (task.removedFromQueue || ['completed','skipped'].includes(task.status)) throw Error('已完成或已移出队列的类目不能继续');
+            if (qualifiedTotal(batch) >= batch.options.targetCount) throw Error('本批目标已达到，不能继续类目');
+            if (!runnableTask(task)) throw Error('该类目当前不能继续');
+            if (typeof m.backgroundExperiment==='boolean') batch.backgroundExperiment=m.backgroundExperiment;
+            delete batch.resumeIndex;
+            if (task.status==='scanning' || task.status==='paused') task.status = task.pendingCount || task.observedCount ? 'partial' : 'pending';
+            batch.status='running'; batch.message='继续所选类目';
+            await switchTask(batch,index,true);
+            return {ok:true,batch:clone(batch)};
+          }
+          await stopScanner(batch);
+          if (!runnableTask(task)) throw Error('该类目当前不能跳过或移出');
+          task.status='skipped'; task.skipReason=m.type==='categoryTaskRemove'?'已移出本批':'手动跳过';
+          if (m.type==='categoryTaskRemove') task.removedFromQueue=true;
+          const next=nextResumeIndex(batch);
+          if (next<0) {
+            batch.status='completed'; batch.message='本批已无待扫描类目'; delete batch.resumeIndex;
+          } else if (next!==batch.currentIndex) batch.resumeIndex=next;
+          else delete batch.resumeIndex;
+          if (batch.status !== 'completed') batch.message=m.type==='categoryTaskRemove'?'类目已移出本批':'已跳过此类目';
+          await save(batch); return {ok:true,batch:clone(batch)};
+        }
         case "categorySample": {
           const task = assertActive(batch, m, sender);
           if (batch.status !== "running") throw Error("类目批次当前未运行");

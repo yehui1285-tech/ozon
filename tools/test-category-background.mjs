@@ -286,4 +286,45 @@ await new Promise(resolve=>setTimeout(resolve,0));
 batch=(await runner.handle({type:'categoryGet'})).batch;
 assert.equal(batch.status,'paused','user detaching the experiment session pauses with the checkpoint preserved');
 assert.equal(batch.backgroundExperiment,false);
+// Explicit card operations are bound to the current batch and seller key.
+await runner.handle({type:'categoryStop'});
+batch=(await runner.handle({type:'categoryStart',urls:[regularUrl,chinaUrl],targetCount:20,confirmArchiveOverflow:true})).batch;
+const cardId=batch.id, cardAttempt=batch.attemptId, cardTab=batch.tabId;
+await runner.handle({type:'categorySample',batchId:cardId,attemptId:cardAttempt,categoryUrl:regularUrl,
+  observedSkus:['9901'],pendingSkus:['9902'],pendingCount:1,products:[]},{tab:{id:cardTab,url:regularUrl}});
+batch=(await runner.handle({type:'categoryStop'})).batch;
+assert.equal(batch.stores[0].status,'partial','stop preserves an active checkpoint as a resumable partial card');
+await assert.rejects(()=>runner.handle({type:'categoryTaskSkip',batchId:'stale-batch',sellerKey:batch.stores[1].sellerKey}),/变化/);
+await assert.rejects(()=>runner.handle({type:'categoryTaskSkip',batchId:batch.id,sellerKey:'not-a-seller'}),/未找到/);
+await assert.rejects(()=>runner.handle({type:'categorySample',batchId:cardId,attemptId:cardAttempt,categoryUrl:regularUrl,
+  observedSkus:['9903'],products:[]},{tab:{id:cardTab,url:regularUrl}}),/暂停|活动/);
+batch=(await runner.handle({type:'categoryTaskResume',batchId:batch.id,sellerKey:batch.stores[1].sellerKey})).batch;
+assert.equal(batch.status,'running');assert.equal(batch.currentIndex,1,'explicit selection switches to the chosen pending card');
+assert.equal(batch.stores[0].status,'partial','switching preserves the other incomplete checkpoint');
+await runner.handle({type:'categoryPause'});
+batch=(await runner.handle({type:'categoryTaskSkip',batchId:batch.id,sellerKey:batch.stores[1].sellerKey})).batch;
+assert.equal(batch.stores[1].status,'skipped');
+batch=(await runner.handle({type:'categoryTaskRemove',batchId:batch.id,sellerKey:batch.stores[0].sellerKey})).batch;
+assert.equal(batch.stores[0].status,'skipped');assert.equal(batch.stores[0].removedFromQueue,true);
+assert.deepEqual(Array.from(batch.stores[0].observedSkus),['9901']);assert.deepEqual(Array.from(batch.stores[0].pendingSkus),['9902']);
+assert.equal(batch.status,'completed','all skipped or removed cards settle without restarting');
+batch=(await runner.handle({type:'categoryStart',urls:[regularUrl,chinaUrl],targetCount:20,confirmArchiveOverflow:true})).batch;
+await runner.handle({type:'categoryStop'});
+batch=(await runner.handle({type:'categoryTaskRemove',batchId:batch.id,sellerKey:batch.stores[0].sellerKey})).batch;
+assert.equal(batch.stores[0].removedFromQueue,true);
+batch=(await runner.handle({type:'categoryTaskResume',batchId:batch.id,sellerKey:batch.stores[1].sellerKey}));
+assert.equal(batch.ok,true);assert.equal(batch.batch.currentIndex,1,'a stopped pending card can be explicitly resumed');
+
+// A skipped scheduled card must never make Continue restart an already completed card.
+await runner.handle({type:'categoryStop'});
+const thirdUrl='https://www.ozon.ru/category/tools-8501/';
+batch=(await runner.handle({type:'categoryStart',urls:[regularUrl,chinaUrl,thirdUrl],targetCount:20,confirmArchiveOverflow:true})).batch;
+await runner.handle({type:'categoryPause'});
+const savedCardBatch=data.ozonCategoryBatchV1;
+savedCardBatch.stores[0].status='completed';savedCardBatch.stores[1].status='partial';savedCardBatch.resumeIndex=1;
+batch=(await runner.handle({type:'categoryTaskSkip',batchId:batch.id,sellerKey:batch.stores[1].sellerKey})).batch;
+assert.equal(batch.resumeIndex,2,'a skipped scheduled task selects the remaining runnable card');
+batch=(await runner.handle({type:'categoryResume'})).batch;
+assert.equal(batch.currentIndex,2,'Continue must not restart the previously completed card');
+assert.equal(batch.stores[1].status,'skipped');
 console.log("category background runner tests passed");

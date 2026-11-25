@@ -21,19 +21,25 @@ function send(message) {
 }
 function esc(value) { return String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 function renderTaskCard(task,batch){
-  const status=task.status||'pending';
-  const reason=['deferred','partial','paused'].includes(status)||batch?.status==='paused'
+  const status=task.status==='scanning'&&['paused','stopped'].includes(batch?.status)?(batch.status==='paused'?'paused':'stopped'):task.status||'pending';
+  const canManage=['paused','stopped'].includes(batch?.status);
+  const runnable=!['completed','skipped','failed'].includes(task.status||'pending')&&!task.removedFromQueue;
+  const targetReached=Number(batch?.options?.targetCount)>0&&(batch?.stores||[]).reduce((n,item)=>n+Number(item.qualifiedCount||0),0)>=Number(batch.options.targetCount);
+  const reason=status==='skipped'?task.skipReason:(['deferred','partial','paused'].includes(status)||batch?.status==='paused'
     ? waitReasons[task.waitReason]||task.error||task.message||task.note||(task.waitReason?'等待条件暂未分类':'')
-    : task.error||task.message||task.note;
+    : task.error||task.message||task.note);
   const revisitCount=Math.max(0,Number(task.revisitCount)||0);
+  const isScheduled=batch?.status==='paused'&&Number.isInteger(batch.resumeIndex)&&(batch.stores||[])[batch.resumeIndex]===task;
+  const actions=canManage&&runnable&&!busy?`<div class="store-actions">${!targetReached?`<button type="button" data-task-action="resume" data-seller-key="${esc(task.sellerKey||'')}">${isScheduled?'下一次继续':'从此类目继续'}</button>`:''}<button type="button" data-task-action="skip" data-seller-key="${esc(task.sellerKey||'')}">跳过</button><button type="button" class="danger" data-task-action="remove" data-seller-key="${esc(task.sellerKey||'')}">删除</button></div>`:'';
   return `<article class="store">
     <div class="store-top"><strong>${esc(task.name||task.label||task.url||'类目')}</strong><span>${esc(labels[status]||status||'等待')}</span></div>
     <div class="store-url">${esc(task.pageUrl||task.url||'')}</div>
-    <div class="counts">已检查 ${Number(task.observedCount||0)} · 新候选 ${Number(task.qualifiedCount||0)} · 待复查 ${Number(task.pendingCount||0)}</div>
+    <div class="counts">已检查 ${Number(task.observedCount||0)} · 新候选 ${Number(task.qualifiedCount||0)} · ${status==='skipped'?'历史待复查':'待复查'} ${Number(task.pendingCount||0)}</div>
     <div class="counts">发现商品 ${task.discoveredCount??'—'} · ERP 就绪 ${task.erpReadyCount??'—'} · 标签命中 ${task.labelHitCount??'—'}</div>
     ${status==='deferred'?'<p class="store-reason">先扫待开始类目，再回查此项</p>':''}
     ${revisitCount>0?`<p class="store-reason">自动回查 ${revisitCount}/1</p>`:''}
     ${reason?`<p class="store-reason">${esc(reason)}</p>`:''}
+    ${actions}
   </article>`;
 }
 const sourceName=source=>source==='china'?'中国专区':'普通 Ozon 类目';
@@ -80,17 +86,26 @@ function render(batch, archive=history) {
   const stores = Array.isArray(batch?.stores) ? batch.stores : [];
   const selected = stores.reduce((a,s)=>a+Number(s.qualifiedCount||0),0);
   const checked = stores.reduce((a,s)=>a+Number(s.observedCount||0),0);
-  const eligible = stores.reduce((a,s)=>a+Number(s.pendingCount||0),0);
+  const eligible = stores.filter(s=>!s.removedFromQueue&&s.status!=='skipped'&&s.status!=='completed').reduce((a,s)=>a+Number(s.pendingCount||0),0);
   const summaryParts=batch?[labels[batch.status]||batch.status,`新候选 ${selected}/${batch.options?.targetCount||'—'}`,`已检查 ${checked}`,`待复查 ${eligible}`]:[];
   if(batch){const progressAt=formatTimestamp(batch.lastProgressAt),newSkuAt=formatTimestamp(batch.lastNewSkuAt);if(progressAt)summaryParts.push(`最近上报 ${progressAt}`);if(newSkuAt)summaryParts.push(`最近新增 SKU ${newSkuAt}`);if(batch.pageMode)summaryParts.push(`页面${pageModes[batch.pageMode]||'未知'}`)}
   if(batch?.activityStatus)summaryParts.push(activityLabels[batch.activityStatus]||'等待采集连接');
   $("summary").textContent=batch?summaryParts.join(' · '):"暂无类目批次";
   $("message").textContent = batch?.message || "";
+  const visibleStores=stores.filter(task=>!task.removedFromQueue);
+  const removedCount=stores.filter(task=>task.removedFromQueue).length;
   $("batch").innerHTML = stores.length
-    ? `<div class="store-list">${stores.map(task=>renderTaskCard(task,batch)).join('')}</div>`
+    ? `${removedCount?`<p class="removed-summary">已移出 ${removedCount} 项；移出只调整本批队列，已采集商品仍计入本批结果。</p>`:''}${visibleStores.length?`<div class="store-list">${visibleStores.map(task=>renderTaskCard(task,batch)).join('')}</div>`:'<div class="empty">本批类目均已移出队列。</div>'}`
     : `<div class="empty">${batch ? "批次已建立，等待类目进度…" : "创建任务后，这里会显示每个类目的进度和结果。"}</div>`;
   const active = ["running","paused","scanning"].includes(batch?.status);
   const finishedBatch = ["completed","stopped","failed"].includes(batch?.status);
+  $("batch").querySelectorAll('[data-task-action]').forEach(button=>button.onclick=()=>{
+    const action=button.dataset.taskAction,sellerKey=button.dataset.sellerKey;
+    if(!sellerKey||!state||!['paused','stopped'].includes(state.status))return;
+    if(action==='remove'&&!confirm('确认从本批队列删除此类目？已采集商品仍保留并计入本批结果。'))return;
+    const type={resume:'categoryTaskResume',skip:'categoryTaskSkip',remove:'categoryTaskRemove'}[action];
+    void perform({type,batchId:state.id,sellerKey,...(action==='resume'?{backgroundExperiment:$('backgroundExperiment').checked}:{})});
+  });
   $("start").disabled=busy||active;
   $("backgroundExperiment").disabled=busy||batch?.status==='running'||batch?.status==='scanning';
   $("pause").disabled = busy||!active || batch.status === "paused";

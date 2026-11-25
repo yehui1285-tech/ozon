@@ -1292,7 +1292,7 @@ function batchOperation(operation) {
 
 async function assertCategoryInactive(){const snapshot=await OzonCategoryBackground.snapshot();if(snapshot?.batch&&['running','paused'].includes(snapshot.batch.status))throw Error('已有类目选品任务，请先停止类目任务再开始或继续店铺扫描。');}
 async function categoryOperation(message,sender){
-  if(['categoryStart','categoryResume'].includes(message.type)){const store=await getBatch();if(store&&['running','paused'].includes(store.status))throw Error('已有店铺扫描任务，请先停止店铺任务再开始或继续类目选品。');}
+  if(['categoryStart','categoryResume','categoryTaskResume'].includes(message.type)){const store=await getBatch();if(store&&['running','paused'].includes(store.status))throw Error('已有店铺扫描任务，请先停止店铺任务再开始或继续类目选品。');}
   if(!['categorySample','categoryPageDone','categoryWait'].includes(message.type)&&sender.url!==chrome.runtime.getURL('category.html'))throw Error('请从类目选品管理页执行此操作。');
   return OzonCategoryBackground.handle(message,sender);
 }

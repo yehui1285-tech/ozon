@@ -352,4 +352,29 @@ storageData.ozonWorkbenchSettingsV1={token:'a'.repeat(64),auto:true};
 const sync=await context.wbSyncCategory(true);assert.equal(sync.ok,true);assert.equal(sync.count,1);assert.equal(uploads.length,1);assert.equal(uploads[0].action,'batch');assert.equal(uploads[0].batch.id,started.batch.id);assert.equal(uploads[0].batch.status,'completed');assert.match(uploads[0].batch.csv,/类目 · 工具/);
 await context.wbSyncCategory(false);assert.equal(uploads.length,1,'unchanged category batch must not be repeatedly uploaded');
 delete storageData.ozonWorkbenchSettingsV1;
+
+// Resuming an individual card in a stopped category batch must use the same
+// mutual exclusion and trusted management-page checks as the normal resume.
+const cardStart=await categoryRequest({type:'categoryStart',urls:[categoryUrl,'https://www.ozon.ru/category/tools-1235/'],targetCount:2});
+assert.equal(cardStart.ok,true);
+const cardSample={...sample,batchId:cardStart.batch.id,attemptId:cardStart.batch.attemptId,observedSkus:['559'],products:[{...sample.products[0],sku:'559',link:'https://www.ozon.ru/product/tool-559/'}]};
+assert.equal((await categoryRequest(cardSample,{tab:{id:cardStart.batch.tabId,url:categoryUrl}})).batch.stores[0].qualifiedCount,1);
+await categoryRequest({type:'categoryStop',batchId:cardStart.batch.id});
+const removedCard=await categoryRequest({type:'categoryTaskRemove',batchId:cardStart.batch.id,sellerKey:cardStart.batch.stores[0].sellerKey});
+assert.equal(removedCard.ok,true);
+assert.equal(removedCard.batch.stores[0].removedFromQueue,true);
+assert.equal(removedCard.batch.stores[0].qualifiedCount,1);
+assert.match((await categoryRequest({type:'categoryExport',batchId:cardStart.batch.id})).csv,/559/);
+const resumeCard={type:'categoryTaskResume',batchId:cardStart.batch.id,sellerKey:cardStart.batch.stores[1].sellerKey};
+assert.equal((await categoryRequest(resumeCard,{url:categoryUrl})).ok,false);
+await context.startStoreBatch({urls:['https://www.ozon.ru/seller/alpha/']});
+const blockedCard=await categoryRequest(resumeCard);
+assert.equal(blockedCard.ok,false);
+assert.match(blockedCard.error,/已有店铺扫描任务/);
+await context.stopStoreBatch();
+const resumedCard=await categoryRequest(resumeCard);
+assert.equal(resumedCard.ok,true);
+assert.equal(resumedCard.batch.currentIndex,1);
+assert.equal(resumedCard.batch.status,'running');
+await categoryRequest({type:'categoryStop',batchId:cardStart.batch.id});
 console.log("Store and category background integration tests passed.");
