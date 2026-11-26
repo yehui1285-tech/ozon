@@ -1,5 +1,11 @@
 # CHANGELOG.md - Ozon 项目续接记录
 
+## 2026-11-26 - V1.55 / 0.6.73 快速核价精简与侧栏图标调整（本机，未发布）
+
+- 快速核价精简：双版共享 `quick-pricing-panel.js` 与 `quick-pricing-panel.css` 将「货源链接 / 说明」更名为「货源链接 / 备注」，移除独立「核价备注」文本框，减少右侧面板高度以在常见屏幕免滚动显示操作按钮与利润率卡片；原核价计算与 `/api/ozon` 推送字段保持不变。
+- 侧栏图标：`app/components/ozon-shell.tsx` 将「任务工作台」「灵感图库」切换为 Demo 版紧凑块面与画框 SVG 图标。
+- 打包与验证：回滚备份 `_备份_20261126_v155_qp_icons_before`（已轮换清理最旧 `_备份_20261125_category_price_before`，保留 5 份常规备份）。Ozon `npm.cmd test`、双版发布构建（`ozon-erp-collector-extension.zip` 与工作台内嵌包 SHA256 `9273A9912C0FE79A13C04B429FFC333959DF0B97FA0A66ED426AAD35CCD9CFDA` 一致）、Workbench `npm.cmd run build`、271/271 测试与 `V1.54 → V1.55` 版本校验全部通过。
+
 ## 2026-11-26 - V1.54 / 0.6.72 工具箱与 Ozon 全链路 UI/交互升级（本机，未发布）
 
 - 统一导航与快捷跳转：Workbench 新增 `OzonShell`（220px 左侧栏常驻工具箱与 Ozon 二级入口）与 `QuickJump`（`Ctrl+K`），包裹 `/tools`、`/ozon/pool`、`/ozon/categories`、`/ozon/scans`；`ozon-workbench-nav.js` 自动隐藏冗余顶栏标签并保留设备连接状态与“插件管理”弹窗。严格保持任务工作台（`/`）、灵感图库（`/gallery`）、快速核价面板全部字段及 `/ozon` 原核价表不变；无任何 D1 数据库迁移。

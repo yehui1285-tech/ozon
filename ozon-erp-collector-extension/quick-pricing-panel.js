@@ -1,6 +1,6 @@
 (function(scope){
   'use strict';
-  const fields=[['green','绿标价格'],['black','黑标价格'],['commission','佣金%'],['freight','国际运费'],['cost','采购成本'],['factorOverride','手动系数'],['quoteOverride','手动定价'],['source','货源链接 / 说明'],['note','核价备注']];
+  const fields=[['green','绿标价格'],['black','黑标价格'],['commission','佣金%'],['freight','国际运费'],['cost','采购成本'],['factorOverride','手动系数'],['quoteOverride','手动定价'],['source','货源链接 / 备注']];
   const core=scope.OzonQuickPricingCore;
   const money=n=>Number.isFinite(n)?'¥'+n.toFixed(2):'—';
   function create(root,adapter){
