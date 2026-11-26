@@ -1,5 +1,10 @@
 # CHANGELOG.md - Ozon 项目续接记录
 
+## 2026-11-26 - V1.57 / 0.6.75 商品池新增按人工保存时间排序（本机，未发布）
+
+- 共享规则与双版排序：Ozon 共享核心 `product-pool-core.js` 新增 `savedRecent`（最近保存优先）与 `savedOldest`（最早保存优先）两种排序方式；已记录 `manualSavedAt` 的商品始终排在未保存商品之前，按 `manualSavedAt` 主排序并用 `lastSeenAt` 与 `sku` 兜底。工作台 `lib/ozon-pool/store.ts` 基于既有 `json_extract(payload,'$.manualSavedAt')` 排序（**无新增 D1 数据库迁移**）；扩展/独立版 `product-pool-idb.js` 为 `search` 分块补充 `manualSavedAt` 并通过 `searchVersion` `2 → 3` 自动重建索引（零数据丢失）。
+- 打包与验证：回滚备份 `_备份_20261126_v157_saved_sort_before`（已轮换清理 `_备份_20261126_v153_pool_images_before`，保留 `_备份_20261125_v151_pool_before` 及共 5 份常规备份）。Ozon `npm.cmd test`（含 `test-product-pool.mjs` 新增排序测试）、双版发布构建（`ozon-erp-collector-extension.zip` 与工作台内嵌包 SHA256 `4951C5895AB5765F6BAE446657C76E503359EBE260890E725E7D17850D8DC87E` 一致）、Workbench `npm.cmd run build`、271/271 测试（含 `ozon-pool-d1.test.mjs` D1 SQL 与 `comparePoolItems` 全排列一致性验证）与 `V1.56 → V1.57` 版本校验全部通过；尚未推送 Ozon GitHub 或部署线上，线上实际排序体验及独立版 `0.6.75` 升级待验收。
+
 ## 2026-11-26 - V1.56 / 0.6.74 修复商品池底部悬浮栏「取消选择」按钮对比度（已上线站点版本 84）
 
 - 根因与修复：工作台 `app/ozon/pool/pool-desk.tsx` 底部悬浮条「取消选择」按钮未设独立类名，且 `app/ozon/scans/scan.css` 的 `.ozscan button` 在打包顺序上覆盖了 `.pool-batch-float button` 的深色半透明背景，导致“白底白字”；现为工作台补齐 `pool-float-ghost` 并将 `.ozscan .pool-batch-float` 选择器权重提高，同时扩展/独立版 `product-pool.html` / `product-pool.css` 同步补齐 `danger` / `ghost` 高对比度配色与悬停反馈（**无新增 D1 数据库迁移**）。

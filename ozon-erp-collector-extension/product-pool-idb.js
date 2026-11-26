@@ -46,6 +46,7 @@
     if (!searchChanges.has(bucket)) searchChanges.set(bucket, new Map());
     searchChanges.get(bucket).set(sku, {
       sku, status: String(item.status ?? ""), lastSeenAt: String(item.lastSeenAt ?? ""),
+      manualSavedAt: String(item.manualSavedAt ?? ""),
       sourceMode: item.sourceMode === "category" ? "category" : "store",
       title: String(item.title ?? ""), category: String(item.category ?? ""), storeName: String(item.storeName ?? ""),
     });
@@ -96,18 +97,18 @@
             await writeSearchChanges(tx, searchChanges, true);
           }
           tx.objectStore("meta").put(1, "ready");
-          tx.objectStore("meta").put(2, "searchVersion");
+          tx.objectStore("meta").put(3, "searchVersion");
         });
-      } else if ((await transact(db, ["meta"], "readonly", tx => request(tx.objectStore("meta").get("searchVersion")))) !== 2) {
+      } else if ((await transact(db, ["meta"], "readonly", tx => request(tx.objectStore("meta").get("searchVersion")))) !== 3) {
         await transact(db, ["products", "listing", "search", "meta"], "readwrite", async tx => {
-          if (await request(tx.objectStore("meta").get("searchVersion")) === 2) return;
+          if (await request(tx.objectStore("meta").get("searchVersion")) === 3) return;
           const products = tx.objectStore("products");
           const [keys, values] = await Promise.all([request(products.getAllKeys()), request(products.getAll())]);
           tx.objectStore("search").clear();
           const searchChanges = new Map();
           for (let i = 0; i < keys.length; i++) putProduct(tx, String(keys[i]), values[i], searchChanges);
           await writeSearchChanges(tx, searchChanges, true);
-          tx.objectStore("meta").put(2, "searchVersion");
+          tx.objectStore("meta").put(3, "searchVersion");
         });
       }
       return db;
@@ -202,7 +203,7 @@
   async function matchingPage(listing, search, opts) {
     const { source, range, direction } = pageSource(listing, opts);
     const keys = [];
-    if (!opts.query && !opts.source) {
+    if (!opts.query && !opts.source && !["savedRecent", "savedOldest"].includes(opts.sort)) {
       const matched = await request(source.count(range));
       const offset = pageOffset(opts.offset, matched, opts.limit);
       let skip = offset;
@@ -224,7 +225,7 @@
       const blocks = await request(search.getAll(nextRange, 8));
       for (const block of blocks) {
         for (const row of Object.values(block.rows)) if (core.matchesPageQuery(row, opts)) {
-          matches.push({ sku: row.sku, lastSeenAt: row.lastSeenAt });
+          matches.push({ sku: row.sku, lastSeenAt: row.lastSeenAt, manualSavedAt: row.manualSavedAt });
         }
       }
       if (blocks.length < 8) break;
