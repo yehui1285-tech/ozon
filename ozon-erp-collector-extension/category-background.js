@@ -19,7 +19,6 @@
   };
   const core = scope.OzonCategoryCore;
   const scanner = scope.OzonStoreScannerCore;
-  const storeCore = scope.OzonProductPoolCore;
   let serial = Promise.resolve();
   const queue = (fn) => { const p = serial.then(fn, fn); serial = p.catch(() => null); return p; };
   const now = () => new Date().toISOString();
@@ -400,8 +399,7 @@
           batch.lastProgressAt=now();if(observed.size>beforeObserved)batch.lastNewSkuAt=batch.lastProgressAt;batch.recoveryAttempts=0;
           task.activityStatus=batch.activityStatus||'native-background-only';
           phase(batch,effectiveHidden?'background':'foreground',effectiveHidden?'后台扫描类目商品（页面加载可能较慢）':'正在扫描类目商品');
-          const poolStored = await chrome.storage.local.get("ozonProductPoolV1");
-          const pool = poolStored.ozonProductPoolV1 || storeCore.emptyPool();
+          const pool = await scope.OzonProductPoolDB.lookup((m.products || []).map(raw => raw?.sku));
           const qualifiedSeen = new Set(batch.qualifiedSkuIds || []);
           const beforeQualified=qualifiedSeen.size;
           const decisions=task.diagnosticDecisions ||= {};
@@ -491,8 +489,8 @@
           const selectedId = m.batchId || batch?.id;
           const source = batch?.id === selectedId ? batch : (await snapshotHistory()).find(x => x.id === selectedId);
           if (!source) throw Error("找不到要加入商品池的类目批次");
-          if (typeof scope.changeProductPool !== "function") throw Error("商品池安全写入接口不可用");
-          const result = await scope.changeProductPool(pool => storeCore.addBatch(pool, { batch: source, stores: source.results }));
+          if (typeof scope.addCapturedBatchToPool !== "function") throw Error("商品池安全写入接口不可用");
+          const result = await scope.addCapturedBatchToPool(source, source.results);
           source.addedCount = result.added;
           if (source === batch) await save(batch);
           else { const archived = await snapshotHistory(); const index = archived.findIndex(x => x.id === source.id); if (index >= 0) { archived[index] = source; await chrome.storage.local.set({ [HISTORY_KEY]: archived }); } }

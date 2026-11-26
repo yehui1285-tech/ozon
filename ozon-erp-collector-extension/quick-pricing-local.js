@@ -15,9 +15,18 @@
   const panel=globalThis.OzonQuickPricingPanel.create(root,{math:OzonPricingCore,
     load:async sku=>quick.rowsForSku(readDraft().payload.rows,sku),save:saveRow,
     selection:p=>{for(const row of document.querySelectorAll('#rows tr'))row.classList.toggle('qp-selected',!!p&&row.dataset.sku===p.sku)},
-    status:async(p,status)=>{if(poolOperationBusy())throw Error('商品池正在更新，请稍后重试');if(drafts.has(p.sku))throw Error('左侧状态或备注未保存，请先保存该行');const current=pool.products[p.sku];if(!current||status==='approved'&&current.blocked)throw Error('商品不存在或运输待复核');beforeAdvance=order.slice();quickStatusBusy=true;render();try{const r=await send({type:'updateProductPoolItem',sku:p.sku,patch:{status,notes:current.notes},expected:poolCore.productExpectation(current)});const saved=r.state.products[p.sku];if(saved?.status!==status||saved.notes!==current.notes||!saved.manualSavedAt)throw Error('商品处理状态未确认');pool=r.state;feedback(`SKU ${p.sku} · ${poolCore.statuses[status]}`)}catch(e){beforeAdvance=null;throw e}finally{quickStatusBusy=false;render()}},
-    advance:p=>{const source=beforeAdvance||order;beforeAdvance=null;const index=source.findIndex(x=>x.sku===p.sku);const next=source.slice(index+1).concat(source.slice(0,index)).find(x=>pool.products[x.sku]&&poolCore.matchesStatus(pool.products[x.sku],'pending'));if(panel.select(next?pool.products[next.sku]:null)&&next){const i=order.findIndex(x=>x.sku===next.sku);if(i>=0){globalThis.ozonClearProductPoolSelection?.();offset=Math.floor(i/pageSize)*pageSize;render()}}}
+    status:async(p,status)=>{if(poolOperationBusy())throw Error('商品池正在更新，请稍后重试');if(drafts.has(p.sku))throw Error('左侧状态或备注未保存，请先保存该行');const current=pool.products[p.sku];if(!current||status==='approved'&&current.blocked)throw Error('商品不存在或运输待复核');beforeAdvance={items:order.slice(),offset};quickStatusBusy=true;render();try{const r=await send({type:'updateProductPoolItem',sku:p.sku,patch:{status,notes:current.notes},expected:poolCore.productExpectation(current)});const saved=r.state?.products?.[p.sku];if(saved?.status!==status||saved.notes!==current.notes||!saved.manualSavedAt)throw Error('商品处理状态未确认');feedback(`SKU ${p.sku} · ${poolCore.statuses[status]}`);await reloadAfterWrite()}catch(e){beforeAdvance=null;throw e}finally{quickStatusBusy=false;render()}},
+    advance:async p=>{if(!p||poolOperationBusy())return;const source=beforeAdvance||{items:order.slice(),offset};beforeAdvance=null;const index=source.items.findIndex(x=>x.sku===p.sku);const start=source.offset+Math.max(0,index)+(pool.products[p.sku]?1:0);if(['approved','rejected'].includes($("filter").value)){feedback('当前筛选仅显示已处理商品，请切换至待处理。');return}quickStatusBusy=true;try{
+      const pending=x=>x.sku!==p.sku&&poolCore.matchesStatus(x,'pending');
+      const initialOffset=offset;
+      let next;
+      // Request only the page containing the next position; removals shift the next row left.
+      for(let at=Math.min(Math.floor(start/pageSize)*pageSize,Math.max(0,Math.floor((pageInfo.matched-1)/pageSize)*pageSize));at<pageInfo.matched;at+=pageSize){if(at!==offset)await loadPage(at);next=pageInfo.items.find((x,i)=>offset+i>=start&&pending(x));if(next)break;}
+      if(!next){for(let at=0;at<=Math.min(initialOffset,pageInfo.matched-1);at+=pageSize){if(at!==offset)await loadPage(at);next=pageInfo.items.find(pending);if(next)break;}}
+      if(!panel.select(next||null)&&offset!==initialOffset)await loadPage(initialOffset);
+      if(next)globalThis.ozonClearProductPoolSelection?.();
+    }catch(e){feedback(`切换商品失败：${e.message}`,true)}finally{quickStatusBusy=false;render()}}
   });
-  globalThis.ozonLocalQuick={get selectedSku(){return panel.selectedSku},select:p=>panel.select(p),sync:filtered=>{order=filtered;if(panel.selectedSku&&pool.products[panel.selectedSku])panel.select(pool.products[panel.selectedSku]);else if(filtered.length)panel.select(filtered[0])}};
+  globalThis.ozonLocalQuick={get selectedSku(){return panel.selectedSku},select:p=>panel.select(p),sync:filtered=>{order=filtered;if(quickStatusBusy||beforeAdvance)return;if(panel.selectedSku&&pool.products[panel.selectedSku])panel.select(pool.products[panel.selectedSku]);else panel.select(filtered[0]||null)}};
   render();
 })();

@@ -21,7 +21,7 @@ write("standalone-nav.css",`.standalone-nav{display:flex;gap:6px;align-items:cen
 const keep = [
   "1688-background.js","1688-content.js","1688-core.js","black-price-core.js","main-image-core.js",
   "task-pricing-core.js","store-scanner-core.js","store-scanner.js","pinduoduo-bridge.js",
-  "sourcing-enrichment.html","sourcing-enrichment.js","product-pool-core.js","product-pool.html","product-pool.js","product-pool.css",
+  "sourcing-enrichment.html","sourcing-enrichment.js","product-pool-core.js","product-pool-idb.js","product-pool.html","product-pool.js","product-pool.css",
   "category-core.js","category-background.js","category-scanner.js","category.css","category.js","category-catalog.js","category-catalog.json",
 ];
 for (const name of keep) fs.copyFileSync(path.join(extension, name), path.join(dest, name));
@@ -39,7 +39,7 @@ manifest.content_scripts = manifest.content_scripts.filter(script => !script.mat
 write("manifest.json", JSON.stringify(manifest, null, 2) + "\n");
 
 let background = read("background.js");
-background = replace(background, 'importScripts("workbench-bridge.js", "product-pool-core.js");', 'importScripts("product-pool-core.js");');
+background = replace(background, 'importScripts("workbench-bridge.js", "product-pool-core.js", "product-pool-idb.js");', 'importScripts("product-pool-core.js", "product-pool-idb.js");');
 background = background.replace(/^const TARGET_URL = .*?;$/m, 'const TARGET_URL = chrome.runtime.getURL("pricing.html");')
   .replace(/^const TARGET_MATCH = .*?;$/m, '');
 background = replace(background, 'const tabs = await chrome.tabs.query({ url: TARGET_MATCH });', 'const tabs = (await chrome.tabs.query({})).filter(tab => tab.url === TARGET_URL);');

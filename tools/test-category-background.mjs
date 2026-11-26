@@ -7,7 +7,7 @@ let created = [], reloads=0, sentMessages=[], debuggerCommands=[], debuggerAttac
 const storage = { async get(k) { return k ? { ...(data[k] ? { [k]: data[k] } : {}) } : { ...data }; }, async set(v) { Object.assign(data, v); }, async remove(k) { for (const key of Array.isArray(k) ? k : [k]) delete data[key]; } };
 let declaredDebugger=true;
 const chrome = {
-  runtime:{getManifest:()=>({version:'0.6.69',permissions:declaredDebugger?['debugger']:[]})},
+  runtime:{getManifest:()=>({version:'0.6.70',permissions:declaredDebugger?['debugger']:[]})},
   storage: { local: storage,session:{async get(k){return {[k]:sessionData[k]}},async set(v){Object.assign(sessionData,v)},async remove(k){delete sessionData[k]}} },
   alarms:{async get(n){return alarms.get(n)},async create(n,o){alarms.set(n,o)},async clear(n){alarms.delete(n)}},
   tabs: {
@@ -32,6 +32,16 @@ const chrome = {
 };
 const context = vm.createContext({ chrome, URL, console, setTimeout, clearTimeout, crypto:globalThis.crypto });
 context.globalThis = context;
+let lastLookup = [];
+const poolFixture = {products:{}, history:{}};
+context.OzonProductPoolDB = {
+  async lookup(skus) {
+    lastLookup = [...skus];
+    return Object.fromEntries(Object.entries(poolFixture).map(([store, rows]) => [
+      store, Object.fromEntries(skus.filter(sku => Object.hasOwn(rows, sku)).map(sku => [sku, rows[sku]])),
+    ]));
+  },
+};
 for (const file of ["store-scanner-core.js", "category-core.js", "product-pool-core.js"]) {
   vm.runInContext(fs.readFileSync(new URL(`../ozon-erp-collector-extension/${file}`, import.meta.url), "utf8"), context, { filename: file });
 }
@@ -334,7 +344,8 @@ assert.equal(batch.stores[1].status,'skipped');
 await runner.handle({type:'categoryStop'});
 const diagUrl='https://www.ozon.ru/category/tools-8502/';
 batch=(await runner.handle({type:'categoryStart',urls:[diagUrl],targetCount:2,confirmArchiveOverflow:true})).batch;
-data.ozonProductPoolV1={products:{'99010':{sku:'99010'}},history:{'99011':{sku:'99011'}}};
+poolFixture.products['99010']={sku:'99010'};
+poolFixture.history['99011']=true;
 const diagAttempt=batch.attemptId,diagTab=batch.tabId;
 batch=(await runner.handle({type:'categorySample',batchId:batch.id,attemptId:diagAttempt,categoryUrl:diagUrl,discoverSkus:['99100','99101','99010','99011','99102','99103'],erpReadySkus:['99100','99101','99010','99011','99102','99103'],labelHitSkus:['99100','99010','99011','99102','99103'],pageReportedHidden:true,skuDecisions:{'99100':'eligible','99101':'no_label','99010':'eligible','99011':'eligible','99102':'eligible','99103':'eligible'},products:[
  {sku:'99100',name:'A',link:'https://www.ozon.ru/product/a-99100',price:'20',qualified:true,shippingRisk:{type:'clear'}},
@@ -346,6 +357,7 @@ batch=(await runner.handle({type:'categorySample',batchId:batch.id,attemptId:dia
 const diagnostic=(await runner.handle({type:'categoryDiagnostic',batchId:batch.id})).diagnostic;
 assert.ok(diagnostic.tasks[0].examples.accepted.includes('99100'));
 assert.ok(diagnostic.tasks[0].examples.pool_duplicate.includes('99010'));
+assert.ok(lastLookup.includes('99010') && lastLookup.includes('99011'), 'category checks only the reported sample');
 assert.ok(diagnostic.tasks[0].examples.history_duplicate.includes('99011'));
 assert.ok(diagnostic.tasks[0].examples.target_limit.includes('99103'));
 assert.equal(batch.stores[0].diagnosticCounts.no_label,1);

@@ -1,6 +1,6 @@
 importScripts("black-price-core.js", "main-image-core.js", "task-pricing-core.js", "store-scanner-core.js");
 importScripts("1688-core.js", "1688-background.js");
-importScripts("workbench-bridge.js", "product-pool-core.js");
+importScripts("workbench-bridge.js", "product-pool-core.js", "product-pool-idb.js");
 importScripts("category-core.js", "category-background.js");
 
 const blackPriceCore = globalThis.OzonBlackPriceCore;
@@ -8,8 +8,7 @@ const mainImageCore = globalThis.OzonMainImageCore;
 const taskPricingCore = globalThis.OzonTaskPricingCore;
 const storeScannerCore = globalThis.OzonStoreScannerCore;
 const productPoolCore = globalThis.OzonProductPoolCore;
-const PRODUCT_POOL_KEY = "ozonProductPoolV1";
-const enqueuePoolOperation = storeScannerCore.createSerializedExecutor();
+const productPoolDB = globalThis.OzonProductPoolDB;
 const TARGET_URL = "https://yehui1285-tech.github.io/ozon/feishu.html?v=20260720";
 const TARGET_MATCH = "https://yehui1285-tech.github.io/ozon/feishu.html*";
 const AUTO_INJECT_KEY = "ozonAutoInjectEnabled";
@@ -759,24 +758,28 @@ async function getBatchStoreResults(message = {}) {
 }
 
 async function getProductPool() {
-  const stored = await chrome.storage.local.get(PRODUCT_POOL_KEY);
-  return { ok: true, pool: stored[PRODUCT_POOL_KEY] || productPoolCore.emptyPool() };
+  return { ok: true, pool: await productPoolDB.exportAll() };
 }
 
-async function changeProductPool(change) {
-  return enqueuePoolOperation(async () => {
-    const { pool } = await getProductPool();
-    const result = change(pool);
-    await chrome.storage.local.set({ [PRODUCT_POOL_KEY]: result.state });
-    return { ok: true, ...result };
-  });
+async function changeProductPool(skus, stores, change) {
+  return { ok: true, ...await productPoolDB.change(skus, stores, change) };
+}
+
+function addCapturedBatchToPool(batch, stores) {
+  const skus = storeScannerCore.batchCapturedRows(batch, stores).map(row => row.product.sku);
+  return changeProductPool(skus, ["products", "history"], pool => productPoolCore.addBatch(pool, { batch, stores }));
+}
+
+function importProductPoolHistory(text) {
+  const skus = Object.keys(productPoolCore.importHistory(productPoolCore.emptyPool(), text).state.history);
+  return changeProductPool(skus, ["history"], pool => productPoolCore.importHistory(pool, text));
 }
 
 async function addBatchToProductPool(message) {
   const batch = await getBatch();
   if (!batch || batch.id !== message.batchId) throw new Error("批次已变化，请刷新后重试");
   const { stores } = await getBatchStoreResults({ sellerKeys: batch.stores.map(task => task.sellerKey) });
-  return changeProductPool(pool => productPoolCore.addBatch(pool, { batch, stores }));
+  return addCapturedBatchToPool(batch, stores);
 }
 
 function nextPendingIndex(batch, fromIndex = 0) {
@@ -1323,14 +1326,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   else if (message?.type === "enrichStoreProductBySku") operation = enrichStoreProductBySku(message);
   else if (message?.type === "setStoreProductShippingDecision") operation = setStoreProductShippingDecision(message);
   else if (message?.type === "getBatchStoreResults") operation = getBatchStoreResults(message);
-  else if (message?.type === "getProductPool") operation = enqueuePoolOperation(() => getProductPool());
+  else if (message?.type === "getProductPool") operation = getProductPool();
+  else if (message?.type === "getProductPoolPage") operation = productPoolDB.page(message).then(page => ({ ok: true, page }));
   else if (message?.type === "addBatchToProductPool") operation = batchOperation(() => addBatchToProductPool(message));
-  else if (message?.type === "importProductPoolHistory") operation = changeProductPool(pool => productPoolCore.importHistory(pool, message.text));
-  else if (message?.type === "updateProductPoolItem") operation = changeProductPool(pool => {
+  else if (message?.type === "importProductPoolHistory") operation = importProductPoolHistory(message.text);
+  else if (message?.type === "updateProductPoolItem") operation = changeProductPool([message.sku], ["products"], pool => {
     if(message.expected){const item=pool.products[message.sku];if(!item||item.status!==message.expected.status||item.notes!==message.expected.notes||item.blocked!==message.expected.blocked||(Object.hasOwn(message.expected,'manualSavedAt')&&(item.manualSavedAt||'')!==message.expected.manualSavedAt))throw Error('商品状态或备注已变化，请刷新后重试');}
     return { state: productPoolCore.updateProduct(pool, message.sku, message.patch) };
   });
-  else if (message?.type === "updateProductPoolItems") operation = changeProductPool(pool => ({ state: productPoolCore.updateProducts(pool, message.changes) }));
+  else if (message?.type === "updateProductPoolItems") {
+    const changes = message.changes;
+    const skus = Array.isArray(changes) && changes.length <= 50 ? changes.map(change => change?.sku) : [];
+    operation = changeProductPool(skus, ["products"], pool => ({ state: productPoolCore.updateProducts(pool, changes) }));
+  }
   else if (message?.type === "openBatchManager") operation = chrome.tabs.create({ url: chrome.runtime.getURL("batch.html") }).then(() => ({ ok: true }));
   else if (message?.type === "openSourcingEnrichment") operation = chrome.tabs.create({ url: chrome.runtime.getURL("sourcing-enrichment.html") }).then(() => ({ ok: true }));
   else if (message?.type === "getStoreBatchState") operation = batchOperation(() => getBatch().then((batch) => ({ ok: true, batch })));

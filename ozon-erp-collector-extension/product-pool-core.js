@@ -6,6 +6,28 @@
     if (filter === "pending") return !["approved", "rejected"].includes(product.status);
     return !filter || product.status === filter;
   }
+  function normalizePageQuery(raw = {}) {
+    const integer = (value, fallback) => value == null || value === "" || !Number.isSafeInteger(Number(value)) ? fallback : Number(value);
+    const filter = raw.filter === "all" ? "" : raw.filter == null ? "pending" : String(raw.filter);
+    return {
+      query: String(raw.query ?? "").trim().toLowerCase().slice(0, 200),
+      filter: filter === "" || filter === "pending" || Object.hasOwn(statuses, filter) ? filter : "pending",
+      sort: ["recent", "oldest", "skuAsc", "skuDesc"].includes(raw.sort) ? raw.sort : "recent",
+      offset: Math.max(0, integer(raw.offset, 0)),
+      limit: Math.max(1, Math.min(50, integer(raw.limit, 50))),
+    };
+  }
+  function matchesPageQuery(item, options) {
+    return matchesStatus(item, options.filter) && [item.sku,item.title,item.category,item.storeName].some(s => String(s ?? "").toLowerCase().includes(options.query));
+  }
+  function comparePoolItems(a, b, sort) {
+    const cmp = (x,y) => String(x ?? "") < String(y ?? "") ? -1 : String(x ?? "") > String(y ?? "") ? 1 : 0;
+    const sku = cmp(a.sku,b.sku);
+    if (sort === "skuAsc") return sku;
+    if (sort === "skuDesc") return -sku;
+    const result = cmp(a.lastSeenAt,b.lastSeenAt) || sku;
+    return sort === "oldest" ? result : -result;
+  }
   const normalizeSku = (value) => /^\d+$/.test(String(value ?? "").trim()) ? String(value).trim() : "";
   const emptyPool = () => ({ schemaVersion: 1, products: {}, history: {} });
 
@@ -117,5 +139,5 @@
     return [header, ...rows].map(row => row.map(scanner.csvCell).join(",")).join("\r\n");
   }
 
-  scope.OzonProductPoolCore = Object.freeze({ emptyPool, statuses, matchesStatus, importHistory, addBatch, updateProduct, updateProducts, productExpectation, exportPoolCsv });
+  scope.OzonProductPoolCore = Object.freeze({ emptyPool, statuses, matchesStatus, normalizePageQuery, matchesPageQuery, comparePoolItems, importHistory, addBatch, updateProduct, updateProducts, productExpectation, exportPoolCsv });
 })(globalThis);

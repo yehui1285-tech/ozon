@@ -22,6 +22,7 @@
     "test:store": "node tools/test-store-scanner.mjs",
     "test:store-background": "node tools/test-store-background-integration.mjs",
     "test:product-pool": "node tools/test-product-pool.mjs && node tools/test-quick-pricing.mjs && node tools/test-standalone.mjs",
+    "test:product-pool-browser": "node tools/test-product-pool-idb-browser.mjs && node tools/test-product-pool-browser.mjs",
     "test:pricing": "node tools/test-pricing-core.mjs",
     "test:worker": "node tools/test-worker-security.mjs",
     "test:parsing": "node tools/test-parsing-fixtures.mjs",

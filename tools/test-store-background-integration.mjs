@@ -8,7 +8,25 @@ const storageData = {
     beta: { observedSkus: ["2"], products: { "2": { sku: "2" } } },
   },
 };
-let productPoolStorageSets = 0;
+let productPoolCommits = 0;
+const poolFixture = {schemaVersion: 1, products: {}, history: {}};
+function selectedPool(skus, stores = ["products", "history"]) {
+  const selected = { schemaVersion: 1, products: {}, history: {} };
+  for (const name of stores) {
+    selected[name] = Object.fromEntries(skus.filter(sku => Object.hasOwn(poolFixture[name], sku)).map(sku => [sku, poolFixture[name][sku]]));
+  }
+  return selected;
+}
+const poolDBFixture = {
+  async exportAll() { return structuredClone(poolFixture); },
+  async lookup(skus) { return selectedPool(skus); },
+  async change(skus, stores, apply) {
+    const result = apply(selectedPool(skus, stores));
+    for (const name of stores) Object.assign(poolFixture[name], result.state[name]);
+    productPoolCommits++;
+    return result;
+  },
+};
 const scheduledTimers = new Map();
 const alarmCreates = [];
 const tabMessages = [];
@@ -27,7 +45,7 @@ function storageArea(data) {
       const list = Array.isArray(keys) ? keys : typeof keys === "string" ? [keys] : Object.keys(keys);
       return Object.fromEntries(list.filter((key) => Object.prototype.hasOwnProperty.call(data, key)).map((key) => [key, data[key]]));
     },
-    async set(values) { if (Object.hasOwn(values,"ozonProductPoolV1")) productPoolStorageSets += 1; Object.assign(data, values); },
+    async set(values) { assert.ok(!Object.hasOwn(values,"ozonProductPoolV1"), "legacy pool is read-only"); Object.assign(data, values); },
     async remove(keys) { (Array.isArray(keys) ? keys : [keys]).forEach((key) => delete data[key]); },
   };
 }
@@ -65,6 +83,7 @@ const chrome = {
 const context = vm.createContext({ chrome, console, setTimeout: fakeSetTimeout, clearTimeout: fakeClearTimeout, URL, crypto:globalThis.crypto });
 context.globalThis = context;
 context.importScripts = (...files) => files.forEach((file) => {
+  if (file === "product-pool-idb.js") { context.OzonProductPoolDB = poolDBFixture; return; }
   const source = fs.readFileSync(new URL(`../ozon-erp-collector-extension/${file}`, import.meta.url), "utf8");
   vm.runInContext(source, context, { filename: file });
 });
@@ -308,7 +327,7 @@ assert.equal(pooled.added, 1);
 await context.clearStoreBatch({ batchId: poolBatch.id });
 assert.deepEqual(Object.keys((await context.getProductPool()).pool.products), ["111"]);
 const initial=(await context.getProductPool()).pool.products['111'];
-storageData.ozonProductPoolV1.products['222']={...initial,sku:'222',status:'new',notes:'第二件'};
+poolFixture.products['222']={...initial,sku:'222',status:'new',notes:'第二件'};
 const poolMessage=message=>new Promise(resolve=>{for(const listener of listeners.messages){if(listener(message,{},resolve)===true)return}resolve({ok:false,error:'no listener'})});
 const expected={status:initial.status,notes:initial.notes,blocked:initial.blocked};
 const confirmed=await poolMessage({type:'updateProductPoolItem',sku:'111',patch:{status:'review',notes:'人工记录'},expected});
@@ -319,10 +338,10 @@ assert.equal((await context.getProductPool()).pool.products['111'].notes,'人工
 const batchPool=(await context.getProductPool()).pool;
 const batchExpected=context.OzonProductPoolCore.productExpectation(batchPool.products['111']);
 const secondExpected=context.OzonProductPoolCore.productExpectation(batchPool.products['222']);
-const setCountBeforeBulk=productPoolStorageSets;
+const commitsBeforeBulk=productPoolCommits;
 const bulk=await poolMessage({type:'updateProductPoolItems',changes:[{sku:'111',patch:{status:'rejected',notes:'淘汰备注保留'},expected:batchExpected},{sku:'222',patch:{status:'sourcing',notes:'第二件已保存'},expected:secondExpected}]});
 assert.equal(bulk.ok,true);
-assert.equal(productPoolStorageSets-setCountBeforeBulk,1,'a batch must persist with one atomic storage.set');
+assert.equal(productPoolCommits-commitsBeforeBulk,1,'a batch must use a single pool transaction');
 assert.equal(bulk.state.products['111'].status,'rejected');
 assert.equal(bulk.state.products['111'].notes,'淘汰备注保留');
 assert.equal(bulk.state.products['222'].status,'sourcing');

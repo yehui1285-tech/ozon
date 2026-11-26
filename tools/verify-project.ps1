@@ -43,6 +43,8 @@ try {
   node --check ozon-erp-collector-extension/store-scanner.js
   node --check ozon-erp-collector-extension/batch.js
   node --check ozon-erp-collector-extension/product-pool.js
+  node --check ozon-erp-collector-extension/product-pool-idb.js
+  if ($LASTEXITCODE -ne 0) { throw "Product pool IndexedDB syntax check failed" }
   node --check ozon-erp-collector-extension/popup.js
   node --check ozon-erp-collector-extension/sourcing-enrichment.js
   node --check ozon-feishu-sync/worker/worker.js
