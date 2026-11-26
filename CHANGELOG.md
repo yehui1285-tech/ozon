@@ -1,5 +1,10 @@
 # CHANGELOG.md - Ozon 项目续接记录
 
+## 2026-11-26 - V1.56 / 0.6.74 修复商品池底部悬浮栏「取消选择」按钮对比度（本机，未发布）
+
+- 根因与修复：工作台 `app/ozon/pool/pool-desk.tsx` 底部悬浮条「取消选择」按钮未设独立类名，且 `app/ozon/scans/scan.css` 的 `.ozscan button` 在打包顺序上覆盖了 `.pool-batch-float button` 的深色半透明背景，导致“白底白字”；现为工作台补齐 `pool-float-ghost` 并将 `.ozscan .pool-batch-float` 选择器权重提高，同时扩展/独立版 `product-pool.html` / `product-pool.css` 同步补齐 `danger` / `ghost` 高对比度配色与悬停反馈（**无新增 D1 数据库迁移**）。
+- 打包与验证：回滚备份 `_备份_20261126_v156_float_bar_before`（已轮换清理最旧 `_备份_20261125_governance_before`，保留 5 份常规备份）。Ozon `npm.cmd test`、双版发布构建（`ozon-erp-collector-extension.zip` 与工作台内嵌包 SHA256 `FF66E776A5F7344D53E7D88C099222D0B17FC473366E8784137D796D89DD8D55` 一致）、Workbench `npm.cmd run build`、271/271 测试与 `V1.55 → V1.56` 版本校验全部通过；尚未推送 Ozon GitHub 或部署线上，真实浏览器效果及独立版 `0.6.74` 升级待验收。
+
 ## 2026-11-26 - V1.55 / 0.6.73 快速核价精简与侧栏图标调整（已上线站点版本 83）
 
 - 快速核价精简：双版共享 `quick-pricing-panel.js` 与 `quick-pricing-panel.css` 将「货源链接 / 说明」更名为「货源链接 / 备注」，移除独立「核价备注」文本框，减少右侧面板高度以在常见屏幕免滚动显示操作按钮与利润率卡片；原核价计算与 `/api/ozon` 推送字段保持不变。
