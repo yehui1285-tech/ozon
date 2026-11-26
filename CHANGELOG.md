@@ -1,10 +1,11 @@
 # CHANGELOG.md - Ozon 项目续接记录
 
-## 2026-11-26 - V1.57 / 0.6.75 保存时间排序、精简 SKU 排序与快速核价推送提速（本机，未发布）
+## 2026-11-26 - V1.57 / 0.6.75 保存时间排序、精简 SKU 排序与快速核价推送提速（已上线站点版本 86）
 
 - 保存时间排序与精简排序：Ozon 共享核心 `product-pool-core.js` 新增 `savedRecent`（最近保存优先）与 `savedOldest`（最早保存优先），已记录 `manualSavedAt` 的商品优先排在未保存商品之前并按 `lastSeenAt`、`sku` 兜底；同时剔除无用的 `skuAsc` / `skuDesc` 选项（旧值自动回落为 `recent`）。工作台 `lib/ozon-pool/store.ts` 基于既有 `json_extract(payload,'$.manualSavedAt')` 排序（**无新增 D1 数据库迁移**）；扩展/独立版 `product-pool-idb.js` 为 `search` 分块补充 `manualSavedAt` 并通过 `searchVersion` `2 → 3` 自动重建索引。
 - 详情页推送快速回显提速：工作台 `GET /api/ozon?sku=<sku>` 与 `pool-desk.tsx` 改为单品精确查询，减少全表拉取延迟；扩展 `workbench-bridge.js` 在收到云端保存确认后向已打开的 `/ozon/pool*`、`/ozon` 标签页派发 `ozon-pricing-pushed` 事件唤醒后台预拉取；`quick-pricing-panel.js` 对 `visibilitychange` + `focus` 连续触发去重，并将待推送轮询缩短为 2 秒（已有核价降为 15 秒）。
-- 打包与验证：回滚备份 `_备份_20261126_v157_saved_sort_before`（已轮换清理 `_备份_20261126_v153_pool_images_before`，保留 `_备份_20261125_v151_pool_before` 及共 5 份常规备份）。Ozon `npm.cmd test`（含 `test-product-pool.mjs`、`test-quick-pricing.mjs`）、双版发布构建（`ozon-erp-collector-extension.zip` 与工作台内嵌包 SHA256 `DC1648C2A698C4641007036A47356F2ABD70EA4DDB99E258B023A01928569316` 一致）、Workbench `npm.cmd run build`、271/271 测试（含 `ozon-pool-d1.test.mjs`、`ozon-product-pool.test.mjs`、`ozon-sync.test.mjs`）与 `V1.56 → V1.57` 版本校验全部通过；尚未推送 Ozon GitHub 或部署线上，线上实机与独立版 `0.6.75` 升级待验收。
+- 打包与验证：回滚备份 `_备份_20261126_v157_saved_sort_before`（已轮换清理 `_备份_20261126_v153_pool_images_before`，保留 `_备份_20261125_v151_pool_before` 及共 5 份常规备份）。Ozon `npm.cmd test`（含 `test-product-pool.mjs`、`test-quick-pricing.mjs`）、双版发布构建（`ozon-erp-collector-extension.zip` 与工作台内嵌包 SHA256 `DC1648C2A698C4641007036A47356F2ABD70EA4DDB99E258B023A01928569316` 一致）、Workbench `npm.cmd run build`、271/271 测试（含 `ozon-pool-d1.test.mjs`、`ozon-product-pool.test.mjs`、`ozon-sync.test.mjs`）与 `V1.56 → V1.57` 版本校验全部通过。
+- 线上部署：Codex 已将工作台 V1.57 部署上线（站点版本 `86`，Workbench 本地提交 `b46d5c6`，部署 ID `appgdep_6b080434f40c8191b5d562cdd7230006`，共享核心及扩展 `v0.6.75` SHA256 校验通过，生产构建通过，无新增 D1 迁移）。线上真实浏览器排序/瞬时回显（需更新重载 `v0.6.75` 扩展）与独立分享版 `0.6.75` 升级待用户现场验收。
 
 ## 2026-11-26 - V1.56 / 0.6.74 修复商品池底部悬浮栏「取消选择」按钮对比度（已上线站点版本 84）
 
