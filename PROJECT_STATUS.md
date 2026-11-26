@@ -1,14 +1,15 @@
 # Ozon 当前状态
 
-更新时间：2026-11-26（V1.57 / 0.6.75 商品池新增按人工保存时间排序本机完成并已本地提交，待 Codex 部署；线上当前为 V1.56 站点版本 `84` / 扩展 `v0.6.74`）。
+更新时间：2026-11-26（V1.57 / 0.6.75 新增保存时间排序、剔除无用 SKU 排序并加速核价推送回显本机完成并已本地提交，待 Codex 部署；线上当前为 V1.56 站点版本 `84` / 扩展 `v0.6.74`）。
 用途：新对话快速续接。详细过程按需查 [CHANGELOG](CHANGELOG.md) 和 [历史入口](docs/history/README.md)，不把历史待办当作当前任务。
 
 ## 当前版本与结论
 
-- V1.57 / 0.6.75（本机已提交，未推送/未部署）：双版商品池排序新增「最近保存优先」（`savedRecent`）与「最早保存优先」（`savedOldest`），便于在「全部状态」下按人工处理/保存时间回溯过往记录（**无新增 D1 数据库迁移**）：
-  - 共享规则与工作台（`product-pool-core.js`、`lib/ozon-pool/model.ts`、`lib/ozon-pool/store.ts`、`app/ozon/pool/pool-desk.tsx`）：有 `manualSavedAt` 的已保存商品优先排在前面，按保存时间降序/升序排列，同时间戳再按 `lastSeenAt` 与 `sku` 兜底；未保存商品排在已保存商品之后。工作台直接基于既有 `payload` 中 `$.manualSavedAt` 排序，**无需 D1 schema 迁移**。
-  - 扩展 / 独立分享版（`ozon-erp-collector-extension/product-pool-idb.js`、`product-pool.html`）：`search` 索引行补充 `manualSavedAt` 字段并将 `searchVersion` 由 `2` 自动升级为 `3`（不改动 IndexedDB schema 版本、无数据丢失）；`savedRecent` / `savedOldest` 走紧凑 `search` 投影排序并与单品页/云端一致。
-  - 验证：Ozon `npm.cmd test`（含 `test-product-pool.mjs` 排序与边界断言）、双版发布构建（`ozon-erp-collector-extension.zip` 与工作台内嵌包 SHA256 `4951C5895AB5765F6BAE446657C76E503359EBE260890E725E7D17850D8DC87E` 一致）、Workbench `npm.cmd run build`、271/271 测试（含 `ozon-pool-d1.test.mjs` 对 `savedRecent`/`savedOldest` 的 D1 SQL 一致性校验）与 `V1.56 → V1.57` 版本校验均通过。线上真实浏览器切换排序与独立分享版 `0.6.75` 升级待部署后现场确认。回滚备份 `_备份_20261126_v157_saved_sort_before`。
+- V1.57 / 0.6.75（本机已提交，未推送/未部署）：围绕商品池复查效率与推送体验完成三项协同调整（**无新增 D1 数据库迁移**）：
+  - 保存时间排序与精简排序选项（`product-pool-core.js`、`lib/ozon-pool/model.ts`、`lib/ozon-pool/store.ts`、`app/ozon/pool/pool-desk.tsx`、`product-pool.html`）：新增「最近保存优先」（`savedRecent`）与「最早保存优先」（`savedOldest`），有 `manualSavedAt` 的商品优先排在前面，同时间戳按 `lastSeenAt` 与 `sku` 兜底；同时剔除无用的 `skuAsc` / `skuDesc` 选项，历史非法/旧值自动回落为 `recent`。工作台直接基于既有 `payload` 中 `$.manualSavedAt` 排序，**无需 D1 schema 迁移**。
+  - 扩展 / 独立分享版索引自动回填（`product-pool-idb.js`）：`search` 索引行补充 `manualSavedAt` 字段并将 `searchVersion` 由 `2` 自动升级为 `3`（不改动 IndexedDB schema 版本、零数据丢失）；移除 `listing` SKU 排序分支，保留时间索引读取与紧凑投影排序。
+  - 详情页推送 → 商品池快速核价秒级回显提速（`app/api/ozon/route.ts`、`app/ozon/pool/pool-desk.tsx`、`workbench-bridge.js`、`quick-pricing-panel.js`）：① 新增 `GET /api/ozon?sku=<sku>` 精确单品查询，避免每次切页/刷新拉取全量核价表；② `wbSendDetail` 收到云端 `{ ok: true }` 确认后立即向已打开的 `/ozon/pool*`、`/ozon` 标签页派发 `ozon-pricing-pushed` 事件，后台自动预拉取最新核价数据；③ `quick-pricing-panel.js` 对紧邻触发的 `visibilitychange` + `focus` 做 800ms 同 SKU 去重，并将无核价等待轮询从 12 秒缩为 2 秒（已有核价降为 15 秒）。
+  - 验证：Ozon `npm.cmd test`（含 `test-product-pool.mjs` 与 `test-quick-pricing.mjs` 推送信号/防抖/2s 轮询断言）、双版发布构建（`ozon-erp-collector-extension.zip` 与工作台内嵌包 SHA256 `DC1648C2A698C4641007036A47356F2ABD70EA4DDB99E258B023A01928569316` 一致）、Workbench `npm.cmd run build`、271/271 测试（含 `ozon-pool-d1.test.mjs`、`ozon-product-pool.test.mjs` 与 `ozon-sync.test.mjs` 单 SKU 接口校验）与 `V1.56 → V1.57` 版本校验均通过。线上真实浏览器排序/秒级回显与独立分享版 `0.6.75` 升级待部署并重载扩展后确认。回滚备份 `_备份_20261126_v157_saved_sort_before`。
 
 - V1.56 / 0.6.74（已上线站点版本 `84`）：修复商品池底部悬浮批量操作栏中「取消选择」按钮在工作台因 `.ozscan button` 后加载覆盖背景导致的“白底白字”问题，并统一双版悬浮栏按钮配色与悬停反馈（**无新增 D1 数据库迁移**）：
   - 工作台端（`app/ozon/pool/pool-desk.tsx`、`pool.css`）：为「取消选择」补充 `pool-float-ghost` 类，并将 `.pool-batch-float` 内按钮规则限定在 `.ozscan .pool-batch-float` 作用域下以稳定覆盖 `scan.css` 的通用白色按钮样式。

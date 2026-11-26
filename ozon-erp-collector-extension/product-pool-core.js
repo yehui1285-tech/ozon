@@ -27,7 +27,7 @@
       query: String(raw.query ?? "").trim().toLowerCase().slice(0, 200),
       filter: filter === "" || filter === "pending" || Object.hasOwn(statuses, filter) ? filter : "pending",
       source,
-      sort: ["recent", "oldest", "savedRecent", "savedOldest", "skuAsc", "skuDesc"].includes(raw.sort) ? raw.sort : "recent",
+      sort: ["recent", "oldest", "savedRecent", "savedOldest"].includes(raw.sort) ? raw.sort : "recent",
       offset: Math.max(0, integer(raw.offset, 0)),
       limit: Math.max(1, Math.min(50, integer(raw.limit, 50))),
     };
@@ -39,8 +39,6 @@
   function comparePoolItems(a, b, sort) {
     const cmp = (x,y) => String(x ?? "") < String(y ?? "") ? -1 : String(x ?? "") > String(y ?? "") ? 1 : 0;
     const sku = cmp(a.sku,b.sku);
-    if (sort === "skuAsc") return sku;
-    if (sort === "skuDesc") return -sku;
     if (sort === "savedRecent" || sort === "savedOldest") {
       const sa = String(a.manualSavedAt ?? "");
       const sb = String(b.manualSavedAt ?? "");

@@ -173,12 +173,10 @@
   }
 
   function pageSource(listing, opts) {
-    const byTime = ["recent", "oldest"].includes(opts.sort);
-    const reverse = ["recent", "skuDesc"].includes(opts.sort);
-    const direction = reverse ? "prev" : "next";
-    if (!opts.filter) return { source: byTime ? listing.index("recent") : listing, direction };
+    const direction = opts.sort === "oldest" ? "next" : "prev";
+    if (!opts.filter) return { source: listing.index("recent"), direction };
     const pending = opts.filter === "pending";
-    const index = (pending ? "pending" : "status") + (byTime ? "Recent" : "Sku");
+    const index = (pending ? "pending" : "status") + "Recent";
     const value = pending ? 1 : opts.filter;
     return { source: listing.index(index), range: IDBKeyRange.bound([value], [value, []]), direction };
   }

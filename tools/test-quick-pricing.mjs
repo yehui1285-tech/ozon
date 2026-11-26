@@ -60,11 +60,22 @@ class Element {
   querySelector(selector){const qp=selector.match(/^\[data-qp="([^"]+)"\]$/)?.[1],field=selector.match(/^\[data-field="([^"]+)"\]$/)?.[1];for(const c of this.children){if(qp&&c.dataset.qp===qp||field&&c.dataset.field===field||selector==='.'+c.className)return c;const found=c.querySelector(selector);if(found)return found}return null}
   text(){return this.textContent+' '+this.children.map(c=>c.text()).join(' ')}
 }
-Object.assign(context,{document:{createElement:tag=>new Element(tag),addEventListener(){},removeEventListener(){},visibilityState:'visible'},window:{addEventListener(){},removeEventListener(){}},setInterval:()=>0,clearInterval(){},URL,confirm:()=>true});
+const docListeners={},winListeners={};
+let nextTimerId=1;const activeTimers=[];
+Object.assign(context,{
+  document:{createElement:tag=>new Element(tag),addEventListener(type,fn){(docListeners[type] ||= []).push(fn)},removeEventListener(type,fn){docListeners[type]=(docListeners[type]||[]).filter(f=>f!==fn)},visibilityState:'visible'},
+  window:{addEventListener(type,fn){(winListeners[type] ||= []).push(fn)},removeEventListener(type,fn){winListeners[type]=(winListeners[type]||[]).filter(f=>f!==fn)}},
+  setInterval:()=>0,clearInterval(){},
+  setTimeout:(fn,delay)=>{const entry={id:nextTimerId++,fn,delay};activeTimers.push(entry);return entry.id},
+  clearTimeout:(id)=>{const idx=activeTimers.findIndex(x=>x.id===id);if(idx>=0)activeTimers.splice(idx,1)},
+  URL,confirm:()=>true
+});
 vm.runInContext(fs.readFileSync('ozon-erp-collector-extension/quick-pricing-panel.js','utf8'),context);
 const fixture=new Element(),sample={...original,sku:'6078237717',green:'88.71',black:'92.05',commission:'10',freight:'54.55',cost:'10'};
-const panel=context.OzonQuickPricingPanel.create(fixture,{math:context.math,load:async()=>[sample]});
+let loadedRows=[sample],loadCalls=[];
+const panel=context.OzonQuickPricingPanel.create(fixture,{math:context.math,load:async sku=>{loadCalls.push(sku);return loadedRows}});
 panel.select({sku:sample.sku,title:'还剩8件',link:'https://www.ozon.ru/product/test-6078237717/'});await new Promise(resolve=>setImmediate(resolve));
+assert.equal(activeTimers.at(-1)?.delay,15000,'loaded pricing must poll at 15s');
 const margin=fixture.querySelector('[data-qp="margin"]'),resultBox=fixture.querySelector('[data-qp="result"]');
 assert.ok(margin,'利润率必须具有独立卡片');
 assert.match(margin.text(),/23\.81%/);assert.match(margin.text(),/达标/);assert.equal(margin.dataset.tone,'pass');
@@ -75,6 +86,32 @@ assert.equal(fixture.querySelector('[data-field="note"]'),null,'已精简掉独�
 assert.match(fixture.text(),/货源链接 \/ 备注/);
 assert.doesNotMatch(fixture.text(),/核价备注/);
 costInput.value='';costInput.events.input();assert.equal(margin.dataset.tone,'pending');assert.match(margin.text(),/待计算/);panel.dispose();
+
+// Test focus dedup, 2s unpriced polling, and background ozon-pricing-pushed signal.
+let deferredLoad=null,pushLoads=0;
+const pushPanel=context.OzonQuickPricingPanel.create(new Element(),{
+  math:context.math,
+  load:async sku=>{pushLoads++;return new Promise(resolve=>{deferredLoad=()=>resolve(sku==='999001'?[{...sample,sku:'999001'}]:[])})}
+});
+pushPanel.select({sku:'999002',title:'等待核价',link:'https://www.ozon.ru/product/test-999002/'});
+assert.equal(pushLoads,1);deferredLoad();await new Promise(resolve=>setImmediate(resolve));
+assert.equal(activeTimers.at(-1)?.delay,2000,'unpriced waiting state must poll every 2s');
+loadCalls.length=0;pushLoads=0;
+for(const fn of (docListeners.visibilitychange||[]))fn();
+for(const fn of (winListeners.focus||[]))fn();
+assert.equal(pushLoads,1,'back-to-back visibilitychange + focus must deduplicate while in-flight');
+deferredLoad();await new Promise(resolve=>setImmediate(resolve));
+pushLoads=0;context.document.visibilityState='hidden';
+for(const fn of (winListeners['ozon-pricing-pushed']||[]))fn({detail:{sku:'other'}});
+assert.equal(pushLoads,0,'non-matching SKU push event must not trigger refresh');
+pushPanel.select({sku:'999001',title:'后台推送',link:'https://www.ozon.ru/product/test-999001/'});
+await new Promise(resolve=>setImmediate(resolve));if(deferredLoad)deferredLoad();await new Promise(resolve=>setImmediate(resolve));
+pushLoads=0;context.document.visibilityState='hidden';
+for(const fn of (winListeners['ozon-pricing-pushed']||[]))fn({detail:{sku:'999001'}});
+assert.equal(pushLoads,1,'matching ozon-pricing-pushed must refresh immediately even when tab is hidden');
+deferredLoad();await new Promise(resolve=>setImmediate(resolve));
+pushPanel.dispose();
+assert.equal(activeTimers.length,0,'dispose must clear pending poll timer');
 const styles=fs.readFileSync('ozon-erp-collector-extension/quick-pricing-panel.css','utf8');
 for(const selector of ['qp-price-label','qp-price-badge','qp-price-detail'])assert.match(styles,new RegExp(`\\.${selector}\\{[^}]*color:#000000(?:;|})`));
 assert.match(styles,/\.qp-price-amount\{[^}]*color:#a92323/);

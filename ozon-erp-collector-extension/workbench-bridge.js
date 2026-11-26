@@ -9,9 +9,25 @@ async function wbAuto(enabled){const s=await wbSettings();if(!s.token)throw Erro
 const wbDetailQueue=globalThis.OzonStoreScannerCore.createSerializedExecutor();
 async function wbDigest(text){return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text))),b=>b.toString(16).padStart(2,'0')).join('')}
 function wbProduct(p){const out={sku:String(p.sku||''),link:String(p.link||'')};for(const k of ['greenPrice','blackPrice','commission','freight','lengthCm','widthCm','heightCm','weightKg'])out[k]=Number(p[k])||0;return out}
+function wbNotifyOpenPages(sku){
+ const targetSku=String(sku||'');
+ try{
+  chrome.tabs?.query?.({url:[WB_ORIGIN+'/ozon/pool*',WB_ORIGIN+'/ozon',WB_ORIGIN+'/ozon?*']},tabs=>{
+   if(chrome.runtime?.lastError||!Array.isArray(tabs))return;
+   for(const tab of tabs){
+    if(!tab?.id||!chrome.scripting?.executeScript)continue;
+    chrome.scripting.executeScript({
+     target:{tabId:tab.id},
+     func:s=>{window.dispatchEvent(new CustomEvent('ozon-pricing-pushed',{detail:{sku:s}}));},
+     args:[targetSku],
+    }).catch?.(()=>{});
+   }
+  });
+ }catch{}
+}
 async function wbSendDetail(product,dest,requestId){if(!['workbench','original','both'].includes(dest))dest='workbench';if(dest==='original'){await sendToPricing(product);return {ok:true,destinations:['原核价表']}}
  return wbDetailQueue(async()=>{const settings=await wbSettings(),p=wbProduct(product);const fingerprint=await wbDigest(JSON.stringify([dest,p]));let map=(await chrome.storage.local.get(WB_PENDING))[WB_PENDING]||{};let pending=map[fingerprint]||{id:requestId||crypto.randomUUID(),wb:false,old:false,at:Date.now()};map[fingerprint]=pending;await chrome.storage.local.set({[WB_PENDING]:map});
- try{if(!pending.wb){await wbRequest(settings.token,{action:'detail',id:pending.id,product:p});pending.wb=true;await chrome.storage.local.set({[WB_PENDING]:map})}if(dest==='both'&&!pending.old){await sendToPricing(product);pending.old=true;await chrome.storage.local.set({[WB_PENDING]:map})}delete map[fingerprint];await chrome.storage.local.set({[WB_PENDING]:map});return {ok:true,destinations:dest==='both'?['工作台','原核价表']:['工作台']}}catch(e){return {ok:false,error:(pending.wb?'工作台已保存；原核价表未确认，再点发送只重试未完成目标。':'工作台未确认保存，请重试（不会重复添加已接收记录）。')+' '+e.message,partial:pending.wb}}})
+ try{if(!pending.wb){await wbRequest(settings.token,{action:'detail',id:pending.id,product:p});pending.wb=true;wbNotifyOpenPages(p.sku);await chrome.storage.local.set({[WB_PENDING]:map})}if(dest==='both'&&!pending.old){await sendToPricing(product);pending.old=true;await chrome.storage.local.set({[WB_PENDING]:map})}delete map[fingerprint];await chrome.storage.local.set({[WB_PENDING]:map});return {ok:true,destinations:dest==='both'?['工作台','原核价表']:['工作台']}}catch(e){return {ok:false,error:(pending.wb?'工作台已保存；原核价表未确认，再点发送只重试未完成目标。':'工作台未确认保存，请重试（不会重复添加已接收记录）。')+' '+e.message,partial:pending.wb}}})
 }
 async function wbSnapshot(batch){if(!batch?.stores?.length)return null;const {stores}=await getBatchStoreResults({sellerKeys:batch.stores.map(t=>t.sellerKey)});const csv=storeScannerCore.buildManualSourcingCsv({batch,stores});return {id:batch.id,capturedAt:Date.now(),status:batch.status,storeCount:batch.stores.length,completedCount:batch.stores.filter(t=>['completed','partial','failed','skipped'].includes(t.status)).length,observed:batch.stores.reduce((s,t)=>s+(Number(t.observedCount)||0),0),csv}}
 async function wbArchiveBeforeReset(batch){const settings=await wbSettings();if(!settings.token||!batch)return;const snap=await wbSnapshot(batch);if(!snap)return;if(["running","paused"].includes(snap.status))snap.status="stopped";const backlog=(await chrome.storage.local.get(WB_BATCH_BACKLOG))[WB_BATCH_BACKLOG]||{};backlog[snap.id]=snap;await chrome.storage.local.set({[WB_BATCH_BACKLOG]:backlog})}

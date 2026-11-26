@@ -118,11 +118,11 @@ try {
       await checkPage("first", {});
       await checkPage("deep", { offset: size / 2 - 50, filter: "pending" });
       await checkPage("search", { query: " nEeDle ", filter: "", sort: "recent" });
-      await checkPage("sorted", { sort: "skuDesc", filter: "", offset: size - 50 });
+      await checkPage("sorted", { sort: "savedRecent", filter: "", offset: size - 50 });
       await checkPage("filtered", { sort: "oldest", filter: "approved", limit: 13, offset: 13 });
-      await checkPage("searchSku", { query: "100001", sort: "skuAsc", filter: "" });
+      await checkPage("searchSku", { query: "100001", sort: "savedOldest", filter: "" });
       await checkPage("searchCategory", { query: "工具 2", sort: "oldest", filter: "new", offset: size, limit: 16 });
-      await checkPage("searchStore", { query: "测试店铺 11", sort: "skuDesc", filter: "pending", offset: 10 });
+      await checkPage("searchStore", { query: "测试店铺 11", sort: "oldest", filter: "pending", offset: 10 });
       await checkPage("sourceCategory", { source: "category", filter: "", sort: "recent" });
       await checkPage("sourceStore", { source: "store", filter: "pending", query: "工具 1" });
       await checkPage("noMatches", { query: "NO MATCH", offset: size });

@@ -116,7 +116,7 @@ try{
   await page.evaluate(()=>ozonLocalQuick.select(pool.products['148']));
   page.once('dialog',d=>d.accept());await page.locator('[data-qp="reject"]').click();await page.waitForFunction(()=>ozonLocalQuick.selectedSku==='149');
   assert.equal(await page.evaluate(()=>fixturePool.products['148'].status),'rejected');
-  await page.locator('#sort').selectOption('skuDesc');await page.waitForFunction(()=>document.querySelector('#rows tr[data-sku]')?.dataset.sku==='150');
+  await page.locator('#sort').selectOption('oldest');await page.waitForFunction(()=>document.querySelector('#rows tr[data-sku]')?.dataset.sku==='150');
   await page.locator('#query').fill('测试商品 104');await page.waitForFunction(()=>document.querySelectorAll('#rows tr[data-sku]').length===1&&document.querySelector('#rows tr[data-sku]').dataset.sku==='104');
   assert.equal(await page.evaluate(()=>fixtureReads.some(x=>x==='full')),false);
   const download=page.waitForEvent('download');await page.locator('#backup').click();await download;
