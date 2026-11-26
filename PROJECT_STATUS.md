@@ -1,14 +1,14 @@
 # Ozon 当前状态
 
-更新时间：2026-11-26（V1.56 / 0.6.74 修复商品池底部悬浮批量栏「取消选择」按钮对比度本机完成并已本地提交，待 Codex 部署；线上当前为 V1.55 站点版本 `83` / 扩展 `v0.6.73`）。
+更新时间：2026-11-26（工作台 V1.56 已上线站点版本 `84`，源码 `b18194b`，部署 `appgdep_6b07fc021d608191ac513a33f5179f53`，扩展 `v0.6.74`，无新增 D1 迁移；Ozon 仓库同步推送 `origin/main`）。
 用途：新对话快速续接。详细过程按需查 [CHANGELOG](CHANGELOG.md) 和 [历史入口](docs/history/README.md)，不把历史待办当作当前任务。
 
 ## 当前版本与结论
 
-- V1.56 / 0.6.74（本机已提交，未推送/未部署）：修复商品池底部悬浮批量操作栏中「取消选择」按钮在工作台因 `.ozscan button` 后加载覆盖背景导致的“白底白字”问题，并统一双版悬浮栏按钮配色与悬停反馈（**无新增 D1 数据库迁移**）：
+- V1.56 / 0.6.74（已上线站点版本 `84`）：修复商品池底部悬浮批量操作栏中「取消选择」按钮在工作台因 `.ozscan button` 后加载覆盖背景导致的“白底白字”问题，并统一双版悬浮栏按钮配色与悬停反馈（**无新增 D1 数据库迁移**）：
   - 工作台端（`app/ozon/pool/pool-desk.tsx`、`pool.css`）：为「取消选择」补充 `pool-float-ghost` 类，并将 `.pool-batch-float` 内按钮规则限定在 `.ozscan .pool-batch-float` 作用域下以稳定覆盖 `scan.css` 的通用白色按钮样式。
   - 扩展 / 独立分享版（`ozon-erp-collector-extension/product-pool.html`、`product-pool.css`）：同步为 `#rejectSelected`、 `#clearSelectionBtn` 补齐 `danger` / `ghost` 类与高对比度配色及悬停状态，原有批量操作逻辑不变。
-  - 验证：Ozon `npm.cmd test`、双版发布构建（`ozon-erp-collector-extension.zip` 与工作台内嵌包 SHA256 `FF66E776A5F7344D53E7D88C099222D0B17FC473366E8784137D796D89DD8D55` 一致）、Workbench `npm.cmd run build`、271/271 测试与 `V1.55 → V1.56` 版本校验均通过。线上真实浏览器样式验证与独立分享版 `0.6.74` 升级待部署后确认。回滚备份 `_备份_20261126_v156_float_bar_before`。
+  - 验证与部署：Ozon `npm.cmd test`、双版发布构建（`ozon-erp-collector-extension.zip` 与工作台内嵌包 SHA256 `FF66E776A5F7344D53E7D88C099222D0B17FC473366E8784137D796D89DD8D55` 一致）、Workbench `npm.cmd run build`、271/271 测试与 `V1.55 → V1.56` 版本校验均通过。Codex 已部署上线（站点版本 `84`，Workbench 本地提交 `b18194b`，部署 ID `appgdep_6b07fc021d608191ac513a33f5179f53`，共享核心及扩展 `v0.6.74` SHA256 校验通过，生产构建通过，无新增 D1 迁移）。线上真实浏览器「取消选择」按钮样式与独立分享版 `0.6.74` 升级待用户现场确认。回滚备份 `_备份_20261126_v156_float_bar_before`。
 
 - V1.55 / 0.6.73（已上线站点版本 `83`）：在 V1.54 基础上，按用户实机体验微调两处细节（**无新增 D1 数据库迁移**）：
   - 共享快速核价面板精简（`quick-pricing-panel.js` / `quick-pricing-panel.css`）：将「货源链接 / 说明」更名为「货源链接 / 备注」并删除冗余的「核价备注」文本框，缩短右侧面板高度，常见桌面屏高无需垂直滚动即可直达利润率与操作按钮；原有 `/api/ozon` 推送与核价计算公式不变。
