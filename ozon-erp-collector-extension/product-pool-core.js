@@ -2,6 +2,19 @@
   "use strict";
   const scanner = scope.OzonStoreScannerCore;
   const statuses = Object.freeze({ new: "待找品", sourcing: "找品中", review: "待复核", approved: "人工已复核", rejected: "淘汰" });
+  const normalizeImageUrl = (value) => {
+    if (scanner?.normalizeImageUrl) return scanner.normalizeImageUrl(value);
+    const input = String(value ?? "").trim();
+    if (!input || input.length > 1024 || /^(?:data|blob|javascript):/i.test(input)) return "";
+    try {
+      const parsed = new URL(input);
+      if (parsed.protocol !== "https:" || parsed.username || parsed.password) return "";
+      if (!/(?:^|\.)(?:ozone\.ru|ozon\.ru)$/i.test(parsed.hostname) || /\.svg(?:$|\?)/i.test(parsed.pathname)) return "";
+      return parsed.href;
+    } catch {
+      return "";
+    }
+  };
   function matchesStatus(product, filter) {
     if (filter === "pending") return !["approved", "rejected"].includes(product.status);
     return !filter || product.status === filter;
@@ -9,16 +22,19 @@
   function normalizePageQuery(raw = {}) {
     const integer = (value, fallback) => value == null || value === "" || !Number.isSafeInteger(Number(value)) ? fallback : Number(value);
     const filter = raw.filter === "all" ? "" : raw.filter == null ? "pending" : String(raw.filter);
+    const source = raw.source === "category" || raw.source === "store" ? raw.source : "";
     return {
       query: String(raw.query ?? "").trim().toLowerCase().slice(0, 200),
       filter: filter === "" || filter === "pending" || Object.hasOwn(statuses, filter) ? filter : "pending",
+      source,
       sort: ["recent", "oldest", "skuAsc", "skuDesc"].includes(raw.sort) ? raw.sort : "recent",
       offset: Math.max(0, integer(raw.offset, 0)),
       limit: Math.max(1, Math.min(50, integer(raw.limit, 50))),
     };
   }
   function matchesPageQuery(item, options) {
-    return matchesStatus(item, options.filter) && [item.sku,item.title,item.category,item.storeName].some(s => String(s ?? "").toLowerCase().includes(options.query));
+    const mode = item.sourceMode === "category" ? "category" : "store";
+    return matchesStatus(item, options.filter) && (!options.source || mode === options.source) && [item.sku,item.title,item.category,item.storeName].some(s => String(s ?? "").toLowerCase().includes(options.query));
   }
   function comparePoolItems(a, b, sort) {
     const cmp = (x,y) => String(x ?? "") < String(y ?? "") ? -1 : String(x ?? "") > String(y ?? "") ? 1 : 0;
@@ -74,13 +90,16 @@
       if (previous) result.duplicates++;
       else result.added++;
       const batchIds = [...new Set([...(previous?.batchIds || []), batch.id])];
+      const incomingImageUrl = normalizeImageUrl(product.imageUrl);
+      const existingImageUrl = normalizeImageUrl(previous?.imageUrl);
       if (previous && previous.lastSeenAt > observedAt) {
-        next.products[sku] = { ...previous, batchIds };
+        next.products[sku] = { ...previous, batchIds, ...(!existingImageUrl && incomingImageUrl ? { imageUrl: incomingImageUrl } : {}) };
         continue;
       }
       next.products[sku] = {
         sku, title: String(product.name || ""), category: String(product.category || ""),
-        link: scanner.canonicalProductLink(product.link), price: String(product.price || ""),
+        link: scanner.canonicalProductLink(product.link), imageUrl: incomingImageUrl || existingImageUrl,
+        price: String(product.price || ""),
         commissions: (product.commissions || []).join(" / "), monthlySales: String(product.monthlySales || ""),
         dimensions: String(product.dimensions || ""), weight: String(product.weight || ""),
         fulfillment: String(product.fulfillment || ""), competitor: String(product.competitor || ""),
@@ -130,14 +149,14 @@
   }
 
   function exportPoolCsv(state) {
-    const header = ["SKU", "商品名称", "类目", "Ozon链接", "采集价格", "佣金", "月销量", "发货模式", "尺寸", "重量", "跟卖价", "运输复核", "处理状态", "来源店铺", "来源批次", "首次入池", "最近发现", "备注", "人工保存时间"];
+    const header = ["SKU", "商品名称", "类目", "Ozon链接", "图片链接", "采集价格", "佣金", "月销量", "发货模式", "尺寸", "重量", "跟卖价", "运输复核", "处理状态", "来源店铺", "来源批次", "首次入池", "最近发现", "备注", "人工保存时间"];
     const rows = Object.values(state.products || {}).map(p => [
-      p.sku, p.title, p.category, p.link, p.price, p.commissions, p.monthlySales, p.fulfillment,
+      p.sku, p.title, p.category, p.link, normalizeImageUrl(p.imageUrl), p.price, p.commissions, p.monthlySales, p.fulfillment,
       p.dimensions, p.weight, p.competitor, p.shippingRisk, p.blocked ? "运输待复核" : statuses[p.status],
       p.storeName, p.batchIds.join(" / "), p.firstSeenAt, p.lastSeenAt, p.notes, p.manualSavedAt || "",
     ]);
     return [header, ...rows].map(row => row.map(scanner.csvCell).join(",")).join("\r\n");
   }
 
-  scope.OzonProductPoolCore = Object.freeze({ emptyPool, statuses, matchesStatus, normalizePageQuery, matchesPageQuery, comparePoolItems, importHistory, addBatch, updateProduct, updateProducts, productExpectation, exportPoolCsv });
+  scope.OzonProductPoolCore = Object.freeze({ emptyPool, statuses, normalizeImageUrl, matchesStatus, normalizePageQuery, matchesPageQuery, comparePoolItems, importHistory, addBatch, updateProduct, updateProducts, productExpectation, exportPoolCsv });
 })(globalThis);

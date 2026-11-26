@@ -7,18 +7,18 @@ const [scannerCore, categoryCore, categoryScanner] = await Promise.all([
   read('../ozon-erp-collector-extension/category-core.js'),
   read('../ozon-erp-collector-extension/category-scanner.js'),
 ]);
-const makeEl = ({ text = '', href = '', cls = '', widget = '', children = [], tag = 'DIV', attrs = {} } = {}) => {
-  const el = { innerText: text, textContent: text, href, className: cls, tagName: tag, parentElement: null, children, hidden: false,
-    getAttribute(name) { return attrs[name] ?? (name === 'data-widget' ? widget : null); },
+const makeEl = ({ text = '', href = '', cls = '', widget = '', children = [], tag = 'DIV', attrs = {}, src = '', naturalWidth = 0, naturalHeight = 0 } = {}) => {
+  const el = { innerText: text, textContent: text, href, className: cls, tagName: tag, parentElement: null, children, hidden: false, currentSrc: src, naturalWidth, naturalHeight, width: naturalWidth, height: naturalHeight,
+    getAttribute(name) { return attrs[name] ?? (name === 'data-widget' ? widget : name === 'src' ? src : null); },
     getBoundingClientRect() { return { width: 200, height: 100, top: 0, bottom: 100 }; },
     contains(other) { return other === this || this.children.some((child) => child.contains(other)); },
-    querySelectorAll(selector) { return this.children.flatMap((c) => [...(selector.includes('a[href') && c.tagName === 'A' ? [c] : []), ...c.querySelectorAll(selector)]); },
-    querySelector() { return null; }, closest() { return null; } };
+    querySelectorAll(selector) { return this.children.flatMap((c) => [...((selector.includes('a[href') && c.tagName === 'A') || (selector === 'img' && c.tagName === 'IMG') ? [c] : []), ...c.querySelectorAll(selector)]); },
+    querySelector() { return null; }, closest(sel) { if (sel?.includes('a[href') && this.parentElement?.tagName === 'A') return this.parentElement; return null; } };
   children.forEach((child) => { child.parentElement = el; }); return el;
 };
 const card = (sku, name, label = '符合要求', category = '家居') => makeEl({
   text: `${label}\n399.00 ¥\n类目：${category}\nrFBS佣金：10%\nSKU：${sku}\nSKU：${sku}\n月销量：20\n发货模式：FBS\n长宽高：10×10×10\n重量：500g\n跟卖最低价：300`,
-  children: [makeEl({ tag: 'A', href: `https://www.ozon.ru/product/${name}-${sku}/`, text: name }), makeEl({ text: label })],
+  children: [makeEl({ tag: 'A', href: `https://www.ozon.ru/product/${name}-${sku}/`, text: name, children: sku === '10001' ? [makeEl({ tag: 'IMG', src: 'https://ir.ozone.ru/s3/m/wc250/10001.jpg', naturalWidth: 250, naturalHeight: 250 })] : [] }), makeEl({ text: label })],
 });
 const incomplete = card('10005', 'incomplete-item');
 incomplete.innerText = incomplete.textContent = incomplete.innerText.replace(/\n跟卖最低价：300/, '');
@@ -49,6 +49,8 @@ assert.equal(ack?.accepted, true, 'start must be acknowledged immediately');
 const reader = context.OzonCategoryScanner.createReader(context.document, context.OzonCategoryCore);
 const result = reader.read(context.location.href, {});
 assert.deepEqual(Array.from(result.products, (p) => p.sku).sort(), ['10001', '10005', '20001']);
+assert.equal(result.products.find(p => p.sku === '10001')?.imageUrl, 'https://ir.ozone.ru/s3/m/wc250/10001.jpg');
+assert.equal(result.products.find(p => p.sku === '20001')?.imageUrl, '');
 assert.deepEqual(Array.from(result.observedSkus).sort(), ['10001', '10002', '10003', '10005', '20001', '20002']);
 assert.deepEqual(Array.from(result.discoverSkus).sort(), ['10001', '10002', '10003', '10005', '20001', '20002', '20003', '20004', '20005', '99999']);
 assert.deepEqual(Array.from(result.erpReadySkus).sort(), ['10001', '10002', '10003', '10005', '20001', '20002', '20005']);

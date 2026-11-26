@@ -378,7 +378,15 @@ assert.match(batchHtmlSource, /id="shippingRisks"/);
 assert.match(batchHtmlSource, /禁运与运输限制复核/);
 
 const manifest = JSON.parse(fs.readFileSync(new URL("../ozon-erp-collector-extension/manifest.json", import.meta.url), "utf8"));
-assert.equal(manifest.version, "0.6.70");
+assert.equal(manifest.version, "0.6.71");
+assert.equal(core.normalizeImageUrl("https://ir.ozone.ru/s3/multimedia-1-a/wc250/123.jpg"), "https://ir.ozone.ru/s3/multimedia-1-a/wc250/123.jpg");
+assert.equal(core.normalizeImageUrl("https://evil.example/a.jpg"), "");
+assert.equal(core.normalizeImageUrl("data:image/png;base64,AAA"), "");
+assert.equal(core.normalizeImageUrl("https://ir.ozone.ru/a.svg"), "");
+const imgBatchStores = { hj025: { storeName: "HJ025", batchCapture: { batchId: "batch-img", skus: ["101"] }, products: { "101": { sku: "101", name: "测试", link: "https://www.ozon.ru/product/t-101/", imageUrl: "https://ir.ozone.ru/s3/m/wc250/101.jpg" } } } };
+const imgManualCsv = core.buildManualSourcingCsv({ batch: { id: "batch-img", stores: [{ sellerKey: "hj025", url: "https://www.ozon.ru/seller/hj025/" }] }, stores: imgBatchStores });
+assert.match(imgManualCsv, /"Ozon商品链接","商品图片链接","人工找品状态"/);
+assert.match(imgManualCsv, /"https:\/\/ir\.ozone\.ru\/s3\/m\/wc250\/101\.jpg"/);
 assert.ok(manifest.permissions.includes("alarms"));
 assert.ok(manifest.permissions.includes("unlimitedStorage"));
 

@@ -33,8 +33,39 @@ function feedback(text, error = false) {
   $("message").textContent = text;
   $("message").style.color = error ? "#a52e1b" : "#226247";
 }
+const showImagesKey = "ozonPoolShowImages";
+let showImages = (() => { try { return localStorage.getItem(showImagesKey) !== "0"; } catch { return true; } })();
+const failedImages = new Set();
+if ($("showImages")) $("showImages").checked = showImages;
+function createThumb(item) {
+  const box = document.createElement("span");
+  box.className = "pool-thumb";
+  const url = core.normalizeImageUrl ? core.normalizeImageUrl(item.imageUrl) : "";
+  const fallback = text => {
+    const label = document.createElement("span");
+    label.className = "pool-thumb-fallback";
+    label.textContent = text;
+    return label;
+  };
+  if (!url || failedImages.has(url)) {
+    box.append(fallback(url ? "加载失败" : "无图"));
+    return box;
+  }
+  const img = document.createElement("img");
+  img.loading = "lazy";
+  img.decoding = "async";
+  img.referrerPolicy = "no-referrer";
+  img.alt = item.title || item.sku || "商品缩略图";
+  img.src = url;
+  img.addEventListener("error", () => {
+    failedImages.add(url);
+    box.replaceChildren(fallback("加载失败"));
+  }, { once: true });
+  box.append(img);
+  return box;
+}
 async function loadPage(at = offset) {
-  const options=core.normalizePageQuery({query:$("query").value,filter:$("filter").value,sort:$("sort").value,offset:at,limit:pageSize});
+  const options=core.normalizePageQuery({query:$("query").value,filter:$("filter").value,source:$("source")?.value||"",sort:$("sort").value,offset:at,limit:pageSize});
   const {page}=await send({type:"getProductPoolPage",...options});
   if(!Array.isArray(page?.items)||page.items.length>pageSize||!Number.isSafeInteger(page.offset)||!Number.isSafeInteger(page.matched))throw Error("商品池分页响应异常");
   pageInfo=page;offset=page.offset;appliedQuery=options;
@@ -76,17 +107,31 @@ function render() {
     const checkCell = row.insertCell(); checkCell.className = "check-col";
     const check = document.createElement("input"); check.type = "checkbox"; check.checked = selected.has(p.sku); check.disabled = poolOperationBusy(); check.setAttribute("aria-label", `选择 ${p.sku}`);
     check.addEventListener("change", () => { toggleSelected(p,check.checked); updateSelection(page); }); checkCell.append(check);
-    const name = cell(row, p.sku);
-    name.append(document.createElement("br"));
+    const nameCell = row.insertCell();
     const link = document.createElement("a");
     link.textContent = p.title || "商品";
     if (/^https:\/\/www\.ozon\.ru\/product\//i.test(p.link)) {link.href = p.link; link.target = "_blank"; link.rel = "noopener noreferrer";}
-    name.append(link);
     if(globalThis.ozonLocalQuick){const select=e=>globalThis.OzonQuickPricingCore.selectBeforeOpen(e,()=>globalThis.ozonLocalQuick.select(p));link.addEventListener('click',select);link.addEventListener('auxclick',select);link.title='选中此 SKU 并打开 Ozon 商品页';}
+    const meta = document.createElement("div");
+    meta.className = "pool-product-meta";
+    meta.append(document.createTextNode(p.sku), document.createElement("br"), link);
+    if (showImages) {
+      const wrap = document.createElement("div");
+      wrap.className = "pool-product-cell";
+      wrap.append(createThumb(p), meta);
+      nameCell.append(wrap);
+    } else {
+      nameCell.append(meta);
+    }
     cell(row,p.category); cell(row,p.price);
     const weight = cell(row,String(p.weight||"").trim());
     if (p.blocked) {const warning=document.createElement("small");warning.className="weight-warning";warning.textContent="运输待复核";warning.title=p.shippingRisk||"";weight.append(warning);}
-    cell(row, `${p.storeName} · ${String(p.lastSeenAt || "").slice(0,10)}`);
+    cell(row, String(p.monthlySales || "").trim());
+    const sourceCell = row.insertCell();
+    const sourceBadge = document.createElement("span");
+    sourceBadge.className = "pool-source-badge";
+    sourceBadge.textContent = p.sourceMode === "category" ? "类目" : "店铺";
+    sourceCell.append(sourceBadge, document.createElement("br"), document.createTextNode(`${p.storeName} · ${String(p.lastSeenAt || "").slice(0,10)}`));
     const select = document.createElement("select");
     for (const [value,text] of Object.entries(core.statuses)) option(select,value,text);
     const draft = drafts.get(p.sku);
@@ -139,7 +184,7 @@ function render() {
     row.insertCell().append(save,reset,receipt);
     showReceipt();
   }
-  if (!page.length) {const c = $("rows").insertRow().insertCell();c.colSpan=9;c.textContent=refreshBusy?"正在读取…":"暂无符合条件的商品。请刷新或先在批量扫描页加入本批商品。";}
+  if (!page.length) {const c = $("rows").insertRow().insertCell();c.colSpan=10;c.textContent=refreshBusy?"正在读取…":"暂无符合条件的商品。请刷新或先在批量扫描页加入本批商品。";}
   updateSelection(page);
   $("page").textContent = pageInfo.matched ? `${offset+1}–${Math.min(offset+pageSize,pageInfo.matched)} / ${pageInfo.matched}` : "0 件";
   $("previous").disabled = poolOperationBusy() || offset === 0;
@@ -147,7 +192,7 @@ function render() {
   globalThis.ozonLocalQuick?.sync(page);
   if(table){table.scrollTop=scrollTop;table.scrollLeft=scrollLeft;}
 }
-async function refresh(at=offset) {if(poolWriteOrLoadBusy())return;clearTimeout(searchTimer);searchPending=false;refreshBusy=true;render();try {await loadPage(at);}catch(e){$("query").value=appliedQuery.query;$("filter").value=appliedQuery.filter;$("sort").value=appliedQuery.sort;feedback(e.message,true);}finally{refreshBusy=false;render();}}
+async function refresh(at=offset) {if(poolWriteOrLoadBusy())return;clearTimeout(searchTimer);searchPending=false;refreshBusy=true;render();try {await loadPage(at);}catch(e){$("query").value=appliedQuery.query;$("filter").value=appliedQuery.filter;if($("source"))$("source").value=appliedQuery.source;$("sort").value=appliedQuery.sort;feedback(e.message,true);}finally{refreshBusy=false;render();}}
 function updateSelection(page) {
   const count=selected.size, selectedOnPage=page.filter(p=>selected.has(p.sku)).length;
   $("selectionCount").textContent=`已选 ${count} 件`;
@@ -157,7 +202,7 @@ function updateSelection(page) {
   $("saveSelected").disabled=poolOperationBusy()||!page.some(p=>selected.has(p.sku)&&drafts.has(p.sku));
   $("rejectSelected").disabled=poolOperationBusy()||!count;
   $("refresh").disabled=poolOperationBusy();$("importHistory").disabled=poolOperationBusy();
-  $("query").disabled=poolWriteOrLoadBusy();$("filter").disabled=poolOperationBusy();$("sort").disabled=poolOperationBusy();
+  $("query").disabled=poolWriteOrLoadBusy();$("filter").disabled=poolOperationBusy();if($("source"))$("source").disabled=poolOperationBusy();$("sort").disabled=poolOperationBusy();
   for(const id of ["export","backup","exportHistory"])$(id).disabled=poolOperationBusy();
 }
 function visiblePage(){return pageInfo.items;}
@@ -182,7 +227,8 @@ function download(name,text,type) {
   const a = document.createElement("a"); a.href=url; a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1500);
 }
 $("query").addEventListener("input",()=>{if(poolWriteOrLoadBusy())return;clearTimeout(searchTimer);clearSelection();searchPending=true;render();searchTimer=setTimeout(()=>void refresh(0),180);});
-for(const id of ["filter","sort"])$(id).addEventListener("change",()=>{if(poolOperationBusy())return;clearSelection();void refresh(0);});
+for(const id of ["filter","source","sort"])if($(id))$(id).addEventListener("change",()=>{if(poolOperationBusy())return;clearSelection();void refresh(0);});
+if($("showImages"))$("showImages").addEventListener("change",()=>{showImages=$("showImages").checked;try{localStorage.setItem(showImagesKey,showImages?"1":"0");}catch{}render();});
 $("previous").addEventListener("click",()=>{if(poolOperationBusy())return;clearSelection();void refresh(Math.max(0,offset-pageSize));});
 $("next").addEventListener("click",()=>{if(poolOperationBusy())return;clearSelection();void refresh(offset+pageSize);});
 $("selectPage").addEventListener("change",()=>{if(poolOperationBusy())return;for(const p of visiblePage())toggleSelected(p,$("selectPage").checked);render();});

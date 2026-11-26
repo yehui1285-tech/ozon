@@ -96,4 +96,22 @@ assert.ok(core.comparePoolItems(a,b,"recent")>0);
 assert.ok(core.comparePoolItems(a,b,"oldest")<0);
 assert.ok(core.comparePoolItems(a,b,"skuAsc")<0);
 assert.ok(core.comparePoolItems(a,b,"skuDesc")>0);
+assert.equal(core.normalizeImageUrl("https://cdn1.ozone.ru/s3/multimedia-a/wc250/1.jpg"), "https://cdn1.ozone.ru/s3/multimedia-a/wc250/1.jpg");
+assert.equal(core.normalizeImageUrl("https://evil.example/1.jpg"), "");
+assert.equal(core.normalizeImageUrl("https://ir.ozone.ru/icon.svg"), "");
+assert.equal(core.normalizePageQuery({ source: "category" }).source, "category");
+assert.equal(core.normalizePageQuery({ source: "invalid" }).source, "");
+const imgPool = core.addBatch(core.emptyPool(), capture("batch-img-1", ["801"], {
+  "801": { ...product("801", "500"), monthlySales: "120", imageUrl: "https://ir.ozone.ru/s3/m/wc250/801.jpg" },
+}), "2026-11-26T08:00:00Z").state;
+assert.equal(imgPool.products["801"].imageUrl, "https://ir.ozone.ru/s3/m/wc250/801.jpg");
+const backfillPool = core.addBatch(core.addBatch(core.emptyPool(), capture("batch-noimg", ["802"], { "802": product("802", "500") }), "2026-11-26T09:00:00Z").state,
+  capture("batch-backfill", ["802"], { "802": { ...product("802", "400"), imageUrl: "https://ir.ozone.ru/s3/m/wc250/802.jpg" } }), "2026-11-26T08:00:00Z").state;
+assert.equal(backfillPool.products["802"].price, "500");
+assert.equal(backfillPool.products["802"].imageUrl, "https://ir.ozone.ru/s3/m/wc250/802.jpg");
+assert.match(core.exportPoolCsv(imgPool), /"图片链接"/);
+assert.match(core.exportPoolCsv(imgPool), /https:\/\/ir\.ozone\.ru\/s3\/m\/wc250\/801\.jpg/);
+assert.equal(core.matchesPageQuery(categoryPool.products["700"], core.normalizePageQuery({ source: "category" })), true);
+assert.equal(core.matchesPageQuery(categoryPool.products["700"], core.normalizePageQuery({ source: "store" })), false);
+assert.equal(core.matchesPageQuery(categoryPool.products["100"], core.normalizePageQuery({ source: "store" })), true);
 console.log("Product pool: batch provenance, global SKU deduplication, history, manual annotations and page query passed.");

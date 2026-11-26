@@ -28,7 +28,13 @@ tbody tr[data-status="sourcing"] td.check-col,tbody tr[data-status="sourcing"] t
 tbody tr[data-status="review"] td.check-col,tbody tr[data-status="review"] td:nth-child(2){background:#eef5ff;}
 tbody tr[data-status="approved"] td.check-col,tbody tr[data-status="approved"] td:nth-child(2){background:#eaf5ec;}
 tbody tr[data-status="rejected"] td.check-col,tbody tr[data-status="rejected"] td:nth-child(2){background:#f7edea;}
-.batch-tools label {display:flex;align-items:center;gap:6px;}
+.batch-tools label,.image-toggle {display:flex;align-items:center;gap:6px;white-space:nowrap;}
+.pool-product-cell {display:flex;align-items:flex-start;gap:10px;}
+.pool-thumb {flex:0 0 56px;width:56px;height:56px;border:1px solid #dce2eb;border-radius:6px;background:#f4f6fa;overflow:hidden;display:flex;align-items:center;justify-content:center;}
+.pool-thumb img {width:100%;height:100%;object-fit:cover;display:block;}
+.pool-thumb-fallback {font-size:11px;color:#738298;text-align:center;line-height:1.2;padding:2px;}
+.pool-product-meta {min-width:0;flex:1;}
+.pool-source-badge {display:inline-block;padding:1px 6px;border-radius:4px;background:#eef3fb;color:#2855c5;font-size:11px;font-weight:600;margin-bottom:3px;}
 td textarea {min-width: 140px; max-width: 240px;} .blocked {color: #a52e1b;}
 tr[data-status="sourcing"] {background:#fff9e8;}
 tr[data-status="review"] {background:#eef5ff;}

@@ -1,5 +1,12 @@
 # CHANGELOG.md - Ozon 项目续接记录
 
+## 2026-11-26 - V1.53 / 0.6.71 商品池图片与选品字段展示（本机，未发布）
+
+- 采集与图片校验：`store-scanner-core.js` 新增 `normalizeImageUrl`（仅允许 `https:` 且 `ozone.ru`/`ozon.ru` 域名的非 `.svg` URL）；`category-scanner.js` 与 `store-scanner.js` 从商品卡片提取主图 URL，缺图不影响合格判定；人工找品表 CSV 新增「商品图片链接」，商品池导出 CSV 新增「图片链接」。
+- 商品池存储与查询：`product-pool-core.js` 支持 `source`（`category`/`store`）来源筛选及历史缺图自动回填；`product-pool-idb.js` 通过 `searchVersion=2` 自动重建轻量索引；工作台 `lib/ozon-pool/store.ts` 基于既有 D1 `payload` 过滤来源，无需新增数据库迁移。
+- 双版前端交互：独立版与工作台（`V1.53`）商品池同步新增 56×56 懒加载缩略图（`loading="lazy"`、`referrerPolicy="no-referrer"`、无图/加载失败优雅降级）、“显示图片”偏好开关（关闭时不渲染 `<img>`）、独立「月销量」列与来源徽标（类目/店铺）。
+- 打包与验证：回滚备份 `_备份_20261126_v153_pool_images_before`（已轮换清理最旧 `_备份_20261125_category_card_before`，保留 5 份常规备份）。Ozon 全量 `npm.cmd test`、双版发布构建（`ozon-erp-collector-extension.zip` 与工作台内嵌包 SHA256 `677F7D234523E0ACBD4A8899B049676712F7E3B5606B3746AD2F651A4AB4DE9E` 一致）、Workbench `npm.cmd run build`、271/271 单元/集成测试及 `V1.52 → V1.53` 版本校验通过。隔离 Playwright 测试因本机未安装 Playwright 模块未运行；尚未推送 GitHub 或部署线上。
+
 ## 2026-11-26 - V1.52 / 0.6.70 工作台线上部署与商品池 D1 迁移
 
 - 工作台 V1.52 已上线为站点版本 80，源码提交 `f198089`，部署 ID `appgdep_6b07dae166b081919e7dec32e28a8ef39`；包含 V1.51 商品池 D1 分行分页与 V1.52 任务首屏日期格式化复用及设置页（`/gallery?settings=1`）轻量化优化。

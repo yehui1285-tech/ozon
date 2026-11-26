@@ -181,6 +181,30 @@
       .sort((a, b) => b.length - a.length)[0] || "";
   }
 
+  function extractCardImageUrl(card, canonicalLink) {
+    if (!core.normalizeImageUrl || !card?.querySelectorAll) return "";
+    const imgs = [...card.querySelectorAll("img")].filter((img) => {
+      if (img.hidden || img.getAttribute("aria-hidden") === "true") return false;
+      const style = window.getComputedStyle?.(img);
+      if (style && (style.display === "none" || style.visibility === "hidden")) return false;
+      return true;
+    });
+    const preferred = imgs.filter((img) => {
+      const anchor = img.closest?.('a[href*="/product/"]');
+      return anchor && core.canonicalProductLink(anchor.href) === canonicalLink;
+    });
+    for (const img of [...preferred, ...imgs.filter((item) => !preferred.includes(item))]) {
+      const width = Number(img.naturalWidth || img.width || 0);
+      const height = Number(img.naturalHeight || img.height || 0);
+      if ((width > 0 && width < 32) || (height > 0 && height < 32)) continue;
+      const srcsetFirst = String(img.getAttribute("srcset") || "").split(",")[0]?.trim().split(/\s+/)[0] || "";
+      const rawUrl = img.currentSrc || img.getAttribute("src") || img.getAttribute("data-src") || srcsetFirst || "";
+      const url = core.normalizeImageUrl(rawUrl);
+      if (url) return url;
+    }
+    return "";
+  }
+
   function visibleProductLinks(boundary) {
     const topGuard = Math.min(100, window.innerHeight * 0.12);
     const bottomGuard = window.innerHeight - topGuard;
@@ -259,10 +283,12 @@
           competitor: parsed.competitor,
         };
         const name = productName(links, link);
+        const imageUrl = extractCardImageUrl(element, link);
         const product = parsed.qualified ? {
           ...parsed,
           name,
           link,
+          imageUrl,
           shippingRisk: core.classifyShippingRisk(`${parsed.category}\n${name}\n${text}`),
           foundAt: new Date().toISOString(),
         } : null;

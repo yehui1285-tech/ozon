@@ -112,6 +112,22 @@
     const decide=(sku,reason)=>{if(!(sku in skuDecisions)||(decisionRank[reason]??0)>(decisionRank[skuDecisions[sku]]??0))skuDecisions[sku]=reason};
     const boundary=[...(list.querySelectorAll?.(headingSelector)||[])].find(el=>recommendationHeading.test(textOf(el))&&visible(el));
     const productSku=href=>{try{const u=new URL(href);return u.origin==='https://www.ozon.ru'&&!u.username&&!u.password?u.pathname.match(/^\/product\/(?:[^/]+-)?(\d+)\/?$/)?.[1]||'':''}catch{return ''}};
+    const extractCardImageUrl=(card,sku)=>{
+      const normalize=globalScope.OzonStoreScannerCore?.normalizeImageUrl;
+      if(!normalize||!card?.querySelectorAll)return '';
+      const imgs=[...card.querySelectorAll('img')].filter(visible);
+      const preferred=imgs.filter(img=>{const a=img.closest?.('a[href*="/product/"]');return a&&productSku(a.href)===sku;});
+      const ordered=[...preferred,...imgs.filter(img=>!preferred.includes(img))];
+      for(const img of ordered){
+        const w=Number(img.naturalWidth||img.width||0),h=Number(img.naturalHeight||img.height||0);
+        if((w>0&&w<32)||(h>0&&h<32))continue;
+        const srcsetFirst=String(img.getAttribute?.('srcset')||'').split(',')[0]?.trim().split(/\s+/)[0]||'';
+        const rawUrl=img.currentSrc||img.getAttribute?.('src')||img.getAttribute?.('data-src')||srcsetFirst||'';
+        const url=normalize(rawUrl);
+        if(url)return url;
+      }
+      return '';
+    };
     const findCard=(anchor,sku)=>{
       let card=anchor;for(let depth=0;card&&card!==list&&depth<11;depth++,card=card.parentElement){
         if(!visible(card))continue;
@@ -190,7 +206,7 @@
       if (!name) { pending.add(sku); continue; }
       const rawRiskText = `${parsed.category}\n${name}\n${raw}`;
       const shippingRisk = globalScope.OzonStoreScannerCore?.classifyShippingRisk(rawRiskText) || {};
-      const product = { sku, name, link, qualified: Boolean(parsed.qualified), price: parsed.price,
+      const product = { sku, name, link, imageUrl: extractCardImageUrl(card, sku), qualified: Boolean(parsed.qualified), price: parsed.price,
         commissions: parsed.commissions || [], monthlySales: parsed.monthlySales, fulfillment: parsed.fulfillment,
         dimensions: parsed.dimensions, weight: parsed.weight, competitor: parsed.competitor,
         competitorReady: Boolean(parsed.competitorReady), shippingRisk, category: parsed.category, rawRiskText };

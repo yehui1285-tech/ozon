@@ -13,11 +13,15 @@ execFileSync(process.execPath,['tools/build-standalone.mjs',dir],{stdio:'pipe'})
 const browser=await chromium.launch({headless:true,...(process.env.OZON_BROWSER_PATH?{executablePath:process.env.OZON_BROWSER_PATH}:{})});
 try{
   const page=await browser.newPage({viewport:{width:1440,height:920}});
+  const tinyPng=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=','base64');
+  await page.route('https://ir.ozone.ru/**',route=>route.request().url().includes('broken.jpg')?route.fulfill({status:404,body:''}):route.fulfill({contentType:'image/png',body:tinyPng}));
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.addInitScript(()=>{
     const products={};
-    for(let n=100;n<151;n++){const sku=String(n);products[sku]={sku,title:'测试商品 '+sku,category:'工具',link:'https://www.ozon.ru/product/test-'+sku+'/',price:'100',shippingRisk:'正常',blocked:false,storeName:'测试店铺',batchIds:['fixture'],firstSeenAt:'2026-11-21T00:00:00Z',lastSeenAt:new Date(Date.UTC(2026,10,21,0,0,151-n)).toISOString(),status:'new',notes:'',manualSavedAt:''};}
-    products['100'].weight='800g';products['101'].weight='1.2 kg';products['105'].weight='2 kg';products['105'].blocked=true;products['105'].shippingRisk='运输待复核';
+    for(let n=100;n<151;n++){const sku=String(n);products[sku]={sku,title:'测试商品 '+sku,category:'工具',link:'https://www.ozon.ru/product/test-'+sku+'/',price:'100',monthlySales:n===100?'88':'',shippingRisk:'正常',blocked:false,storeName:'测试店铺',sourceMode:n===101?'category':'store',batchIds:['fixture'],firstSeenAt:'2026-11-21T00:00:00Z',lastSeenAt:new Date(Date.UTC(2026,10,21,0,0,151-n)).toISOString(),status:'new',notes:'',manualSavedAt:''};}
+    products['100'].weight='800g';products['100'].imageUrl='https://ir.ozone.ru/s3/multimedia-1/wc250/ok.jpg';
+    products['101'].weight='1.2 kg';products['101'].imageUrl='https://ir.ozone.ru/s3/multimedia-1/wc250/broken.jpg';
+    products['105'].weight='2 kg';products['105'].blocked=true;products['105'].shippingRisk='运输待复核';
     window.fixturePool={schemaVersion:1,products,history:{}};window.fixtureWrites=[];window.fixtureFail=false;window.fixtureReads=[];
     Object.defineProperty(window,'chrome',{configurable:true,value:{runtime:{getURL:p=>p,sendMessage:async m=>{
       if(m.type==='getProductPool'){fixtureReads.push('full');return {ok:true,pool:structuredClone(window.fixturePool)};}
@@ -41,9 +45,20 @@ try{
   assert.equal(await page.getByRole('columnheader',{name:'重量',exact:true}).count(),1);
   assert.equal(await page.getByRole('columnheader',{name:'运输复核',exact:true}).count(),0);
   assert.equal(await row('100').locator('td').nth(4).innerText(),'800g');
+  assert.equal(await row('100').locator('td').nth(5).innerText(),'88');
   assert.equal(await row('101').locator('td').nth(4).innerText(),'1.2 kg');
   assert.equal(await row('102').locator('td').nth(4).innerText(),'—');
   assert.match(await row('105').locator('td').nth(4).innerText(),/2 kg[\s\S]*运输待复核/);
+  assert.equal(await row('100').locator('img').getAttribute('src'),'https://ir.ozone.ru/s3/multimedia-1/wc250/ok.jpg');
+  await page.waitForFunction(()=>document.querySelector('#rows tr[data-sku="101"] .pool-thumb-fallback')?.textContent==='加载失败');
+  assert.equal(await row('102').locator('.pool-thumb-fallback').innerText(),'无图');
+  await page.locator('#showImages').uncheck();
+  assert.equal(await page.locator('#rows img').count(),0,'hiding images must remove all img elements');
+  await page.locator('#showImages').check();
+  await page.locator('#source').selectOption('category');
+  await page.waitForFunction(()=>document.querySelectorAll('#rows tr[data-sku]').length===1&&document.querySelector('#rows tr[data-sku="101"]'));
+  await page.locator('#source').selectOption('');
+  await page.waitForFunction(()=>document.querySelectorAll('#rows tr[data-sku]').length===50);
   const selectedCount=()=>page.locator('#selectionCount').innerText();
   const waitMessage=pattern=>page.waitForFunction(s=>document.querySelector('#message').textContent.includes(s),pattern);
   await row('100').locator('input[type=checkbox]').check();

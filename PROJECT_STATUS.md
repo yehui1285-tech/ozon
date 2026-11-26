@@ -1,11 +1,17 @@
 # Ozon 当前状态
 
-更新时间：2026-11-26（工作台 V1.52 已上线为站点版本 80，源码 `f198089`，部署 `appgdep_6b07dae166b081919e7dec32e28a8ef39`；生产 D1 `0019`、`0020` 迁移通过，账号 `yehui` 商品池完成迁移 262 件、`ready=1`，旧 R2 快照保留；线上内嵌采集插件为 `0.6.70` 且发布包哈希一致；Ozon 仓库同步推送 `origin/main`）。
+更新时间：2026-11-26（V1.53 / 0.6.71 商品池图片与选品字段展示本机迭代完成并已本地提交，待浏览器抽检与 Codex 部署；线上当前为 V1.52 站点版本 80 / 扩展 0.6.70）。
 用途：新对话快速续接。详细过程按需查 [CHANGELOG](CHANGELOG.md) 和 [历史入口](docs/history/README.md)，不把历史待办当作当前任务。
 
 ## 当前版本与结论
 
-- V1.52 / V1.51 / 0.6.70：工作台 V1.52 已部署上线为站点版本 80（`f198089`，`appgdep_6b07dae166b081919e7dec32e28a8ef39`），包含 V1.51 商品池 D1 分行存储（生产 D1 `0019`、`0020` 迁移通过，账号 `yehui` 262 件迁移完成且与备份一致、`ready=1`，旧 R2 快照保留；每页最多 50 件，支持全库搜索、状态筛选、四种稳定排序、单件/批量更新、完整导出、跨页草稿、查重、运输风险及原核价规则）与 V1.52 任务首屏日期格式化复用及设置页（`/gallery?settings=1`）轻量化优化；独立分享版 `0.6.70` 采用 IndexedDB 事务迁移并保留旧快照；线上采集插件 `0.6.70` 发布包哈希校验一致。本机交付与合成压测见 [交付报告](docs/2026-11-26-v151-product-pool-delivery.md) 及 [V1.52 性能修复记录](_备份_20261125_v151_pool_before/workbench-navigation-performance-v152.md)。真实页面切页体验、真实账号下载/采集、独立分享版 `0.6.70` 覆盖升级及真实 Ozon 页面验收仍待用户现场确认；确认性能达标后再推进 V1.53 商品池图片与选品字段展示。
+- V1.53 / 0.6.71（本机已提交，未推送/未部署）：在 V1.51/V1.52 稳定分页基础上，双版同步实现商品池缩略图与选品字段展示：
+  - 采集端（`category-scanner.js`、`store-scanner.js`、`store-scanner-core.js`）：新增 `normalizeImageUrl`（仅允许 `https:` 且 `ozone.ru`/`ozon.ru` 非 `.svg` 图片链接），提取卡片主图 URL；缺图不阻塞合格判定。`buildManualSourcingCsv` 与 `exportPoolCsv` 分别补充「商品图片链接」「图片链接」。
+  - 存储与筛选（`product-pool-core.js`、`product-pool-idb.js`、Workbench `lib/ozon-pool/store.ts`）：新增 `source`（`category`/`store`）来源筛选与历史图片链接回填；IndexedDB 轻量 `search` 分块按 `searchVersion=2` 自动升级；Workbench 复用 `json_extract` 过滤，**无需 D1 schema 迁移**。
+  - 界面（`product-pool.*`、Workbench `pool-desk.tsx`）：支持 56×56 懒加载缩略图（`referrerPolicy="no-referrer"`、无图/加载失败优雅降级）、“显示图片”开关（记忆偏好，关闭后不渲染 `<img>`）、新增「月销量」列与来源徽标（类目/店铺）。
+  - 验证：Ozon `npm.cmd test`、双版发布构建（内嵌 0.6.71 ZIP SHA256 一致）、Workbench `npm.cmd run build`、271/271 测试与 `V1.52 → V1.53` 版本校验均通过；本机未配置 Playwright 模块，隔离浏览器脚本与真实账号/线上发布待执行。回滚备份 `_备份_20261126_v153_pool_images_before`。
+
+- V1.52 / V1.51 / 0.6.70：工作台 V1.52 已部署上线为站点版本 80（`f198089`，`appgdep_6b07dae166b081919e7dec32e28a8ef39`），包含 V1.51 商品池 D1 分行存储（生产 D1 `0019`、`0020` 迁移通过，账号 `yehui` 262 件迁移完成且与备份一致、`ready=1`，旧 R2 快照保留；每页最多 50 件，支持全库搜索、状态筛选、四种稳定排序、单件/批量更新、完整导出、跨页草稿、查重、运输风险及原核价规则）与 V1.52 任务首屏日期格式化复用及设置页（`/gallery?settings=1`）轻量化优化；独立分享版 `0.6.70` 采用 IndexedDB 事务迁移并保留旧快照；线上采集插件 `0.6.70` 发布包哈希校验一致。本机交付与合成压测见 [交付报告](docs/2026-11-26-v151-product-pool-delivery.md) 及 [V1.52 性能修复记录](_备份_20261125_v151_pool_before/workbench-navigation-performance-v152.md)。真实页面切页体验、真实账号下载/采集、独立分享版覆盖升级及真实 Ozon 页面验收仍待用户现场确认。
 
 - 本机治理：Ozon 为共享核心真源；`tools/sync-workbench-core.mjs --workbench <路径> --check` 校验实际 Workbench，Workbench build/lint 前校验同步锁。默认调试器权限移除，Chrome 不支持可选 `debugger`，历史试验配置降为普通后台扫描。D1 两项组合索引迁移仅在本地生成；旧业务、价格筛选和当前线上数据不变。Ozon 全量测试与双版构建、Workbench 构建和 263 项测试通过；lint 72 错误 / 75 警告均为历史问题，用户确认另治理。[治理记录](docs/2026-11-25-ozon-workbench-governance.md)。
 

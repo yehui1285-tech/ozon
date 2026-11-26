@@ -46,6 +46,7 @@
     if (!searchChanges.has(bucket)) searchChanges.set(bucket, new Map());
     searchChanges.get(bucket).set(sku, {
       sku, status: String(item.status ?? ""), lastSeenAt: String(item.lastSeenAt ?? ""),
+      sourceMode: item.sourceMode === "category" ? "category" : "store",
       title: String(item.title ?? ""), category: String(item.category ?? ""), storeName: String(item.storeName ?? ""),
     });
   }
@@ -95,6 +96,18 @@
             await writeSearchChanges(tx, searchChanges, true);
           }
           tx.objectStore("meta").put(1, "ready");
+          tx.objectStore("meta").put(2, "searchVersion");
+        });
+      } else if ((await transact(db, ["meta"], "readonly", tx => request(tx.objectStore("meta").get("searchVersion")))) !== 2) {
+        await transact(db, ["products", "listing", "search", "meta"], "readwrite", async tx => {
+          if (await request(tx.objectStore("meta").get("searchVersion")) === 2) return;
+          const products = tx.objectStore("products");
+          const [keys, values] = await Promise.all([request(products.getAllKeys()), request(products.getAll())]);
+          tx.objectStore("search").clear();
+          const searchChanges = new Map();
+          for (let i = 0; i < keys.length; i++) putProduct(tx, String(keys[i]), values[i], searchChanges);
+          await writeSearchChanges(tx, searchChanges, true);
+          tx.objectStore("meta").put(2, "searchVersion");
         });
       }
       return db;
@@ -189,7 +202,7 @@
   async function matchingPage(listing, search, opts) {
     const { source, range, direction } = pageSource(listing, opts);
     const keys = [];
-    if (!opts.query) {
+    if (!opts.query && !opts.source) {
       const matched = await request(source.count(range));
       const offset = pageOffset(opts.offset, matched, opts.limit);
       let skip = offset;

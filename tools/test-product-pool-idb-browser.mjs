@@ -26,6 +26,7 @@ async function fixture(size) {
         storeName: "测试店铺 " + (n % 23), category: "工具 " + (n % 7),
         firstSeenAt: "2026-01-01T00:00:00Z", lastSeenAt: new Date(Date.UTC(2026, 0, 1 + n % 28)).toISOString(),
         status: ["new", "sourcing", "approved", "rejected"][n % 4], blocked: n % 17 === 0,
+        sourceMode: n % 9 === 0 ? "category" : "store",
         price: "123.45", notes: "原备注 " + sku, batchIds: ["first", "second"], weight: "600 g",
         link: "https://www.ozon.ru/product/test-" + sku + "/", customEvidence: { retained: true, rank: n },
       };
@@ -122,6 +123,8 @@ try {
       await checkPage("searchSku", { query: "100001", sort: "skuAsc", filter: "" });
       await checkPage("searchCategory", { query: "工具 2", sort: "oldest", filter: "new", offset: size, limit: 16 });
       await checkPage("searchStore", { query: "测试店铺 11", sort: "skuDesc", filter: "pending", offset: 10 });
+      await checkPage("sourceCategory", { source: "category", filter: "", sort: "recent" });
+      await checkPage("sourceStore", { source: "store", filter: "pending", query: "工具 1" });
       await checkPage("noMatches", { query: "NO MATCH", offset: size });
 
       const sku = "100001", other = "100002", expected = core.productExpectation(legacy.products[sku]);
