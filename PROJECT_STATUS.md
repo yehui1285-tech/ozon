@@ -1,9 +1,14 @@
 # Ozon 当前状态
 
-更新时间：2026-11-26（工作台 V1.53 已上线为站点版本 81，源码 `44feaa5`，部署 `appgdep_6b07e37897508191847cb59fa84776d4`；无新增 D1 迁移，内嵌扩展 `0.6.71` 哈希与共享核心校验通过；Ozon 仓库同步推送 `origin/main`）。
+更新时间：2026-11-26（V1.54 / 0.6.72 工具箱与 Ozon 全链路 UI/交互升级本机迭代完成并已本地提交，待 Codex 部署；线上当前为 V1.53 站点版本 81 / 扩展 0.6.71）。
 用途：新对话快速续接。详细过程按需查 [CHANGELOG](CHANGELOG.md) 和 [历史入口](docs/history/README.md)，不把历史待办当作当前任务。
 
 ## 当前版本与结论
+
+- V1.54 / 0.6.72（本机已提交，未推送/未部署）：在保留任务工作台（`/`）、灵感图库（`/gallery`）、单品快速核价面板全部字段及推送逻辑、`/ozon` 原核价表的基础上，完成工具箱与 Ozon 交互及界面升级（**无 D1 数据库迁移**）：
+  - 统一左侧边栏与快捷跳转：工作台新增 `app/components/ozon-shell.tsx` 与 `quick-jump.tsx`（`Ctrl+K`），工具箱、Ozon 商品池/类目选品/批量店铺扫描共用主工作台 220px 左侧栏与顶部面包屑，保留 Ozon 二级入口常驻显示；`<ozon-workbench-nav>` 自动收起冗余导航条，保留设备连接状态与“插件管理”弹窗。
+  - 商品池 6/7 列紧凑排版与悬停预览：双版（工作台 `pool-desk.tsx` 与独立版 `product-pool.*`）将表格压缩为紧凑列（将售价、月销量、重量合并为结构化指标列，类目收进商品元信息标签），消除 1440px 下横向滚动；缩略图新增 168×168 悬停放大预览；批量操作改为勾选后底部浮出悬浮条，释放首屏视野。
+  - 验证：Ozon `npm.cmd test`、双版发布构建（`ozon-erp-collector-extension.zip` 与工作台内嵌包 SHA256 `2B5EA6F318AAE949B229AC9429C42D5D8E6DB860AC9C56DFED2503E3E00E25EB` 一致）、Workbench `npm.cmd run build`、271/271 测试与 `V1.53 → V1.54` 版本校验均通过；隔离 Playwright 浏览器脚本因本机未配置 Playwright 模块未运行。回滚备份 `_备份_20261126_v154_workbench_ui_before`。
 
 - V1.53 / 0.6.71（已上线站点版本 81）：工作台 V1.53 已部署上线为站点版本 81（`44feaa5`，`appgdep_6b07e37897508191847cb59fa84776d4`），扩展 `v0.6.71` 哈希与共享核心校验通过，无新增 D1 迁移；双版同步实现商品池缩略图与选品字段展示：
   - 采集端（`category-scanner.js`、`store-scanner.js`、`store-scanner-core.js`）：新增 `normalizeImageUrl`（仅允许 `https:` 且 `ozone.ru`/`ozon.ru` 非 `.svg` 图片链接），提取卡片主图 URL；缺图不阻塞合格判定。`buildManualSourcingCsv` 与 `exportPoolCsv` 分别补充「商品图片链接」「图片链接」。

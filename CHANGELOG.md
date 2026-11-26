@@ -1,5 +1,11 @@
 # CHANGELOG.md - Ozon 项目续接记录
 
+## 2026-11-26 - V1.54 / 0.6.72 工具箱与 Ozon 全链路 UI/交互升级（本机，未发布）
+
+- 统一导航与快捷跳转：Workbench 新增 `OzonShell`（220px 左侧栏常驻工具箱与 Ozon 二级入口）与 `QuickJump`（`Ctrl+K`），包裹 `/tools`、`/ozon/pool`、`/ozon/categories`、`/ozon/scans`；`ozon-workbench-nav.js` 自动隐藏冗余顶栏标签并保留设备连接状态与“插件管理”弹窗。严格保持任务工作台（`/`）、灵感图库（`/gallery`）、快速核价面板全部字段及 `/ozon` 原核价表不变；无任何 D1 数据库迁移。
+- 商品池紧凑排版与交互：双版商品池将「售价 / 月销量 / 重量」合并为紧凑指标列、类目收进商品元信息标签，消除常见桌面宽度横向滚动；新增 168×168 缩略图悬停放大预览；批量保存/淘汰改为勾选后底部浮出悬浮条；统一深森绿 `#3a5a40` 主色与暖灰纸底 `#f7f7f5`。
+- 打包与验证：回滚备份 `_备份_20261126_v154_workbench_ui_before`（已轮换清理最旧 `_备份_20261125_category_diagnostics_before`，保留 5 份常规备份）。Ozon 全量 `npm.cmd test`、双版发布构建（`ozon-erp-collector-extension.zip` 与工作台内嵌包 SHA256 `2B5EA6F318AAE949B229AC9429C42D5D8E6DB860AC9C56DFED2503E3E00E25EB` 一致）、Workbench `npm.cmd run build`、271/271 测试及 `V1.53 → V1.54` 版本校验通过。隔离 Playwright 浏览器脚本因本机未安装 Playwright 模块未运行；尚未推送 GitHub 或部署线上。
+
 ## 2026-11-26 - V1.53 / 0.6.71 商品池图片与选品字段展示（已上线站点版本 81）
 
 - 采集与图片校验：`store-scanner-core.js` 新增 `normalizeImageUrl`（仅允许 `https:` 且 `ozone.ru`/`ozon.ru` 域名的非 `.svg` URL）；`category-scanner.js` 与 `store-scanner.js` 从商品卡片提取主图 URL，缺图不影响合格判定；人工找品表 CSV 新增「商品图片链接」，商品池导出 CSV 新增「图片链接」。

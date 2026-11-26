@@ -57,11 +57,20 @@ function createThumb(item) {
   img.referrerPolicy = "no-referrer";
   img.alt = item.title || item.sku || "商品缩略图";
   img.src = url;
+  const preview = document.createElement("span");
+  preview.className = "pool-thumb-preview";
+  const previewImg = document.createElement("img");
+  previewImg.loading = "lazy";
+  previewImg.decoding = "async";
+  previewImg.referrerPolicy = "no-referrer";
+  previewImg.alt = "";
+  previewImg.src = url;
+  preview.append(previewImg);
   img.addEventListener("error", () => {
     failedImages.add(url);
     box.replaceChildren(fallback("加载失败"));
   }, { once: true });
-  box.append(img);
+  box.append(img, preview);
   return box;
 }
 async function loadPage(at = offset) {
@@ -115,6 +124,12 @@ function render() {
     const meta = document.createElement("div");
     meta.className = "pool-product-meta";
     meta.append(document.createTextNode(p.sku), document.createElement("br"), link);
+    if (p.category) {
+      const catTag = document.createElement("small");
+      catTag.className = "pool-cat-tag";
+      catTag.textContent = p.category;
+      meta.append(catTag);
+    }
     if (showImages) {
       const wrap = document.createElement("div");
       wrap.className = "pool-product-cell";
@@ -123,13 +138,20 @@ function render() {
     } else {
       nameCell.append(meta);
     }
-    cell(row,p.category); cell(row,p.price);
-    const weight = cell(row,String(p.weight||"").trim());
-    if (p.blocked) {const warning=document.createElement("small");warning.className="weight-warning";warning.textContent="运输待复核";warning.title=p.shippingRisk||"";weight.append(warning);}
-    cell(row, String(p.monthlySales || "").trim());
+    const metricsCell = row.insertCell();
+    const priceDiv = document.createElement("div");
+    priceDiv.className = "pool-metrics-price";
+    priceDiv.textContent = p.price || "—";
+    const subDiv = document.createElement("div");
+    subDiv.className = "pool-metrics-sub";
+    const salesText = String(p.monthlySales || "").trim() || "—";
+    const weightText = String(p.weight || "").trim() || "—";
+    subDiv.textContent = `月销 ${salesText} · ${weightText}`;
+    metricsCell.append(priceDiv, subDiv);
+    if (p.blocked) {const warning=document.createElement("small");warning.className="weight-warning";warning.textContent="运输待复核";warning.title=p.shippingRisk||"";metricsCell.append(warning);}
     const sourceCell = row.insertCell();
     const sourceBadge = document.createElement("span");
-    sourceBadge.className = "pool-source-badge";
+    sourceBadge.className = "pool-source-badge" + (p.sourceMode === "category" ? "" : " store");
     sourceBadge.textContent = p.sourceMode === "category" ? "类目" : "店铺";
     sourceCell.append(sourceBadge, document.createElement("br"), document.createTextNode(`${p.storeName} · ${String(p.lastSeenAt || "").slice(0,10)}`));
     const select = document.createElement("select");
@@ -184,7 +206,7 @@ function render() {
     row.insertCell().append(save,reset,receipt);
     showReceipt();
   }
-  if (!page.length) {const c = $("rows").insertRow().insertCell();c.colSpan=10;c.textContent=refreshBusy?"正在读取…":"暂无符合条件的商品。请刷新或先在批量扫描页加入本批商品。";}
+  if (!page.length) {const c = $("rows").insertRow().insertCell();c.colSpan=7;c.textContent=refreshBusy?"正在读取…":"暂无符合条件的商品。请刷新或先在批量扫描页加入本批商品。";}
   updateSelection(page);
   $("page").textContent = pageInfo.matched ? `${offset+1}–${Math.min(offset+pageSize,pageInfo.matched)} / ${pageInfo.matched}` : "0 件";
   $("previous").disabled = poolOperationBusy() || offset === 0;
@@ -196,6 +218,7 @@ async function refresh(at=offset) {if(poolWriteOrLoadBusy())return;clearTimeout(
 function updateSelection(page) {
   const count=selected.size, selectedOnPage=page.filter(p=>selected.has(p.sku)).length;
   $("selectionCount").textContent=`已选 ${count} 件`;
+  if ($("batchFloat")) $("batchFloat").hidden = count === 0;
   $("selectPage").checked=page.length>0&&selectedOnPage===page.length;
   $("selectPage").indeterminate=selectedOnPage>0&&selectedOnPage<page.length;
   $("selectPage").disabled=poolOperationBusy()||!page.length;
@@ -232,6 +255,7 @@ if($("showImages"))$("showImages").addEventListener("change",()=>{showImages=$("
 $("previous").addEventListener("click",()=>{if(poolOperationBusy())return;clearSelection();void refresh(Math.max(0,offset-pageSize));});
 $("next").addEventListener("click",()=>{if(poolOperationBusy())return;clearSelection();void refresh(offset+pageSize);});
 $("selectPage").addEventListener("change",()=>{if(poolOperationBusy())return;for(const p of visiblePage())toggleSelected(p,$("selectPage").checked);render();});
+if($("clearSelectionBtn"))$("clearSelectionBtn").addEventListener("click",()=>{clearSelection();render();});
 $("saveSelected").addEventListener("click",()=>runBulk("save"));
 $("rejectSelected").addEventListener("click",()=>runBulk("reject"));
 $("refresh").addEventListener("click",()=>void refresh());
