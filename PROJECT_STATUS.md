@@ -1,14 +1,14 @@
 # Ozon 当前状态
 
-更新时间：2026-11-27（V1.68 / 0.6.86 已构建并同步工作台本地提交 `4044a18` 与独立分享版 `0.6.86`，**无新增 D1 迁移**；Ozon 仓库同步推送 `origin/main`，个人工作台 V1.68 待由 Codex 部署上线）。
+更新时间：2026-11-27（用户确认工作台 V1.68 已成功部署上线，源码 `4044a18`，内嵌扩展 `v0.6.86`；双版独立包 `0.6.86` 已构建；**无新增 D1 迁移**；Ozon 仓库同步推送 `origin/main`）。
 用途：新对话快速续接。详细过程按需查 [CHANGELOG](CHANGELOG.md) 和 [历史入口](docs/history/README.md)，不把历史待办当作当前任务。
 
 ## 当前版本与结论
 
-- V1.68 / 0.6.86（双版代码、构建、单测与工作台本地提交 `4044a18` 已完成，**无新增 D1 数据库迁移**；工作台待由 Codex 部署上线）：类目选品页「价格筛选区间」方案 A 二合一 + 页面信息做减法：
+- V1.68 / 0.6.86（用户确认工作台 V1.68 已上线，源码 `4044a18`，**无新增 D1 数据库迁移**；双版独立包已构建）：类目选品页「价格筛选区间」方案 A 二合一 + 页面信息做减法：
   - 方案 A 统一价格筛选区间（`category-core.js`、`category-background.js`、`category.html`、`category.js`、`lib/ozon-collector-model.ts`）：将原「人民币复核区间」与「Ozon 页面预筛」合并为单一「价格筛选区间」（默认 `¥ 人民币`，支持切换 `₽ 卢布`）；`category-core.js` 新增 `minPriceRub`/`maxPriceRub` 校验及人民币/卢布双向采集后复核。填满两端自动同时启用 Ozon 网页预筛（`?currency_price=...`）+ 采集后复核；仅填一端则自动仅做采集后复核；仅选 `₽ 卢布` 时展示人民币折算与汇率调节入口。
   - 「类目选品」页面做减法（`category.html`、`category.css`、`category.js`、`build-standalone.mjs`）：保持「上新建 / 下当前批次」排布；移除废置「后台持续采集（试验）」说明条、冗余提示文字、重复标题摘要与弹窗内旧「保存/载入组合」；新建区压缩为单行 3 格参数、行内弹出「存为常用任务」与按需展开「+ 粘贴自定义链接」；`暂停/继续/停止/查看采集页面` 仅在运行/暂停时出现于当前批次头部；云端去重状态缩为页头右上角小徽章，0 个常用任务自动整卡隐藏；每张类目卡片默认只保留核心进度与提示，长链接/技术计数/SKU 诊断收进「详情与诊断」折叠，底部「原因诊断与浏览器状态」「历史批次与诊断工具」默认收起；同步更新 `build-standalone.mjs` 与 `test-standalone.mjs` 维持独立分享版零泄漏隔离。
-  - 验证状态：Ozon `node --check`、全量 `npm.cmd test`（含 `test-category-core.mjs` `minPriceRub/maxPriceRub` 测试、`test-category-background.mjs` 单端卢布后复核与切回人民币清空测试、`test-standalone.mjs` 新瘦身控件与剥离断言）、`verify-project.ps1`、双版发布构建（`ozon-erp-collector-extension.zip` SHA256 `DD4E88B2E36634BAE45D5C55FAA7D486F4897642F34E39A51A069C7ADD10AACB`；独立版 `ozon-standalone-extension.zip` SHA256 `8C7D182984EEEC7405F81827E1EDC63660E25C9C9FC45B452447C834546959C8`），以及 Workbench `sync-workbench-core --check`、`check-ozon-shared-core.mjs`、`check-release-version.mjs`（`V1.67 → V1.68`）、`ozon-collector.test.mjs`、`ozon-product-pool.test.mjs`、`ozon-workbench-nav.test.mjs`（12/12）与 `npm.cmd run build` 全部通过。工作台 V1.68 线上部署与真实浏览器现场验收待完成。回滚备份 `_备份_20261127_v168_category_slim_and_option_a_before`。
+  - 验证状态：Ozon `node --check`、全量 `npm.cmd test`（含 `test-category-core.mjs` `minPriceRub/maxPriceRub` 测试、`test-category-background.mjs` 单端卢布后复核与切回人民币清空测试、`test-standalone.mjs` 新瘦身控件与剥离断言）、`verify-project.ps1`、双版发布构建（`ozon-erp-collector-extension.zip` SHA256 `DD4E88B2E36634BAE45D5C55FAA7D486F4897642F34E39A51A069C7ADD10AACB`；独立版 `ozon-standalone-extension.zip` SHA256 `8C7D182984EEEC7405F81827E1EDC63660E25C9C9FC45B452447C834546959C8`），以及 Workbench `sync-workbench-core --check`、`check-ozon-shared-core.mjs`、`check-release-version.mjs`（`V1.67 → V1.68`）、`ozon-collector.test.mjs`、`ozon-product-pool.test.mjs`、`ozon-workbench-nav.test.mjs`（12/12）与 `npm.cmd run build` 全部通过。用户确认工作台 V1.68 已成功部署上线（未附站点 Revision / Deployment ID）；真实浏览器下瘦身排版、方案 A 价格区间及独立版 `0.6.86` 覆盖升级待现场验收。回滚备份 `_备份_20261127_v168_category_slim_and_option_a_before`。
 
 - V1.67 / 0.6.85（用户确认工作台 V1.67 已上线，源码 `84d36f8`，**无新增 D1 数据库迁移**；双版独立包已构建）：类目长时扫描防 `Out of Memory` 治本 + 优化 B（续扫栏置顶与 Ozon 人民币网页预筛）：
   - 防 OOM 治本（`category-scanner.js`、`category-background.js`）：新增框架安全的 `pruneScrolledCards`（不销毁 Ozon Vue/React DOM 节点，只将滚出视口上方超 2 屏且已判定非待复查卡片内的图片替换为 1×1 透明 GIF 并设置 `content-visibility: hidden` + `contain-intrinsic-size` 锁高释内存，并在读取阶段跳过已瘦身卡片）；新增 `FORCE_NEXT_PAGE_SCROLLS = 65` / `FORCE_NEXT_PAGE_SKUS = 180` 及 `performance.memory` 水位兜底，不再被 `ERP待补`（`pending.size > 0`）锁死提前翻页；无下一页时触发 `memory_recycle`（单类目上限 5 次）无感新建干净标签页继续扫。
@@ -40,7 +40,7 @@
 
 ## 当前待验收与已知边界
 
-- 待现场真实验收：工作台 V1.68（`4044a18`）待由 Codex 部署上线；上线并加载 `v0.6.86` / 独立分享版 `0.6.86` 后，待在真实浏览器验收瘦身后的「类目选品」页面排版、方案 A 统一价格区间（单端复核 / 双端预筛+复核、人民币/卢布切换）、长时防 OOM 滚图与云端去重效果。
+- 待现场真实验收：工作台 V1.68（`4044a18`）已上线，待在真实浏览器覆盖更新 `v0.6.86` / 独立分享版 `0.6.86` 后验收瘦身后的「类目选品」页面排版、方案 A 统一价格区间（单端复核 / 双端预筛+复核、人民币/卢布切换）、长时防 OOM 滚图与云端去重效果。
 - 本机测试环境未配置 Playwright 模块，隔离浏览器脚本（`test-category-browser.mjs`、`test-product-pool-browser.mjs`、`ozon-pool-browser.mjs` 等）未在本机运行；所有版本均未执行外部站点绕过或自动下单。
 - 工作边界：登录、CAPTCHA 和平台验证由用户处理；1688 自动搜款主线继续暂停（恢复需用户明确指示）；`AGENTS.md` 双线同步交付规则持续生效；常规 `_备份_*` 目录保留最新 5 份（保留 `_备份_20261125_v151_pool_before`）。
 
