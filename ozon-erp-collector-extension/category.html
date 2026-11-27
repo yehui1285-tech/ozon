@@ -8,41 +8,135 @@
 </head>
 <body>
   <main class="shell">
-    <header class="page-header"><div><p class="eyebrow">OZON · 本机任务</p><h1>类目选品</h1><p class="intro">逐类目检查商品。遇到站点验证或登录时，请在当前标签页手动完成。</p></div><a class="pool-link" href="product-pool.html">打开本机商品池 →</a></header>
-    <section class="card setup">
-      <div class="section-head"><div class="card-title-group"><h2>新建类目任务</h2></div></div>
+    <header class="page-header">
+      <h1>类目选品</h1>
+      <div class="header-right">
+        <button id="cloudSyncBar" class="cloud-pill" type="button" hidden>
+          <span class="cloud-dot" aria-hidden="true"></span>
+          <span id="cloudSyncStatus"></span>
+          <span id="syncCloudNow" class="spin-icon" aria-hidden="true">↻</span>
+        </button>
+        <a class="pool-link" href="product-pool.html">打开本机商品池 →</a>
+      </div>
+    </header>
+
+    <section class="card setup" id="setupCard">
+      <div class="section-head">
+        <div class="card-title-group"><h2>新建类目任务</h2></div>
+      </div>
+
       <section class="catalog" aria-labelledby="catalogTitle">
-        <div class="catalog-head"><div class="catalog-head-left"><h3 id="catalogTitle">类目目录</h3><span id="catalogSourceLabel" class="source-tag">中国专区</span></div><span id="catalogCount" class="count-pill">已选 0 / 20</span></div>
-        <div class="catalog-launch"><button id="openCatalog" class="soft-primary" type="button" disabled>选择类目</button><span id="catalogLoadState" role="status">正在读取目录…</span></div>
+        <div class="catalog-top-row">
+          <div class="catalog-left">
+            <span id="catalogTitle" class="catalog-title">类目目录</span>
+            <span id="catalogSourceLabel" class="source-tag">中国专区</span>
+            <span id="catalogCount" class="count-pill">已选 0 / 20</span>
+            <button id="openCatalog" class="soft-primary compact" type="button" disabled>选择类目</button>
+            <span id="catalogLoadState" role="status">正在读取目录…</span>
+          </div>
+          <button id="toggleCustomUrls" class="ghost-link" type="button">+ 粘贴自定义链接</button>
+        </div>
+
         <div id="catalogSelected" class="catalog-selected" aria-label="已确认类目"></div>
+
+        <div id="customUrlsDrawer" class="urls-drawer" hidden>
+          <div class="urls-drawer-head">
+            <label for="urls">自定义 Ozon 类目链接（每行一条，与所选类目合计最多 20 个）</label>
+          </div>
+          <textarea id="urls" rows="2" placeholder="https://www.ozon.ru/category/..."></textarea>
+        </div>
+
         <dialog id="catalogDialog" class="catalog-dialog" aria-labelledby="catalogDialogTitle">
-          <div class="dialog-heading"><div><h2 id="catalogDialogTitle">选择类目</h2><p>点击名称向右展开；勾选任一级类目为一个扫描任务，不自动拆分下级。</p></div><button id="catalogDone" class="primary" type="button">完成选择</button></div>
-          <div class="catalog-tools"><span class="catalog-source-label">目录来源</span><label class="catalog-source-choice"><input type="radio" name="catalogSource" value="china" checked>中国专区</label><details id="catalogAdvanced" class="catalog-advanced"><summary>高级选项</summary><label class="catalog-source-choice"><input type="radio" name="catalogSource" value="ordinary">普通 Ozon 类目</label></details><input id="catalogSearch" type="search" placeholder="搜索中文、俄文、类目编号或完整路径" aria-label="搜索类目"></div>
-          <div class="catalog-selection-status"><strong id="catalogDraftCount">已选 0 / 20</strong><span id="catalogFeedback" role="status" aria-live="polite"></span><button id="catalogClear" type="button">清空选择</button></div>
+          <div class="dialog-heading">
+            <div>
+              <h2 id="catalogDialogTitle">选择类目</h2>
+              <p>点击名称向右展开；勾选任一级类目为一个扫描任务，不自动拆分下级。</p>
+            </div>
+            <button id="catalogDone" class="primary" type="button">完成选择</button>
+          </div>
+          <div class="catalog-tools">
+            <span class="catalog-source-label">目录来源</span>
+            <label class="catalog-source-choice"><input type="radio" name="catalogSource" value="china" checked>中国专区</label>
+            <details id="catalogAdvanced" class="catalog-advanced">
+              <summary>高级选项</summary>
+              <label class="catalog-source-choice"><input type="radio" name="catalogSource" value="ordinary">普通 Ozon 类目</label>
+            </details>
+            <input id="catalogSearch" type="search" placeholder="搜索中文、俄文、类目编号或完整路径" aria-label="搜索类目">
+          </div>
+          <div class="catalog-selection-status">
+            <strong id="catalogDraftCount">已选 0 / 20</strong>
+            <span id="catalogFeedback" role="status" aria-live="polite"></span>
+            <button id="catalogClear" type="button">清空选择</button>
+          </div>
           <div class="catalog-columns" aria-label="三级联动类目">
             <section class="catalog-column"><div class="catalog-column-title"><strong>一级类目</strong></div><div class="catalog-level" id="catalogLevel1" aria-label="一级类目"></div></section>
             <section class="catalog-column"><div class="catalog-column-title"><strong id="catalogTitle2">二级类目</strong><button id="catalogLeaves1" type="button" hidden>选末级</button></div><div class="catalog-level" id="catalogLevel2" aria-label="二级类目"></div></section>
             <section class="catalog-column"><div class="catalog-column-title"><strong id="catalogTitle3">三级类目</strong><button id="catalogLeaves2" type="button" hidden>选末级</button></div><div class="catalog-level" id="catalogLevel3" aria-label="三级类目"></div></section>
           </div>
-          <div class="catalog-picked"><strong>已选类目</strong><div id="catalogDraftSelected" class="catalog-selected" aria-label="本次选择的完整路径"></div></div>
-          <div class="favorite-tools"><input id="favoriteName" maxlength="40" placeholder="组合名称"><button id="saveFavorite" type="button">保存组合</button><select id="favoriteSelect" aria-label="本机保存的组合"><option value="">选择本机组合</option></select><button id="loadFavorite" type="button">载入</button><button id="deleteFavorite" type="button">删除组合</button></div>
-          <div class="dialog-footer"><p class="catalog-note" id="catalogProvenance"></p><button id="catalogCancel" type="button">取消</button></div>
+          <div class="catalog-picked">
+            <strong>已选类目</strong>
+            <div id="catalogDraftSelected" class="catalog-selected" aria-label="本次选择的完整路径"></div>
+          </div>
+          <div class="dialog-footer">
+            <p class="catalog-note" id="catalogProvenance"></p>
+            <button id="catalogCancel" type="button">取消</button>
+          </div>
         </dialog>
       </section>
-      <div class="urls-block"><label class="urls-label" for="urls">自定义类目链接（可选） <span>与所选类目合计最多 20 个</span></label><textarea id="urls" rows="2" placeholder="https://www.ozon.ru/category/..."></textarea></div>
+
       <div class="fields">
-        <div class="param-group"><label class="param-label" for="targetCount"><span>本批目标新品数</span><span class="param-unit">1–500</span></label><div class="input-wrap"><input id="targetCount" type="number" min="1" max="500" value="20"><span class="input-suffix">件</span></div></div>
-        <div class="param-group"><label class="param-label" for="perCategoryLimit"><span>单类目采集上限</span><span class="param-unit">可选 · 1–500</span></label><div class="input-wrap"><input id="perCategoryLimit" type="number" min="1" max="500" placeholder="不限制" aria-label="单类目采集上限（可选，达到后自动切换下一类目）"><span class="input-suffix">件/类目</span></div></div>
-        <div class="param-group"><div class="param-label"><span>人民币复核区间</span><span class="param-unit">CNY ¥ · 可选</span></div><div class="range-pair"><label class="input-wrap"><span class="input-prefix">¥</span><input id="minPrice" type="number" min="0" step="0.01" placeholder="不限制" aria-label="最低价格（可选，CNY ¥）"></label><span class="range-sep">–</span><label class="input-wrap"><span class="input-prefix">¥</span><input id="maxPrice" type="number" min="0" step="0.01" placeholder="不限制" aria-label="最高价格（可选，CNY ¥）"></label></div></div>
-        <div class="param-group"><div class="param-label"><span>Ozon 页面预筛</span><span class="currency-toggle" role="group" aria-label="页面预筛币种"><button id="pageCurrencyRub" class="currency-btn active" type="button" aria-pressed="true">₽ 卢布</button><button id="pageCurrencyCny" class="currency-btn" type="button" aria-pressed="false">¥ 人民币</button></span></div><div class="range-pair"><label class="input-wrap"><span id="pageMinPrefix" class="input-prefix">₽</span><input id="pageMinRub" type="number" min="0" max="10000000" step="1" placeholder="不限制" aria-label="页面最低价（可选）"></label><span class="range-sep">–</span><label class="input-wrap"><span id="pageMaxPrefix" class="input-prefix">₽</span><input id="pageMaxRub" type="number" min="0" max="10000000" step="1" placeholder="不限制" aria-label="页面最高价（可选）"></label></div></div>
+        <div class="param-group">
+          <label class="param-label" for="targetCount">
+            <span>本批目标新品数</span>
+            <span class="param-unit">1–500</span>
+          </label>
+          <div class="input-wrap">
+            <input id="targetCount" type="number" min="1" max="500" value="20">
+            <span class="input-suffix">件</span>
+          </div>
+        </div>
+
+        <div class="param-group">
+          <label class="param-label" for="perCategoryLimit">
+            <span>单类目采集上限</span>
+            <span class="param-unit">可选 · 1–500</span>
+          </label>
+          <div class="input-wrap">
+            <input id="perCategoryLimit" type="number" min="1" max="500" placeholder="不限制" aria-label="单类目采集上限（可选，达到后自动切换下一类目）">
+            <span class="input-suffix">件/类目</span>
+          </div>
+        </div>
+
+        <div class="param-group">
+          <div class="param-label">
+            <span>价格筛选区间</span>
+            <span class="currency-toggle" role="group" aria-label="价格筛选币种">
+              <button id="pageCurrencyCny" class="currency-btn active" type="button" aria-pressed="true">¥ 人民币</button>
+              <button id="pageCurrencyRub" class="currency-btn" type="button" aria-pressed="false">₽ 卢布</button>
+            </span>
+          </div>
+          <div class="range-pair">
+            <label class="input-wrap">
+              <span id="pageMinPrefix" class="input-prefix">¥</span>
+              <input id="priceMin" type="number" min="0" max="10000000" step="any" placeholder="不限制" aria-label="最低价格（可选）">
+            </label>
+            <span class="range-sep">–</span>
+            <label class="input-wrap">
+              <span id="pageMaxPrefix" class="input-prefix">¥</span>
+              <input id="priceMax" type="number" min="0" max="10000000" step="any" placeholder="不限制" aria-label="最高价格（可选）">
+            </label>
+          </div>
+        </div>
       </div>
-      <div id="rubCnyBar" class="rub-cny-bar" hidden>
-        <div class="rub-cny-main">
+
+      <div id="rubCnyBar" class="price-helper-bar" hidden>
+        <div class="price-helper-left">
+          <span id="priceModePill" class="mode-pill"></span>
           <span id="rubCnyAmount" class="rub-cny-amount"></span>
           <span id="rubCnyWarn" class="rub-cny-warn" hidden></span>
         </div>
-        <div class="rub-cny-actions">
-          <button id="fxEditBtn" class="fx-link" type="button">调整汇率</button>
+        <div id="fxControls" class="rub-cny-actions" hidden>
+          <button id="fxEditBtn" class="ghost-link" type="button">调整汇率</button>
           <span id="fxEditor" class="fx-editor" hidden>
             <label class="fx-label" for="fxRateInput">1¥ =</label>
             <input id="fxRateInput" type="number" min="0.1" max="1000" step="0.01" aria-label="每1元人民币折合卢布数">
@@ -53,34 +147,111 @@
           </span>
         </div>
       </div>
-      <p class="notice rule-note">页面预筛支持切换 ₽ 卢布 / ¥ 人民币，两端均填写或均留空；下方人民币复核区间用于采集后复核；设置「单类目采集上限」可让多类目轮流均衡采齐。</p>
-      <div class="task-save-bar"><input id="taskProfileName" maxlength="80" placeholder="给这组类目与筛选条件起个名字（如：玩具+学习+儿童 1300-30000₽）" aria-label="常用类目任务名称"><button id="saveTaskProfile" class="soft-primary" type="button">保存为常用任务</button></div>
-      <div class="setup-footer"><div class="actions"><button class="primary" id="start">开始类目选品</button><button id="pause">暂停</button><button id="resume">继续</button><button class="danger" id="stop">停止</button></div><p id="message" role="status" aria-live="polite"></p></div>
-      <div class="experiment-note"><label for="backgroundExperiment"><input id="backgroundExperiment" type="checkbox" disabled>后台持续采集（试验，暂不可用）</label><p class="notice">当前 Chrome 扩展权限不支持按需申请调试连接，试验模式已停用。类目采集仍使用普通后台扫描；站点验证仍需人工处理。</p></div>
+
+      <div class="setup-footer">
+        <div class="actions">
+          <button class="primary" id="start" type="button">开始类目选品</button>
+          <button id="openSaveTask" class="soft-primary" type="button">存为常用任务</button>
+          <span id="inlineSaveBox" class="inline-save-box" hidden>
+            <input id="taskProfileName" maxlength="80" placeholder="输入任务名称，如：玩具+儿童 1300-30000₽" aria-label="常用类目任务名称">
+            <button id="saveTaskProfile" class="primary compact" type="button">保存</button>
+            <button id="cancelSaveTask" class="compact" type="button">取消</button>
+          </span>
+        </div>
+        <p id="message" role="status" aria-live="polite"></p>
+      </div>
     </section>
-    <section class="card tasks-card" aria-labelledby="savedTasksTitle">
-      <div class="section-head"><div class="card-title-group"><h2 id="savedTasksTitle">常用类目任务</h2><span id="savedTaskCount" class="count-pill">0 个</span></div><span class="batch-meta-line">独立记录各任务每个类目的断点与已扫 SKU，下轮接续不重复</span></div>
-      <div id="cloudSyncBar" class="cloud-sync-bar" hidden><span id="cloudSyncStatus" class="cloud-sync-status"></span><button id="syncCloudNow" class="compact" type="button">立即同步云端去重与任务</button></div>
+
+    <section class="card tasks-card" id="savedTasksCard" aria-labelledby="savedTasksTitle" hidden>
+      <div class="section-head">
+        <div class="card-title-group">
+          <h2 id="savedTasksTitle">常用类目任务</h2>
+          <span id="savedTaskCount" class="count-pill">0 个</span>
+        </div>
+      </div>
       <div id="savedTaskList" class="saved-task-list"></div>
     </section>
-    <section class="card">
-      <div class="section-head"><div class="card-title-group"><h2>当前批次</h2><span id="batchStatusBadge" class="status-badge" hidden></span></div><span id="summary" class="batch-meta-line">读取中…</span></div>
-      <div id="kpiGrid" class="kpi-grid" hidden><div class="kpi-tile"><div class="kpi-label">新候选 / 目标</div><div class="kpi-value accent" id="kpiCandidates">0 / —</div></div><div class="kpi-tile"><div class="kpi-label">已检查商品</div><div class="kpi-value" id="kpiObserved">0</div></div><div class="kpi-tile"><div class="kpi-label">待人工复查</div><div class="kpi-value" id="kpiReview">0</div></div><div class="kpi-tile"><div class="kpi-label">页面价格预筛</div><div class="kpi-value small" id="kpiRub">未设置</div></div></div>
-      <div id="continueBar" class="continue-bar" hidden>
-        <div class="continue-bar-info"><strong id="continueTitle">下一轮续扫</strong><span id="continueHint" class="continue-hint">自动带入断点并跳过本轮已采 SKU 与已到底类目</span></div>
-        <div class="actions"><button id="continueRemaining" class="soft-primary" type="button">仅扫剩余类目</button><button id="continueNextRound" class="primary" type="button">继续扫下一轮</button></div>
+
+    <section class="card" id="batchCard">
+      <div class="section-head">
+        <div class="card-title-group">
+          <h2>当前批次</h2>
+          <span id="batchStatusBadge" class="status-badge" hidden></span>
+        </div>
+        <div class="actions">
+          <span id="summary" class="batch-meta-line">读取中…</span>
+          <button id="pause" class="compact" type="button" hidden>暂停</button>
+          <button id="resume" class="primary compact" type="button" hidden>继续</button>
+          <button id="stop" class="danger compact" type="button" hidden>停止</button>
+          <button id="openScanTab" class="soft-primary compact" type="button" hidden>查看采集页面</button>
+        </div>
       </div>
-      <details id="diagBox" class="diag-box" open hidden><summary><span>原因诊断与浏览器状态</span><span class="diag-summary-sub">点击折叠 / 展开 ▾</span></summary><div id="diagnosticOverview" class="diagnostic-overview" hidden></div></details>
+
+      <div id="kpiGrid" class="kpi-grid" hidden>
+        <div class="kpi-tile"><div class="kpi-label">新候选 / 目标</div><div class="kpi-value accent" id="kpiCandidates">0 / —</div></div>
+        <div class="kpi-tile"><div class="kpi-label">已检查商品</div><div class="kpi-value" id="kpiObserved">0</div></div>
+        <div class="kpi-tile"><div class="kpi-label">待人工复查</div><div class="kpi-value" id="kpiReview">0</div></div>
+        <div class="kpi-tile"><div class="kpi-label">价格筛选</div><div class="kpi-value small" id="kpiRub">未设置</div></div>
+      </div>
+
+      <div id="continueBar" class="continue-bar" hidden>
+        <div class="continue-bar-info">
+          <strong id="continueTitle">下一轮续扫</strong>
+          <span id="continueHint" class="continue-hint">自动带入断点并跳过本轮已采 SKU 与已到底类目</span>
+        </div>
+        <div class="actions">
+          <button id="continueRemaining" class="soft-primary" type="button">仅扫剩余类目</button>
+          <button id="continueNextRound" class="primary" type="button">继续扫下一轮</button>
+        </div>
+      </div>
+
       <div id="batch"></div>
-      <div class="actions batch-actions"><div class="batch-actions-left"><button id="syncWorkbench">同步本批到工作台</button><button id="addPool" class="soft-primary">本批加入商品池（本机）</button><button id="exportBatch">导出本批 CSV</button><button id="openScanTab">查看采集页面</button></div><button id="deleteCurrentBatch" class="danger">删除当前已结束批次</button></div>
-      <div class="tools-section">
-        <div class="tool-row"><label class="tool-label" for="diagnosticHistory">运行诊断</label><select id="diagnosticHistory" class="tool-select" aria-label="选择诊断批次"><option value="">当前批次</option></select><button id="exportDiagnostic">导出运行诊断</button></div>
-        <div class="tool-row"><label class="tool-label" for="historyBatch">历史批次</label><select id="historyBatch" class="tool-select" aria-label="历史类目批次"><option value="">选择已结束批次</option></select><button id="addHistoryPool" disabled>历史批次加入本机商品池</button><button id="exportHistoryBatch" disabled>导出历史批次 CSV</button><button id="deleteHistoryBatch" class="danger" disabled>删除所选历史批次</button><button id="cleanupEmptyBatches" class="danger">清理已结束的 0 候选批次</button></div>
-        <p class="notice" id="syncNote">工作台版可将本批同步至云端，再到工作台类目选品页面确认入池；本机商品池与工作台账号隔离。</p>
-        <p class="notice">删除仅清理本机类目批次记录，不会删除本机商品池、SKU 历史或工作台云端数据。运行中和暂停中的批次受保护。</p>
+
+      <div id="batchActions" class="actions batch-actions" hidden>
+        <div class="batch-actions-left">
+          <button id="syncWorkbench" type="button">同步本批到工作台</button>
+          <button id="addPool" class="soft-primary" type="button">加入本机商品池</button>
+          <button id="exportBatch" type="button">导出 CSV</button>
+        </div>
+        <button id="deleteCurrentBatch" class="danger" type="button">删除本批</button>
+      </div>
+
+      <div class="collapsed-tools">
+        <details id="diagBox" class="fold-box" hidden>
+          <summary>
+            <span>原因诊断与浏览器状态</span>
+            <span class="fold-sub">正常扫描无需关注 · 点击展开 ▾</span>
+          </summary>
+          <div id="diagnosticOverview" class="diagnostic-overview"></div>
+        </details>
+
+        <details id="historyToolsBox" class="fold-box" hidden>
+          <summary>
+            <span id="historyToolsTitle">历史批次与诊断工具</span>
+            <span class="fold-sub">补入池 / 清理空批次 / 导出诊断 JSON ▾</span>
+          </summary>
+          <div class="fold-body">
+            <div class="tool-row">
+              <label class="tool-label" for="historyBatch">历史批次</label>
+              <select id="historyBatch" class="tool-select" aria-label="历史类目批次"><option value="">选择已结束批次</option></select>
+              <button id="addHistoryPool" class="compact" type="button" disabled>加入商品池</button>
+              <button id="exportHistoryBatch" class="compact" type="button" disabled>导出 CSV</button>
+              <button id="deleteHistoryBatch" class="danger compact" type="button" disabled>删除</button>
+              <button id="cleanupEmptyBatches" class="danger compact" type="button">清理 0 候选</button>
+            </div>
+            <div class="tool-row">
+              <label class="tool-label" for="diagnosticHistory">运行诊断</label>
+              <select id="diagnosticHistory" class="tool-select" aria-label="选择诊断批次"><option value="">当前批次</option></select>
+              <button id="exportDiagnostic" class="compact" type="button">导出运行诊断</button>
+            </div>
+          </div>
+        </details>
       </div>
     </section>
   </main>
-  <script src="store-scanner-core.js"></script><script src="category-core.js"></script><script src="category-catalog.js"></script><script src="category.js"></script>
+  <script src="store-scanner-core.js"></script>
+  <script src="category-core.js"></script>
+  <script src="category-catalog.js"></script>
+  <script src="category.js"></script>
 </body>
 </html>

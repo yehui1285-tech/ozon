@@ -76,4 +76,13 @@ assert.deepEqual(c.pagePriceRange({ pageMinCny: '100', pageMaxCny: '500' }), { c
 assert.equal(c.pricePageUrl(url, cnyOpt), url + '?currency_price=100.000%3B500.000');
 assert.throws(() => c.validateOptions({ targetCount: 10, pageMinRub: '500', pageMaxRub: '2500', pageMinCny: '100', pageMaxCny: '500' }));
 assert.throws(() => c.validateOptions({ targetCount: 10, pageMinCny: '100' }));
+// V1.68: Option A native RUB review bounds (minPriceRub/maxPriceRub) supporting single-bound and CNY/RUB conversion
+const singleRubOpt = c.validateOptions({ targetCount: 20, minPriceRub: '1300', maxPriceRub: null });
+assert.deepEqual(singleRubOpt, { targetCount: 20, minPrice: null, maxPrice: null, minPriceRub: 1300, maxPriceRub: null });
+assert.equal(c.priceAllowed({ ...base, price: '1 480 ₽' }, singleRubOpt), true);
+assert.equal(c.priceAllowed({ ...base, price: '900 ₽' }, singleRubOpt), false);
+assert.equal(c.priceAllowed({ ...base, price: '150' }, { ...singleRubOpt, fxRate: 12 }), true, '150 CNY * 12 = 1800 RUB >= 1300');
+assert.equal(c.priceAllowed({ ...base, price: '100' }, { ...singleRubOpt, fxRate: 12 }), false, '100 CNY * 12 = 1200 RUB < 1300');
+assert.throws(() => c.validateOptions({ targetCount: 10, minPriceRub: '3000', maxPriceRub: '1000' }));
+assert.throws(() => c.validateOptions({ targetCount: 10, minPriceRub: '10000001' }));
 console.log('Category core URL, pagination, target, price, positive label, identity and risk tests passed.');

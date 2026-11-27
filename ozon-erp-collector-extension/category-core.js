@@ -86,6 +86,10 @@
     const limit=(value)=>{if(value===null||value===undefined||String(value).trim()==='')return null;if(!/^\d+(?:\.\d{1,2})?$/.test(String(value).trim()))throw Error('请输入有效人民币金额');const n=Number(value);if(!Number.isFinite(n)||n<0||n>1000000)throw Error('人民币价格区间无效');return n};
     const minPrice=limit(raw.minPrice),maxPrice=limit(raw.maxPrice);
     if(minPrice!==null&&maxPrice!==null&&minPrice>maxPrice)throw Error('最低价不能高于最高价');
+    const rubLimit=(value)=>{if(value===null||value===undefined||String(value).trim()==='')return null;if(!/^\d+(?:\.\d{1,2})?$/.test(String(value).trim()))throw Error('请输入有效卢布金额');const n=Number(value);if(!Number.isFinite(n)||n<0||n>10000000)throw Error('卢布价格区间无效');return n};
+    const minPriceRub=rubLimit(raw.minPriceRub),maxPriceRub=rubLimit(raw.maxPriceRub);
+    if(minPriceRub!==null&&maxPriceRub!==null&&minPriceRub>maxPriceRub)throw Error('卢布最低价不能高于最高价');
+    const rubPriceExtra=(minPriceRub!==null||maxPriceRub!==null)?{minPriceRub,maxPriceRub}:{};
     const fxRateRaw=raw.fxRate;
     let fxExtra={};
     if(fxRateRaw!==null&&fxRateRaw!==undefined&&String(fxRateRaw).trim()!==''){
@@ -101,7 +105,7 @@
       perLimitExtra={perCategoryLimit:per};
     }
     if(!pagePriceRange(raw)){} // Ensure mutual-exclusion check runs inside validateOptions
-    return {targetCount,minPrice,maxPrice,...rubRange(raw),...cnyPageRange(raw),...fxExtra,...perLimitExtra};
+    return {targetCount,minPrice,maxPrice,...rubPriceExtra,...rubRange(raw),...cnyPageRange(raw),...fxExtra,...perLimitExtra};
   }
   function parseAmountDigits(t){
     if(!/^\d+(?:[.,]\d+)*$/.test(t))return null;
@@ -121,15 +125,21 @@
   }
   function capturedAnyPrice(raw){return capturedPrice(raw)??capturedRubPrice(raw);}
   function priceAllowed(product,options={}){
-    if(options.minPrice==null&&options.maxPrice==null)return true;
-    const cny=capturedPrice(product?.price);
-    if(cny!==null)return (options.minPrice==null||cny>=options.minPrice)&&(options.maxPrice==null||cny<=options.maxPrice);
-    const rub=capturedRubPrice(product?.price),fx=Number(options.fxRate);
-    if(rub!==null&&Number.isFinite(fx)&&fx>=0.1&&fx<=1000){
-      const equiv=rub/fx;
-      return (options.minPrice==null||equiv>=options.minPrice)&&(options.maxPrice==null||equiv<=options.maxPrice);
+    const hasCny=options.minPrice!=null||options.maxPrice!=null;
+    const hasRub=options.minPriceRub!=null||options.maxPriceRub!=null;
+    if(!hasCny&&!hasRub)return true;
+    const cny=capturedPrice(product?.price),rub=capturedRubPrice(product?.price),fx=Number(options.fxRate),validFx=Number.isFinite(fx)&&fx>=0.1&&fx<=1000;
+    if(hasCny){
+      let val=cny;
+      if(val===null&&rub!==null&&validFx)val=rub/fx;
+      if(val===null||(options.minPrice!=null&&val<options.minPrice)||(options.maxPrice!=null&&val>options.maxPrice))return false;
     }
-    return false;
+    if(hasRub){
+      let val=rub;
+      if(val===null&&cny!==null&&validFx)val=cny*fx;
+      if(val===null||(options.minPriceRub!=null&&val<options.minPriceRub)||(options.maxPriceRub!=null&&val>options.maxPriceRub))return false;
+    }
+    return true;
   }
   function qualifiedProduct(product,options={}){
     if(!product||product.qualified!==true||!/^\d{1,24}$/.test(product.sku||''))return false;

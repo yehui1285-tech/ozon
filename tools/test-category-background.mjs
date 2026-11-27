@@ -7,7 +7,7 @@ let created = [], reloads=0, sentMessages=[], debuggerCommands=[], debuggerAttac
 const storage = { async get(k) { return k ? { ...(data[k] ? { [k]: data[k] } : {}) } : { ...data }; }, async set(v) { Object.assign(data, v); }, async remove(k) { for (const key of Array.isArray(k) ? k : [k]) delete data[key]; } };
 let declaredDebugger=true;
 const chrome = {
-  runtime:{getManifest:()=>({version:'0.6.85',permissions:declaredDebugger?['debugger']:[]})},
+  runtime:{getManifest:()=>({version:'0.6.86',permissions:declaredDebugger?['debugger']:[]})},
   storage: { local: storage,session:{async get(k){return {[k]:sessionData[k]}},async set(v){Object.assign(sessionData,v)},async remove(k){delete sessionData[k]}} },
   alarms:{async get(n){return alarms.get(n)},async create(n,o){alarms.set(n,o)},async clear(n){alarms.delete(n)}},
   tabs: {
@@ -831,5 +831,56 @@ await runner.handle({
 batch = (await runner.handle({ type: 'categoryGet' })).batch;
 assert.equal(batch.status, 'paused', 'exceeding memory_recycle limit pauses safely');
 assert.match(batch.message, /内存保护/);
+await runner.handle({ type: 'categoryStop' });
+// V1.68: Option A unified price filter (single-bound RUB post-review, two-bound RUB prefilter+review, and clearing on continuation)
+await runner.handle({
+  type: 'categoryStart',
+  urls: 'https://www.ozon.ru/category/opt-a-980/',
+  targetCount: 5,
+  minPriceRub: 1300,
+  maxPriceRub: null,
+  fxRate: 12,
+  confirmArchiveOverflow: true
+});
+batch = (await runner.handle({ type: 'categoryGet' })).batch;
+assert.equal(batch.stores[0].pageUrl, 'https://www.ozon.ru/category/opt-a-980/', 'single-bound RUB does not add currency_price prefilter');
+await runner.handle({
+  type: 'categorySample',
+  batchId: batch.id,
+  attemptId: batch.attemptId,
+  categoryUrl: batch.stores[0].pageUrl,
+  observedSkus: ['98001', '98002'],
+  products: [
+    { sku: '98001', name: 'TooCheap', link: 'https://www.ozon.ru/product/p-98001', price: '900 ₽', qualified: true, shippingRisk: { type: 'clear' } },
+    { sku: '98002', name: 'InRange', link: 'https://www.ozon.ru/product/p-98002', price: '1 500 ₽', qualified: true, shippingRisk: { type: 'clear' } }
+  ]
+}, { tab: { id: batch.tabId, url: batch.stores[0].pageUrl } });
+batch = (await runner.handle({ type: 'categoryGet' })).batch;
+assert.equal(batch.stores[0].qualifiedCount, 1);
+assert.equal(batch.stores[0].diagnosticDecisions['98001'], 'invalid_candidate');
+assert.equal(batch.stores[0].diagnosticDecisions['98002'], 'accepted');
+assert.equal(batch.results['category:980'].products['98001'], undefined);
+assert.ok(batch.results['category:980'].products['98002']);
+await runner.handle({ type: 'categoryStop' });
+const optABatch = (await runner.handle({ type: 'categoryGet' })).batch;
+await runner.handle({
+  type: 'categoryContinueNextRound',
+  batchId: optABatch.id,
+  mode: 'resume_all',
+  targetCount: 10,
+  minPrice: 100,
+  maxPrice: 500,
+  minPriceRub: null,
+  maxPriceRub: null,
+  pageMinCny: 100,
+  pageMaxCny: 500,
+  pageMinRub: null,
+  pageMaxRub: null,
+  confirmArchiveOverflow: true
+});
+batch = (await runner.handle({ type: 'categoryGet' })).batch;
+assert.equal(batch.options.minPriceRub, undefined, 'switching back to CNY clears minPriceRub');
+assert.equal(batch.options.pageMinCny, 100);
+assert.equal(batch.stores[0].pageUrl, 'https://www.ozon.ru/category/opt-a-980/?currency_price=100.000%3B500.000');
 await runner.handle({ type: 'categoryStop' });
 console.log("category background runner tests passed");

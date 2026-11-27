@@ -40,7 +40,11 @@ assert.ok(fs.existsSync(path.join(dir,'category-background.js')));
 assert.ok(fs.existsSync(path.join(dir,'category-catalog.js')));
 assert.ok(fs.existsSync(path.join(dir,'category-catalog.json')));
 assert.doesNotMatch(read('category.html'),/id="syncWorkbench"/);
-for (const id of ['rubCnyBar','rubCnyAmount','rubCnyWarn','fxEditBtn','fxRateInput','perCategoryLimit','saveTaskProfile','savedTaskList','cloudSyncBar','continueBar','continueRemaining','continueNextRound','pageCurrencyRub','pageCurrencyCny']) {
+assert.doesNotMatch(read('category.html'),/id="cloudSyncBar"/);
+assert.doesNotMatch(read('category.html'),/id="backgroundExperiment"/);
+assert.doesNotMatch(read('category.html'),/id="saveFavorite"/);
+assert.doesNotMatch(read('category.html'),/<details[^>]*id="diagBox"[^>]*\bopen\b/);
+for (const id of ['priceMin','priceMax','priceModePill','rubCnyBar','rubCnyAmount','fxEditBtn','fxRateInput','perCategoryLimit','openSaveTask','saveTaskProfile','savedTaskList','continueBar','continueRemaining','continueNextRound','pageCurrencyRub','pageCurrencyCny','historyToolsBox']) {
   assert.ok(read('category.html').includes(`id="${id}"`), `standalone category.html retains #${id}`);
 }
 assert.ok(read('category.html').indexOf('id="continueBar"') < read('category.html').indexOf('id="batch"'), 'standalone category.html places #continueBar above #batch');

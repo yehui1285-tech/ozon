@@ -63,7 +63,9 @@ batch = batch.replace(/<button class="primary" id="wbSyncNow">[^<]+<\/button>/, 
   .replace(/<p class="copy" id="wbBatchStatus">[^<]+<\/p>/, "");
 write("batch.html", withLocalNav(batch,"batch.html",'<div class="wrap">'));
 write("batch.js", read("batch.js").split(/\r?\nasync function wbBatchStatus\(/)[0] + "\n");
-let category = read("category.html").replace(/<button id="syncWorkbench">[^<]+<\/button>/, "").replace(/<p class="notice" id="syncNote">[^<]+<\/p>/,'<p class="notice">独立版将类目结果保存到当前浏览器的商品池。</p>');
+let category = read("category.html")
+  .replace(/<button[^>]*id="syncWorkbench"[^>]*>[^<]+<\/button>/, "")
+  .replace(/<button[^>]*id="cloudSyncBar"[\s\S]*?<\/button>/, "");
 write("category.html",withLocalNav(category,"category.html",'<main class="shell">'));
 
 // Reuse the exact local pricing code and freight rules; extension pages need external JS under MV3 CSP.

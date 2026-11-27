@@ -1,5 +1,11 @@
 # CHANGELOG.md - Ozon 项目续接记录
 
+## 2026-11-27 - V1.68 / 0.6.86 「类目选品」方案 A 统一价格区间与页面减法重构
+
+- 方案 A 统一「价格筛选区间」：`category-core.js` 在 `validateOptions` 新增可选 `minPriceRub`/`maxPriceRub` 校验并扩展 `priceAllowed` 原生支持人民币与卢布双向采集后复核；`category.html`/`category.js`/`category-background.js` 将「人民币复核区间」与「Ozon 页面预筛」合并为单一「价格筛选区间（`¥ 人民币 / ₽ 卢布`）」——填满两端自动同时启用 Ozon 网页预筛（`?currency_price=...`）+ 采集后复核，只填一端则自动仅做采集后复核；切 `₽ 卢布` 时展示人民币折算与汇率调节入口，切 `¥ 人民币` 时隐藏汇率条；`lib/ozon-collector-model.ts` 同步开放 `minPriceRub`/`maxPriceRub` 任务同步字段（**无新增 D1 迁移**）。
+- 「类目选品」页面信息减法（保持「上新建 / 下当前批次」）：移除失效「后台持续采集（试验）」说明条、冗余提示文字、重复标题摘要与类目选择弹窗内旧 `favorite-tools`（「保存/载入组合」）；新建区压缩为单行 3 格参数、按需展开「+ 粘贴自定义链接」与点击触发的行内「存为常用任务」；`暂停/继续/停止/查看采集页面` 仅在运行/暂停时展示于当前批次右上角；云端去重合并为页头右上角小徽章，0 个常用任务整卡隐藏；类目卡片精简为核心进度+「详情与诊断」折叠，底部「原因诊断与浏览器状态」「历史批次与诊断工具」默认折叠；`build-standalone.mjs` 同步适配独立分享版零泄漏剥离。
+- 打包与验证：回滚备份 `_备份_20261127_v168_category_slim_and_option_a_before`（已轮换清理 `_备份_20261127_v164_saved_tasks_and_continue_before`，保留 `_备份_20261125_v151_pool_before` 及共 5 份常规备份）。Ozon `node --check`、全量 `npm.cmd test`（含 `test-category-core.mjs`、`test-category-background.mjs` 单端卢布复核与切币种续扫清除用例、`test-standalone.mjs` 新控件与剥离断言）、`verify-project.ps1` 与双版构建（`ozon-erp-collector-extension.zip` SHA256 `DD4E88B2E36634BAE45D5C55FAA7D486F4897642F34E39A51A069C7ADD10AACB`；独立版 `ozon-standalone-extension.zip` SHA256 `8C7D182984EEEC7405F81827E1EDC63660E25C9C9FC45B452447C834546959C8`），以及 Workbench `sync-workbench-core --check`、`check-ozon-shared-core.mjs`、`check-release-version.mjs`（`V1.67 → V1.68`）、12/12 单测与 `npm.cmd run build` 全部通过，工作台本地提交 `4044a18`（待 Codex 部署上线及真实浏览器现场验收）。
+
 ## 2026-11-27 - V1.67 / 0.6.85 类目防 OOM 治本 + 优化 B（续扫栏置顶与 Ozon 人民币网页预筛，工作台已上线）
 
 - 类目防 OOM 崩溃治本：`category-scanner.js` 新增跨框架安全的 `pruneScrolledCards`（仅对滚出视口上方超 2 屏且已判定非待复查卡片保留外层容器、设置 `content-visibility: hidden` + `contain-intrinsic-size` 锁高并将图片替换 1×1 透明占位释放解码内存，同时跳过已瘦身卡片遍历）；新增 `FORCE_NEXT_PAGE_SCROLLS = 65` / `FORCE_NEXT_PAGE_SKUS = 180` 及 `performance.memory` 水位阈值解除此前 `pending.size > 0`（`ERP待补`）对提前翻页的阻塞；无下一页时触发 `memory_recycle`，由 `category-background.js` 无感新建干净标签页续扫（单类目上限 5 次）。

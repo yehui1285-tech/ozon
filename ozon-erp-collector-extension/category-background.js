@@ -566,7 +566,7 @@
           }));
           batch = await startCategoryBatch(batch, {
             entries,
-            options: { targetCount: m.targetCount, minPrice: m.minPrice, maxPrice: m.maxPrice, pageMinRub: m.pageMinRub, pageMaxRub: m.pageMaxRub, pageMinCny: m.pageMinCny, pageMaxCny: m.pageMaxCny, fxRate: m.fxRate, perCategoryLimit: m.perCategoryLimit },
+            options: { targetCount: m.targetCount, minPrice: m.minPrice, maxPrice: m.maxPrice, minPriceRub: m.minPriceRub, maxPriceRub: m.maxPriceRub, pageMinRub: m.pageMinRub, pageMaxRub: m.pageMaxRub, pageMinCny: m.pageMinCny, pageMaxCny: m.pageMaxCny, fxRate: m.fxRate, perCategoryLimit: m.perCategoryLimit },
             confirmArchiveOverflow: m.confirmArchiveOverflow,
             backgroundExperiment: m.backgroundExperiment,
             taskProfileId: typeof m.taskProfileId === 'string' ? m.taskProfileId.trim() : '',
@@ -589,6 +589,8 @@
             ...(m.targetCount !== undefined ? { targetCount: m.targetCount } : {}),
             ...(m.minPrice !== undefined ? { minPrice: m.minPrice } : {}),
             ...(m.maxPrice !== undefined ? { maxPrice: m.maxPrice } : {}),
+            ...(m.minPriceRub !== undefined ? { minPriceRub: m.minPriceRub } : {}),
+            ...(m.maxPriceRub !== undefined ? { maxPriceRub: m.maxPriceRub } : {}),
             ...(m.pageMinRub !== undefined ? { pageMinRub: m.pageMinRub } : {}),
             ...(m.pageMaxRub !== undefined ? { pageMaxRub: m.pageMaxRub } : {}),
             ...(m.pageMinCny !== undefined ? { pageMinCny: m.pageMinCny } : {}),
@@ -626,7 +628,7 @@
           const parsed = core.parseUrls(m.urls, 20);
           const urls = Array.isArray(parsed) ? parsed : parsed.urls;
           if (!urls?.length || parsed.invalid?.length || parsed.overflowCount) throw Error("请提供 1–20 个有效的 Ozon 类目链接");
-          const options = core.validateOptions({ targetCount: m.targetCount, minPrice: m.minPrice, maxPrice: m.maxPrice, pageMinRub: m.pageMinRub, pageMaxRub: m.pageMaxRub, pageMinCny: m.pageMinCny, pageMaxCny: m.pageMaxCny, fxRate: m.fxRate, perCategoryLimit: m.perCategoryLimit });
+          const options = core.validateOptions({ targetCount: m.targetCount, minPrice: m.minPrice, maxPrice: m.maxPrice, minPriceRub: m.minPriceRub, maxPriceRub: m.maxPriceRub, pageMinRub: m.pageMinRub, pageMaxRub: m.pageMaxRub, pageMinCny: m.pageMinCny, pageMaxCny: m.pageMaxCny, fxRate: m.fxRate, perCategoryLimit: m.perCategoryLimit });
           const categoryLabels = {};
           for (const url of urls) {
             if (m.categoryLabels && Object.hasOwn(m.categoryLabels, url) && typeof m.categoryLabels[url] === 'string') {
@@ -980,7 +982,7 @@
             const activeRange=pagePriceRangeOf(batch.options);
             const expectedCurrency=activeRange?.currency==='CNY'?'人民币（¥）':'卢布（₽）';
             if(activeRange&&['price_filter_unconfirmed','price_currency_mismatch','next_page_available'].includes(m.reason))task.pagePriceStatus='unconfirmed';
-            const why=(m.reason==='manual-verification'&&Object.hasOwn(verificationWhy,m.verificationDetail)?verificationWhy[m.verificationDetail]:null)||{"manual-verification":"需人工完成站点验证或登录","catalog_list_unavailable":"未识别唯一主商品列表","scan_bound_reached":"达到单页扫描上限（非完成）","pending_cards":"仍有商品字段待复查","reader_error":"页面读取失败","sample_not_persisted":"未确认数据已保存","price_filter_unconfirmed":`未确认 Ozon 页面${expectedCurrency}价格区间，未读取本页商品`,"price_currency_mismatch":`当前 Ozon 页面货币不是${expectedCurrency}，与「Ozon 页面预筛」不匹配；请切换 Ozon 网页货币，或修改/清空上方「Ozon 页面预筛」后用绿色「下一轮续扫」继续`,"next_page_available":"下一页未保留已确认的类目和价格条件"}[m.reason]||"未确认扫描完成";task.note=why;batch.message=why+"，已暂停，检查页面后可继续。";diagnosticEvent(batch,m.reason==='manual-verification'?'manual_verification':m.reason==='reader_error'?'reader_failure':'scan_paused',why); }
+            const why=(m.reason==='manual-verification'&&Object.hasOwn(verificationWhy,m.verificationDetail)?verificationWhy[m.verificationDetail]:null)||{"manual-verification":"需人工完成站点验证或登录","catalog_list_unavailable":"未识别唯一主商品列表","scan_bound_reached":"达到单页扫描上限（非完成）","pending_cards":"仍有商品字段待复查","reader_error":"页面读取失败","sample_not_persisted":"未确认数据已保存","price_filter_unconfirmed":`未确认 Ozon 页面${expectedCurrency}价格区间，未读取本页商品`,"price_currency_mismatch":`当前 Ozon 页面货币不是${expectedCurrency}，与「价格筛选区间」不匹配；请切换 Ozon 网页货币，或修改/清空上方「价格筛选区间」后用绿色「下一轮续扫」继续`,"next_page_available":"下一页未保留已确认的类目和价格条件"}[m.reason]||"未确认扫描完成";task.note=why;batch.message=why+"，已暂停，检查页面后可继续。";diagnosticEvent(batch,m.reason==='manual-verification'?'manual_verification':m.reason==='reader_error'?'reader_failure':'scan_paused',why); }
           await save(batch); return { ok: true, batch: clone(batch) };
         }
         case "categoryAddPool": {
@@ -1008,7 +1010,7 @@
           });
           const browser=source===batch&&source.status==='running'?await browserSnapshot(source):source.diagnosticBrowser||null;
           const totals={};for(const task of tasks)for(const [key,count] of Object.entries(task.counts))totals[key]=(totals[key]||0)+count;
-          return {ok:true,diagnostic:{schemaVersion:1,version:'1.50',extensionVersion:chrome.runtime?.getManifest?.().version||'0.6.69',generatedAt:now(),batchId:source.id,status:source.status,currentIndex:source.currentIndex,options:{targetCount:source.options?.targetCount,minPrice:source.options?.minPrice,maxPrice:source.options?.maxPrice,...(pagePriceRangeOf(source.options)||{})},experimentEnabled:source.backgroundExperiment===true,activityStatus:source.activityStatus||null,pageMode:source.pageMode||null,recentWaitReason:source.recentWaitReason||null,counters:{storeCount:tasks.length,observedCount:tasks.reduce((n,t)=>n+t.observedCount,0),discoveredCount:tasks.reduce((n,t)=>n+(t.discoveredCount||0),0),erpReadyCount:tasks.reduce((n,t)=>n+(t.erpReadyCount||0),0),labelHitCount:tasks.reduce((n,t)=>n+(t.labelHitCount||0),0),acceptedCount:(source.qualifiedSkuIds||[]).length,unknownLegacyCount:totals.unknown||0,decisions:totals},lastProgressAt:source.lastProgressAt||null,lastNewSkuAt:source.lastNewSkuAt||null,lastDiscoveryAt:source.lastDiscoveryAt||null,lastErpReadyAt:source.lastErpReadyAt||null,lastLabelHitAt:source.lastLabelHitAt||null,lastAcceptedAt:source.lastAcceptedAt||null,tasks,browser,events:(source.diagnosticEvents||[]).slice(-120)}};
+          return {ok:true,diagnostic:{schemaVersion:1,version:'1.50',extensionVersion:chrome.runtime?.getManifest?.().version||'0.6.69',generatedAt:now(),batchId:source.id,status:source.status,currentIndex:source.currentIndex,options:{targetCount:source.options?.targetCount,minPrice:source.options?.minPrice,maxPrice:source.options?.maxPrice,...(source.options?.minPriceRub!=null||source.options?.maxPriceRub!=null?{minPriceRub:source.options?.minPriceRub??null,maxPriceRub:source.options?.maxPriceRub??null}:{}),...(pagePriceRangeOf(source.options)||{})},experimentEnabled:source.backgroundExperiment===true,activityStatus:source.activityStatus||null,pageMode:source.pageMode||null,recentWaitReason:source.recentWaitReason||null,counters:{storeCount:tasks.length,observedCount:tasks.reduce((n,t)=>n+t.observedCount,0),discoveredCount:tasks.reduce((n,t)=>n+(t.discoveredCount||0),0),erpReadyCount:tasks.reduce((n,t)=>n+(t.erpReadyCount||0),0),labelHitCount:tasks.reduce((n,t)=>n+(t.labelHitCount||0),0),acceptedCount:(source.qualifiedSkuIds||[]).length,unknownLegacyCount:totals.unknown||0,decisions:totals},lastProgressAt:source.lastProgressAt||null,lastNewSkuAt:source.lastNewSkuAt||null,lastDiscoveryAt:source.lastDiscoveryAt||null,lastErpReadyAt:source.lastErpReadyAt||null,lastLabelHitAt:source.lastLabelHitAt||null,lastAcceptedAt:source.lastAcceptedAt||null,tasks,browser,events:(source.diagnosticEvents||[]).slice(-120)}};
         }
         case "categoryDeleteBatch": {
           const id=String(m.batchId||"");
