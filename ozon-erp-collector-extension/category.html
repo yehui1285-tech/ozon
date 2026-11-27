@@ -34,7 +34,7 @@
         <div class="param-group"><label class="param-label" for="targetCount"><span>本批目标新品数</span><span class="param-unit">1–500</span></label><div class="input-wrap"><input id="targetCount" type="number" min="1" max="500" value="20"><span class="input-suffix">件</span></div></div>
         <div class="param-group"><label class="param-label" for="perCategoryLimit"><span>单类目采集上限</span><span class="param-unit">可选 · 1–500</span></label><div class="input-wrap"><input id="perCategoryLimit" type="number" min="1" max="500" placeholder="不限制" aria-label="单类目采集上限（可选，达到后自动切换下一类目）"><span class="input-suffix">件/类目</span></div></div>
         <div class="param-group"><div class="param-label"><span>人民币复核区间</span><span class="param-unit">CNY ¥ · 可选</span></div><div class="range-pair"><label class="input-wrap"><span class="input-prefix">¥</span><input id="minPrice" type="number" min="0" step="0.01" placeholder="不限制" aria-label="最低价格（可选，CNY ¥）"></label><span class="range-sep">–</span><label class="input-wrap"><span class="input-prefix">¥</span><input id="maxPrice" type="number" min="0" step="0.01" placeholder="不限制" aria-label="最高价格（可选，CNY ¥）"></label></div></div>
-        <div class="param-group"><div class="param-label"><span>Ozon 页面预筛</span><span class="param-unit">RUB ₽ · 可选</span></div><div class="range-pair"><label class="input-wrap"><span class="input-prefix">₽</span><input id="pageMinRub" type="number" min="0" max="10000000" step="1" placeholder="不限制" aria-label="页面最低价（可选，RUB ₽）"></label><span class="range-sep">–</span><label class="input-wrap"><span class="input-prefix">₽</span><input id="pageMaxRub" type="number" min="0" max="10000000" step="1" placeholder="不限制" aria-label="页面最高价（可选，RUB ₽）"></label></div></div>
+        <div class="param-group"><div class="param-label"><span>Ozon 页面预筛</span><span class="currency-toggle" role="group" aria-label="页面预筛币种"><button id="pageCurrencyRub" class="currency-btn active" type="button" aria-pressed="true">₽ 卢布</button><button id="pageCurrencyCny" class="currency-btn" type="button" aria-pressed="false">¥ 人民币</button></span></div><div class="range-pair"><label class="input-wrap"><span id="pageMinPrefix" class="input-prefix">₽</span><input id="pageMinRub" type="number" min="0" max="10000000" step="1" placeholder="不限制" aria-label="页面最低价（可选）"></label><span class="range-sep">–</span><label class="input-wrap"><span id="pageMaxPrefix" class="input-prefix">₽</span><input id="pageMaxRub" type="number" min="0" max="10000000" step="1" placeholder="不限制" aria-label="页面最高价（可选）"></label></div></div>
       </div>
       <div id="rubCnyBar" class="rub-cny-bar" hidden>
         <div class="rub-cny-main">
@@ -53,7 +53,7 @@
           </span>
         </div>
       </div>
-      <p class="notice rule-note">卢布区间用于 Ozon 网页预筛选，两端均填写或均留空；人民币区间用于采集后复核（上方折算仅作填写参考）；设置「单类目采集上限」可让多类目轮流均衡采齐。</p>
+      <p class="notice rule-note">页面预筛支持切换 ₽ 卢布 / ¥ 人民币，两端均填写或均留空；下方人民币复核区间用于采集后复核；设置「单类目采集上限」可让多类目轮流均衡采齐。</p>
       <div class="task-save-bar"><input id="taskProfileName" maxlength="80" placeholder="给这组类目与筛选条件起个名字（如：玩具+学习+儿童 1300-30000₽）" aria-label="常用类目任务名称"><button id="saveTaskProfile" class="soft-primary" type="button">保存为常用任务</button></div>
       <div class="setup-footer"><div class="actions"><button class="primary" id="start">开始类目选品</button><button id="pause">暂停</button><button id="resume">继续</button><button class="danger" id="stop">停止</button></div><p id="message" role="status" aria-live="polite"></p></div>
       <div class="experiment-note"><label for="backgroundExperiment"><input id="backgroundExperiment" type="checkbox" disabled>后台持续采集（试验，暂不可用）</label><p class="notice">当前 Chrome 扩展权限不支持按需申请调试连接，试验模式已停用。类目采集仍使用普通后台扫描；站点验证仍需人工处理。</p></div>
@@ -65,13 +65,13 @@
     </section>
     <section class="card">
       <div class="section-head"><div class="card-title-group"><h2>当前批次</h2><span id="batchStatusBadge" class="status-badge" hidden></span></div><span id="summary" class="batch-meta-line">读取中…</span></div>
-      <div id="kpiGrid" class="kpi-grid" hidden><div class="kpi-tile"><div class="kpi-label">新候选 / 目标</div><div class="kpi-value accent" id="kpiCandidates">0 / —</div></div><div class="kpi-tile"><div class="kpi-label">已检查商品</div><div class="kpi-value" id="kpiObserved">0</div></div><div class="kpi-tile"><div class="kpi-label">待人工复查</div><div class="kpi-value" id="kpiReview">0</div></div><div class="kpi-tile"><div class="kpi-label">页面卢布预筛</div><div class="kpi-value small" id="kpiRub">未设置</div></div></div>
-      <details id="diagBox" class="diag-box" open hidden><summary><span>原因诊断与浏览器状态</span><span class="diag-summary-sub">点击折叠 / 展开 ▾</span></summary><div id="diagnosticOverview" class="diagnostic-overview" hidden></div></details>
-      <div id="batch"></div>
+      <div id="kpiGrid" class="kpi-grid" hidden><div class="kpi-tile"><div class="kpi-label">新候选 / 目标</div><div class="kpi-value accent" id="kpiCandidates">0 / —</div></div><div class="kpi-tile"><div class="kpi-label">已检查商品</div><div class="kpi-value" id="kpiObserved">0</div></div><div class="kpi-tile"><div class="kpi-label">待人工复查</div><div class="kpi-value" id="kpiReview">0</div></div><div class="kpi-tile"><div class="kpi-label">页面价格预筛</div><div class="kpi-value small" id="kpiRub">未设置</div></div></div>
       <div id="continueBar" class="continue-bar" hidden>
         <div class="continue-bar-info"><strong id="continueTitle">下一轮续扫</strong><span id="continueHint" class="continue-hint">自动带入断点并跳过本轮已采 SKU 与已到底类目</span></div>
         <div class="actions"><button id="continueRemaining" class="soft-primary" type="button">仅扫剩余类目</button><button id="continueNextRound" class="primary" type="button">继续扫下一轮</button></div>
       </div>
+      <details id="diagBox" class="diag-box" open hidden><summary><span>原因诊断与浏览器状态</span><span class="diag-summary-sub">点击折叠 / 展开 ▾</span></summary><div id="diagnosticOverview" class="diagnostic-overview" hidden></div></details>
+      <div id="batch"></div>
       <div class="actions batch-actions"><div class="batch-actions-left"><button id="syncWorkbench">同步本批到工作台</button><button id="addPool" class="soft-primary">本批加入商品池（本机）</button><button id="exportBatch">导出本批 CSV</button><button id="openScanTab">查看采集页面</button></div><button id="deleteCurrentBatch" class="danger">删除当前已结束批次</button></div>
       <div class="tools-section">
         <div class="tool-row"><label class="tool-label" for="diagnosticHistory">运行诊断</label><select id="diagnosticHistory" class="tool-select" aria-label="选择诊断批次"><option value="">当前批次</option></select><button id="exportDiagnostic">导出运行诊断</button></div>

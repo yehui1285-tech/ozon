@@ -14,6 +14,9 @@
   const STALE_MS = 15000, MESSAGE_TIMEOUT_MS = 4000, RECOVERY_LIMIT = 2;
   const STALL_MS = 90000;
   const CRASH_RECOVER_LIMIT = 3;
+  const MEMORY_RECYCLE_LIMIT = 5;
+  const pagePriceRangeOf = options => core.pagePriceRange?.(options) || core.rubRange(options);
+  const hasPagePrice = options => !!pagePriceRangeOf(options);
   let experimentDebuggerTabId = null;
   const waitLabels = {
     catalog_loading: '主商品列表尚未加载',
@@ -137,7 +140,8 @@
     return !!task && core.samePage(actual || "", task.url) && core.exactPageUrl(actual)===pageUrl(task);
   }
   function navigationMismatch(batch,task){
-    if(task&&core.rubRange(batch.options)){task.pagePriceStatus='unconfirmed';return '任务标签页或卢布价格条件发生变化，已暂停，请返回原筛选页面'}
+    const range=pagePriceRangeOf(batch?.options);
+    if(task&&range){task.pagePriceStatus='unconfirmed';return range.currency==='CNY'?'任务标签页或人民币价格条件发生变化，已暂停，请返回原筛选页面':'任务标签页或卢布价格条件发生变化，已暂停，请返回原筛选页面'}
     return '任务标签页导航离开类目范围，已暂停';
   }
   const sourceKind=url=>core.keyFromUrl(url).startsWith('china-category:')?'china':'normal';
@@ -428,7 +432,7 @@
     await save(batch);
   }
   async function startScanner(batch,task){
-    if(core.rubRange(batch.options)&&task.pagePriceStatus!=='pending'){task.pagePriceStatus='pending';await save(batch);}
+    if(hasPagePrice(batch.options)&&task.pagePriceStatus!=='pending'){task.pagePriceStatus='pending';await save(batch);}
     const injection=await bounded(chrome.scripting.executeScript({target:{tabId:batch.tabId},files:['store-scanner-core.js','category-core.js','category-scanner.js']}));
     if(injection===null)throw Error('扫描页面暂未响应');
     const pageNativeHidden=batch.backgroundExperiment?await nativePageHidden(batch.tabId):false;
@@ -457,7 +461,7 @@
       } catch { batch.tabId = null; }
       // Do not navigate away from a login/verification screen or another page
       // on behalf of the user. Resume only after the original page is ready.
-      if(batch.tabId){batch.status='paused';batch.message=core.rubRange(batch.options)?navigationMismatch(batch,task):'当前标签页已离开本批类目，请完成页面检查并返回原类目后继续';await save(batch);return;}
+      if(batch.tabId){batch.status='paused';batch.message=hasPagePrice(batch.options)?navigationMismatch(batch,task):'当前标签页已离开本批类目，请完成页面检查并返回原类目后继续';await save(batch);return;}
     }
     batch.attemptId = uuid();batch.watchdogSince=now();phase(batch,'waiting','等待类目页面加载');
     if (!batch.tabId || create) {
@@ -508,7 +512,7 @@
         sellerKey: core.keyFromUrl(url),
         url,
         pageUrl: targetPageUrl,
-        ...(core.rubRange(options) ? { pagePriceStatus: 'pending' } : {}),
+        ...(hasPagePrice(options) ? { pagePriceStatus: 'pending' } : {}),
         sourceKind: kind,
         ...(label ? { label, name: (kind === 'china' ? '中国专区 · ' : '普通类目 · ') + label } : {}),
         status: i === 0 ? "scanning" : "pending",
@@ -562,7 +566,7 @@
           }));
           batch = await startCategoryBatch(batch, {
             entries,
-            options: { targetCount: m.targetCount, minPrice: m.minPrice, maxPrice: m.maxPrice, pageMinRub: m.pageMinRub, pageMaxRub: m.pageMaxRub, fxRate: m.fxRate, perCategoryLimit: m.perCategoryLimit },
+            options: { targetCount: m.targetCount, minPrice: m.minPrice, maxPrice: m.maxPrice, pageMinRub: m.pageMinRub, pageMaxRub: m.pageMaxRub, pageMinCny: m.pageMinCny, pageMaxCny: m.pageMaxCny, fxRate: m.fxRate, perCategoryLimit: m.perCategoryLimit },
             confirmArchiveOverflow: m.confirmArchiveOverflow,
             backgroundExperiment: m.backgroundExperiment,
             taskProfileId: typeof m.taskProfileId === 'string' ? m.taskProfileId.trim() : '',
@@ -587,6 +591,8 @@
             ...(m.maxPrice !== undefined ? { maxPrice: m.maxPrice } : {}),
             ...(m.pageMinRub !== undefined ? { pageMinRub: m.pageMinRub } : {}),
             ...(m.pageMaxRub !== undefined ? { pageMaxRub: m.pageMaxRub } : {}),
+            ...(m.pageMinCny !== undefined ? { pageMinCny: m.pageMinCny } : {}),
+            ...(m.pageMaxCny !== undefined ? { pageMaxCny: m.pageMaxCny } : {}),
             ...(m.fxRate !== undefined ? { fxRate: m.fxRate } : {}),
             ...(m.perCategoryLimit !== undefined ? { perCategoryLimit: m.perCategoryLimit } : {})
           };
@@ -620,7 +626,7 @@
           const parsed = core.parseUrls(m.urls, 20);
           const urls = Array.isArray(parsed) ? parsed : parsed.urls;
           if (!urls?.length || parsed.invalid?.length || parsed.overflowCount) throw Error("请提供 1–20 个有效的 Ozon 类目链接");
-          const options = core.validateOptions({ targetCount: m.targetCount, minPrice: m.minPrice, maxPrice: m.maxPrice, pageMinRub: m.pageMinRub, pageMaxRub: m.pageMaxRub, fxRate: m.fxRate, perCategoryLimit: m.perCategoryLimit });
+          const options = core.validateOptions({ targetCount: m.targetCount, minPrice: m.minPrice, maxPrice: m.maxPrice, pageMinRub: m.pageMinRub, pageMaxRub: m.pageMaxRub, pageMinCny: m.pageMinCny, pageMaxCny: m.pageMaxCny, fxRate: m.fxRate, perCategoryLimit: m.perCategoryLimit });
           const categoryLabels = {};
           for (const url of urls) {
             if (m.categoryLabels && Object.hasOwn(m.categoryLabels, url) && typeof m.categoryLabels[url] === 'string') {
@@ -811,8 +817,9 @@
         case "categorySample": {
           const task = assertActive(batch, m, sender);
           if (batch.status !== "running") throw Error("类目批次当前未运行");
-          if(core.rubRange(batch.options)){
-            if(m.pagePriceConfirmed!==true)throw Error('未确认 Ozon 页面卢布价格区间');
+          const activeRange = pagePriceRangeOf(batch.options);
+          if(activeRange){
+            if(m.pagePriceConfirmed!==true)throw Error(activeRange.currency==='CNY'?'未确认 Ozon 页面人民币价格区间':'未确认 Ozon 页面卢布价格区间');
             if(task.pagePriceStatus!=='confirmed')diagnosticEvent(batch,'page_price_confirmed');
             task.pagePriceStatus='confirmed';
           }
@@ -830,7 +837,7 @@
           if (!effectiveHidden || observed.size > beforeObserved) {delete task.waitSince;delete task.waitReason;}
           task.pendingCount = Math.max(0, Number(m.pendingCount) || 0);
           if(Array.isArray(m.pendingSkus))task.pendingSkus=[...new Set(m.pendingSkus.map(String).filter(s=>/^\d+$/.test(s)&&!observed.has(s)))];
-          batch.lastProgressAt=now();if(observed.size>beforeObserved){batch.lastNewSkuAt=batch.lastProgressAt;task.crashRecoveryCount=0;}batch.recoveryAttempts=0;batch.noResponseCount=0;
+          batch.lastProgressAt=now();if(observed.size>beforeObserved){batch.lastNewSkuAt=batch.lastProgressAt;task.crashRecoveryCount=0;task.memoryRecycleCount=0;}batch.recoveryAttempts=0;batch.noResponseCount=0;
           task.activityStatus=batch.activityStatus||'native-background-only';
           phase(batch,effectiveHidden?'background':'foreground',effectiveHidden?'后台扫描类目商品（页面加载可能较慢）':'正在扫描类目商品');
           const skuList = (m.products || []).map(raw => raw?.sku);
@@ -899,7 +906,7 @@
           const task = assertActive(batch,m,sender);
           if(batch.status!=='running') throw Error('类目批次当前未运行');
           const known = Object.hasOwn(waitLabels,m.reason);
-          if(m.reason==='price_filter_loading'&&core.rubRange(batch.options))task.pagePriceStatus='pending';
+          if(m.reason==='price_filter_loading'&&hasPagePrice(batch.options))task.pagePriceStatus='pending';
           if(batch.recentWaitReason!==m.reason)diagnosticEvent(batch,'explicit_wait',known?waitLabels[m.reason]:'等待页面状态');
           task.waitReason = m.reason;batch.recentWaitReason=known?m.reason:'unknown';
           batch.diagnosticBrowser=await browserSnapshot(batch,m.pageReportedHidden,m.pageFocused);
@@ -925,10 +932,37 @@
           const nextUrl = m.reason === "next_page_available" && m.nextUrl && core.paginationUrl?.(m.nextUrl, pageUrl(task));
           if (nextUrl && Number(new URL(nextUrl).searchParams.get('page'))===Number(new URL(pageUrl(task)).searchParams.get('page')||1)+1 && nextUrl!==pageUrl(task)&&!task.visitedPages.includes(nextUrl)) {
             const oldTab=batch.tabId==null?null:await chrome.tabs.get(batch.tabId).catch(()=>null);
-            task.visitedPages.push(pageUrl(task)); task.pageUrl = nextUrl;if(core.rubRange(batch.options))task.pagePriceStatus='pending';task.pendingCount=0;task.pendingSkus=[];task.crashRecoveryCount=0;batch.noResponseCount=0;delete task.waitSince;delete task.waitReason; phase(batch,'waiting','继续扫描下一页'); await stopScanner(batch); diagnosticEvent(batch,'tab_recycled','翻页重建标签页释放内存'); batch.attemptId=uuid();batch.watchdogSince=now();batch.recoveryAttempts=0;const fresh=await replaceTaskTab(batch,nextUrl,oldTab);await enableFocusExperiment(batch);await save(batch);
+            task.visitedPages.push(pageUrl(task)); task.pageUrl = nextUrl;if(hasPagePrice(batch.options))task.pagePriceStatus='pending';task.pendingCount=0;task.pendingSkus=[];task.crashRecoveryCount=0;task.memoryRecycleCount=0;batch.noResponseCount=0;delete task.waitSince;delete task.waitReason; phase(batch,'waiting','继续扫描下一页'); await stopScanner(batch); diagnosticEvent(batch,'tab_recycled','翻页重建标签页释放内存'); batch.attemptId=uuid();batch.watchdogSince=now();batch.recoveryAttempts=0;const fresh=await replaceTaskTab(batch,nextUrl,oldTab);await enableFocusExperiment(batch);await save(batch);
             const liveTab=await chrome.tabs.get(fresh.id).catch(()=>null);
             if(liveTab?.status==='complete'&&pageMatches(liveTab.url,task)&&!liveTab.pendingUrl&&!liveTab.frozen&&!liveTab.discarded){
               try{await startScanner(batch,task);}catch{await waitStatus(batch,'新采集页等待读取器响应，正在自动检查。');}
+            }
+            return { ok: true, batch: clone(batch) };
+          }
+          if (m.reason === 'memory_recycle') {
+            if ((Number(task.memoryRecycleCount) || 0) >= MEMORY_RECYCLE_LIMIT) {
+              await stopScanner(batch);
+              delete task.waitSince; delete task.waitReason;
+              task.status = 'partial'; batch.status = 'paused';
+              task.note = '单页内存保护自动重建已达上限，已保留进度';
+              batch.message = `${task.note}，可关闭旧页面后点继续。`;
+              diagnosticEvent(batch, 'memory_recycle_limit', task.note);
+              await save(batch);
+              return { ok: true, batch: clone(batch) };
+            }
+            const oldTab = batch.tabId == null ? null : await chrome.tabs.get(batch.tabId).catch(() => null);
+            task.memoryRecycleCount = (Number(task.memoryRecycleCount) || 0) + 1;
+            task.crashRecoveryCount = 0; batch.noResponseCount = 0;
+            delete task.waitSince; delete task.waitReason;
+            phase(batch, 'recovering', `单页达到内存保护阈值，正在重建干净标签页继续扫（${task.memoryRecycleCount}/${MEMORY_RECYCLE_LIMIT}）`);
+            await stopScanner(batch);
+            diagnosticEvent(batch, 'memory_recycle', `重建干净标签页释内存 (${task.memoryRecycleCount}/${MEMORY_RECYCLE_LIMIT})`);
+            batch.attemptId = uuid(); batch.watchdogSince = now(); batch.recoveryAttempts = 0;
+            const fresh = await replaceTaskTab(batch, pageUrl(task), oldTab);
+            await enableFocusExperiment(batch); await save(batch);
+            const liveTab = await chrome.tabs.get(fresh.id).catch(() => null);
+            if (liveTab?.status === 'complete' && pageMatches(liveTab.url, task) && !liveTab.pendingUrl && !liveTab.frozen && !liveTab.discarded) {
+              try { await startScanner(batch, task); } catch { await waitStatus(batch, '新采集页等待读取器响应，正在自动检查。'); }
             }
             return { ok: true, batch: clone(batch) };
           }
@@ -943,8 +977,10 @@
             await advance(batch);
             return {ok:true,batch:clone(batch)};
           } else { await stopScanner(batch);delete task.waitSince;delete task.waitReason;task.status = "partial";batch.status = "paused";const verificationWhy={http_denied:'检测到站点访问受限（HTTP 状态提示），需人工检查',access_restricted:'检测到站点访问受限，需人工检查',security_prompt:'检测到站点安全验证，需人工完成',login_required:'页面要求登录，请在采集页人工处理'};
-            if(core.rubRange(batch.options)&&['price_filter_unconfirmed','price_currency_mismatch','next_page_available'].includes(m.reason))task.pagePriceStatus='unconfirmed';
-            const why=(m.reason==='manual-verification'&&Object.hasOwn(verificationWhy,m.verificationDetail)?verificationWhy[m.verificationDetail]:null)||{"manual-verification":"需人工完成站点验证或登录","catalog_list_unavailable":"未识别唯一主商品列表","scan_bound_reached":"达到单页扫描上限（非完成）","pending_cards":"仍有商品字段待复查","reader_error":"页面读取失败","sample_not_persisted":"未确认数据已保存","price_filter_unconfirmed":"未确认 Ozon 页面卢布价格区间，未读取本页商品","price_currency_mismatch":"当前 Ozon 页面货币不是卢布（₽），与「Ozon 页面卢布预筛」不匹配；请将 Ozon 切换为卢布，或清空上方「Ozon 页面预筛」后重新续扫","next_page_available":"下一页未保留已确认的类目和价格条件"}[m.reason]||"未确认扫描完成";task.note=why;batch.message=why+"，已暂停，检查页面后可继续。";diagnosticEvent(batch,m.reason==='manual-verification'?'manual_verification':m.reason==='reader_error'?'reader_failure':'scan_paused',why); }
+            const activeRange=pagePriceRangeOf(batch.options);
+            const expectedCurrency=activeRange?.currency==='CNY'?'人民币（¥）':'卢布（₽）';
+            if(activeRange&&['price_filter_unconfirmed','price_currency_mismatch','next_page_available'].includes(m.reason))task.pagePriceStatus='unconfirmed';
+            const why=(m.reason==='manual-verification'&&Object.hasOwn(verificationWhy,m.verificationDetail)?verificationWhy[m.verificationDetail]:null)||{"manual-verification":"需人工完成站点验证或登录","catalog_list_unavailable":"未识别唯一主商品列表","scan_bound_reached":"达到单页扫描上限（非完成）","pending_cards":"仍有商品字段待复查","reader_error":"页面读取失败","sample_not_persisted":"未确认数据已保存","price_filter_unconfirmed":`未确认 Ozon 页面${expectedCurrency}价格区间，未读取本页商品`,"price_currency_mismatch":`当前 Ozon 页面货币不是${expectedCurrency}，与「Ozon 页面预筛」不匹配；请切换 Ozon 网页货币，或修改/清空上方「Ozon 页面预筛」后用绿色「下一轮续扫」继续`,"next_page_available":"下一页未保留已确认的类目和价格条件"}[m.reason]||"未确认扫描完成";task.note=why;batch.message=why+"，已暂停，检查页面后可继续。";diagnosticEvent(batch,m.reason==='manual-verification'?'manual_verification':m.reason==='reader_error'?'reader_failure':'scan_paused',why); }
           await save(batch); return { ok: true, batch: clone(batch) };
         }
         case "categoryAddPool": {
@@ -972,7 +1008,7 @@
           });
           const browser=source===batch&&source.status==='running'?await browserSnapshot(source):source.diagnosticBrowser||null;
           const totals={};for(const task of tasks)for(const [key,count] of Object.entries(task.counts))totals[key]=(totals[key]||0)+count;
-          return {ok:true,diagnostic:{schemaVersion:1,version:'1.50',extensionVersion:chrome.runtime?.getManifest?.().version||'0.6.69',generatedAt:now(),batchId:source.id,status:source.status,currentIndex:source.currentIndex,options:{targetCount:source.options?.targetCount,minPrice:source.options?.minPrice,maxPrice:source.options?.maxPrice,...core.rubRange(source.options)},experimentEnabled:source.backgroundExperiment===true,activityStatus:source.activityStatus||null,pageMode:source.pageMode||null,recentWaitReason:source.recentWaitReason||null,counters:{storeCount:tasks.length,observedCount:tasks.reduce((n,t)=>n+t.observedCount,0),discoveredCount:tasks.reduce((n,t)=>n+(t.discoveredCount||0),0),erpReadyCount:tasks.reduce((n,t)=>n+(t.erpReadyCount||0),0),labelHitCount:tasks.reduce((n,t)=>n+(t.labelHitCount||0),0),acceptedCount:(source.qualifiedSkuIds||[]).length,unknownLegacyCount:totals.unknown||0,decisions:totals},lastProgressAt:source.lastProgressAt||null,lastNewSkuAt:source.lastNewSkuAt||null,lastDiscoveryAt:source.lastDiscoveryAt||null,lastErpReadyAt:source.lastErpReadyAt||null,lastLabelHitAt:source.lastLabelHitAt||null,lastAcceptedAt:source.lastAcceptedAt||null,tasks,browser,events:(source.diagnosticEvents||[]).slice(-120)}};
+          return {ok:true,diagnostic:{schemaVersion:1,version:'1.50',extensionVersion:chrome.runtime?.getManifest?.().version||'0.6.69',generatedAt:now(),batchId:source.id,status:source.status,currentIndex:source.currentIndex,options:{targetCount:source.options?.targetCount,minPrice:source.options?.minPrice,maxPrice:source.options?.maxPrice,...(pagePriceRangeOf(source.options)||{})},experimentEnabled:source.backgroundExperiment===true,activityStatus:source.activityStatus||null,pageMode:source.pageMode||null,recentWaitReason:source.recentWaitReason||null,counters:{storeCount:tasks.length,observedCount:tasks.reduce((n,t)=>n+t.observedCount,0),discoveredCount:tasks.reduce((n,t)=>n+(t.discoveredCount||0),0),erpReadyCount:tasks.reduce((n,t)=>n+(t.erpReadyCount||0),0),labelHitCount:tasks.reduce((n,t)=>n+(t.labelHitCount||0),0),acceptedCount:(source.qualifiedSkuIds||[]).length,unknownLegacyCount:totals.unknown||0,decisions:totals},lastProgressAt:source.lastProgressAt||null,lastNewSkuAt:source.lastNewSkuAt||null,lastDiscoveryAt:source.lastDiscoveryAt||null,lastErpReadyAt:source.lastErpReadyAt||null,lastLabelHitAt:source.lastLabelHitAt||null,lastAcceptedAt:source.lastAcceptedAt||null,tasks,browser,events:(source.diagnosticEvents||[]).slice(-120)}};
         }
         case "categoryDeleteBatch": {
           const id=String(m.batchId||"");

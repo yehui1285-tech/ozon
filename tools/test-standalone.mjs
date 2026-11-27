@@ -40,9 +40,10 @@ assert.ok(fs.existsSync(path.join(dir,'category-background.js')));
 assert.ok(fs.existsSync(path.join(dir,'category-catalog.js')));
 assert.ok(fs.existsSync(path.join(dir,'category-catalog.json')));
 assert.doesNotMatch(read('category.html'),/id="syncWorkbench"/);
-for (const id of ['rubCnyBar','rubCnyAmount','rubCnyWarn','fxEditBtn','fxRateInput','perCategoryLimit','saveTaskProfile','savedTaskList','cloudSyncBar','continueBar','continueRemaining','continueNextRound']) {
+for (const id of ['rubCnyBar','rubCnyAmount','rubCnyWarn','fxEditBtn','fxRateInput','perCategoryLimit','saveTaskProfile','savedTaskList','cloudSyncBar','continueBar','continueRemaining','continueNextRound','pageCurrencyRub','pageCurrencyCny']) {
   assert.ok(read('category.html').includes(`id="${id}"`), `standalone category.html retains #${id}`);
 }
+assert.ok(read('category.html').indexOf('id="continueBar"') < read('category.html').indexOf('id="batch"'), 'standalone category.html places #continueBar above #batch');
 assert.match(read('standalone-nav.css'), /#3a5a40/);
 assert.doesNotMatch(read('standalone-nav.css'), /#405ec5/);
 assert.doesNotMatch(read('background.js'),/wbSyncCategory|wbSyncCloudState|wbRefreshCloudSkus|wbSyncCategoryTasks/);

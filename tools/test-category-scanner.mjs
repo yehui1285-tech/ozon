@@ -232,4 +232,77 @@ assert.equal(rubReadResult.products.length, 1);
 assert.equal(rubReadResult.products[0].sku, '1979786266');
 assert.equal(rubReadResult.products[0].price, '1 480 ₽');
 
+// V1.67: CNY pagePrice confirmation & mismatch detection + scroll card pruning + force pagination with pending>0.
+const cnyValLo = makeEl({ tag: 'INPUT' }), cnyValHi = makeEl({ tag: 'INPUT' });
+cnyValLo.value = '100'; cnyValHi.value = '500';
+const cnyValGroup = makeEl({ text: '价格 ⓘ\n¥ 100 - ¥ 500', children: [cnyValLo, cnyValHi] });
+cnyValGroup.querySelectorAll = s => s.includes('input[type="text"]') ? [cnyValLo, cnyValHi] : [];
+const cnyConfirmDoc = { querySelectorAll: s => s.includes('input[type="text"]') ? [cnyValLo, cnyValHi] : [] };
+assert.equal(context.OzonCategoryScanner.confirmPagePrice(cnyConfirmDoc, { pageMinCny: 100, pageMaxCny: 500 }), true, 'CNY sidebar filter confirms CNY pagePrice');
+assert.equal(context.OzonCategoryScanner.detectCurrencyMismatch(cnyConfirmDoc, { pageMinCny: 100, pageMaxCny: 500 }), false);
+assert.equal(context.OzonCategoryScanner.confirmPagePrice(blankDoc, { pageMinCny: 100, pageMaxCny: 500 }), false, 'RUB page rejects CNY pagePrice');
+assert.equal(context.OzonCategoryScanner.detectCurrencyMismatch(blankDoc, { pageMinCny: 100, pageMaxCny: 500 }), true, 'RUB page reports currency mismatch when CNY expected');
+
+// Scroll card pruning: off-screen observed card images get blanked while pending & visible cards stay intact.
+const makePruneImg = (initial) => {
+  const attrs = { src: initial, srcset: initial + ' 2x', 'data-src': initial };
+  return {
+    src: initial,
+    getAttribute: k => attrs[k] ?? '',
+    setAttribute: (k, v) => { attrs[k] = v; },
+    removeAttribute: k => { delete attrs[k]; },
+  };
+};
+const offObsImg = makePruneImg('https://cdn.example/obs.jpg');
+const offPendingImg = makePruneImg('https://cdn.example/pending.jpg');
+const onViewImg = makePruneImg('https://cdn.example/view.jpg');
+const makePruneCard = (sku, img, rectBottom) => {
+  const link = makeEl({ tag: 'A', href: `https://www.ozon.ru/product/item-${sku}/`, text: `item-${sku}` });
+  const attrs = {};
+  let cardEl;
+  link.closest = sel => sel === '[data-ozon-pruned="1"]' && attrs['data-ozon-pruned'] === '1' ? cardEl : null;
+  cardEl = makeEl({ text: `SKU：${sku}`, children: [link, img] });
+  cardEl.style = {};
+  cardEl.getBoundingClientRect = () => ({ width: 200, height: 320, bottom: rectBottom });
+  cardEl.getAttribute = k => attrs[k] ?? '';
+  cardEl.setAttribute = (k, v) => { attrs[k] = v; };
+  cardEl.querySelectorAll = s => s.includes('a[href*="/product/"]') ? [link] : s.includes('img') ? [img] : [];
+  return cardEl;
+};
+const cOffObs = makePruneCard('77001', offObsImg, -2200);
+const cOffPending = makePruneCard('77002', offPendingImg, -2200);
+const cOnView = makePruneCard('77003', onViewImg, 300);
+const pruneList = makeEl({ widget: 'tileGridDesktop', children: [cOffObs, cOffPending, cOnView] });
+pruneList.querySelectorAll = s => s.includes('a[href*="/product/"]') ? [...cOffObs.querySelectorAll(s), ...cOffPending.querySelectorAll(s), ...cOnView.querySelectorAll(s)] : [];
+const prunedCount = context.OzonCategoryScanner.pruneScrolledCards(pruneList, new Set(['77001', '77002', '77003']), new Set(['77002']));
+assert.equal(prunedCount, 1, 'only far-above-viewport observed & non-pending card is pruned');
+assert.match(offObsImg.src, /^data:image\/gif;base64,/);
+assert.equal(cOffObs.getAttribute('data-ozon-pruned'), '1');
+assert.equal(cOffObs.style.contentVisibility, 'hidden');
+assert.equal(offPendingImg.src, 'https://cdn.example/pending.jpg');
+assert.equal(onViewImg.src, 'https://cdn.example/view.jpg');
+
+// Force proactive pagination at FORCE_NEXT_PAGE_SCROLLS even when pending.size > 0!
+const pendingCardEl = makeEl({
+  text: '100,00 ¥\n毛子ERP\nSKU：66001\n月销量：加载中',
+  children: [makeEl({ tag: 'A', href: 'https://www.ozon.ru/product/p-66001/', text: 'pending-item' })],
+});
+const forceList = makeEl({ widget: 'tileGridDesktop', children: [pendingCardEl] });
+reported.length = 0;
+bg.scrollY = 0;
+bg.document.documentElement.scrollHeight = 200000;
+bg.location.href = 'https://www.ozon.ru/category/demo-123/';
+bg.document.querySelectorAll = s => s.includes('tileGridDesktop') ? [forceList] : s.includes('rel="next"') ? [nextPage2] : [];
+bg.chrome.runtime.sendMessage = (m, cb) => { reported.push(m); cb({ ok: true }); };
+backgroundListener({ type: 'categoryScanStart', batchId: 'hidden-b', attemptId: 'force-1', categoryUrl: bg.location.href }, {}, () => {});
+await new Promise(setImmediate);
+for (let i = 0; i < context.OzonCategoryScanner.FORCE_NEXT_PAGE_SCROLLS + 5 && !reported.some(m => m.type === 'categoryPageDone'); i++) {
+  fakeNow += 2000;
+  wake('force-1');
+  await new Promise(setImmediate);
+}
+const forcedDone = reported.find(m => m.type === 'categoryPageDone');
+assert.equal(forcedDone?.reason, 'next_page_available', 'force pagination still opens next page when pending.size > 0');
+assert.equal(forcedDone?.nextUrl, nextPage2.href);
+
 console.log('category scanner real-core synthetic DOM tests passed');

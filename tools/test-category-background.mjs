@@ -7,7 +7,7 @@ let created = [], reloads=0, sentMessages=[], debuggerCommands=[], debuggerAttac
 const storage = { async get(k) { return k ? { ...(data[k] ? { [k]: data[k] } : {}) } : { ...data }; }, async set(v) { Object.assign(data, v); }, async remove(k) { for (const key of Array.isArray(k) ? k : [k]) delete data[key]; } };
 let declaredDebugger=true;
 const chrome = {
-  runtime:{getManifest:()=>({version:'0.6.84',permissions:declaredDebugger?['debugger']:[]})},
+  runtime:{getManifest:()=>({version:'0.6.85',permissions:declaredDebugger?['debugger']:[]})},
   storage: { local: storage,session:{async get(k){return {[k]:sessionData[k]}},async set(v){Object.assign(sessionData,v)},async remove(k){delete sessionData[k]}} },
   alarms:{async get(n){return alarms.get(n)},async create(n,o){alarms.set(n,o)},async clear(n){alarms.delete(n)}},
   tabs: {
@@ -768,4 +768,68 @@ await runner.applyMergedTasksState({
 });
 assert.equal((await runner.handle({ type: 'categoryGet' })).tasks[0].id, 'task-merged-1');
 delete context.OzonWorkbenchCloud;
+
+// V1.67: CNY page price prefiltering + memory_recycle tab replacement & limit protection
+await runner.handle({
+  type: 'categoryStart',
+  urls: 'https://www.ozon.ru/category/cny-970/',
+  targetCount: 3,
+  minPrice: 100,
+  pageMinCny: 100,
+  pageMaxCny: 500,
+  confirmArchiveOverflow: true
+});
+batch = (await runner.handle({ type: 'categoryGet' })).batch;
+assert.equal(batch.stores[0].pageUrl, 'https://www.ozon.ru/category/cny-970/?currency_price=100.000%3B500.000');
+assert.equal(batch.stores[0].pagePriceStatus, 'pending');
+await runner.handle({
+  type: 'categoryPageDone',
+  batchId: batch.id,
+  attemptId: batch.attemptId,
+  categoryUrl: batch.stores[0].pageUrl,
+  complete: false,
+  reason: 'price_currency_mismatch'
+}, { tab: { id: batch.tabId, url: batch.stores[0].pageUrl } });
+batch = (await runner.handle({ type: 'categoryGet' })).batch;
+assert.equal(batch.status, 'paused');
+assert.match(batch.message, /人民币（¥）/);
+await runner.handle({ type: 'categoryResume' });
+batch = (await runner.handle({ type: 'categoryGet' })).batch;
+const tabBeforeRecycle = batch.tabId;
+await runner.handle({
+  type: 'categoryPageDone',
+  batchId: batch.id,
+  attemptId: batch.attemptId,
+  categoryUrl: batch.stores[0].pageUrl,
+  complete: false,
+  reason: 'memory_recycle'
+}, { tab: { id: batch.tabId, url: batch.stores[0].pageUrl } });
+batch = (await runner.handle({ type: 'categoryGet' })).batch;
+assert.equal(batch.status, 'running', 'memory_recycle rebuilds a fresh tab and keeps scanning');
+assert.notEqual(batch.tabId, tabBeforeRecycle);
+assert.equal(batch.stores[0].memoryRecycleCount, 1);
+for (let i = 0; i < 4; i++) {
+  await runner.handle({
+    type: 'categoryPageDone',
+    batchId: batch.id,
+    attemptId: batch.attemptId,
+    categoryUrl: batch.stores[0].pageUrl,
+    complete: false,
+    reason: 'memory_recycle'
+  }, { tab: { id: batch.tabId, url: batch.stores[0].pageUrl } });
+  batch = (await runner.handle({ type: 'categoryGet' })).batch;
+}
+assert.equal(batch.stores[0].memoryRecycleCount, 5);
+await runner.handle({
+  type: 'categoryPageDone',
+  batchId: batch.id,
+  attemptId: batch.attemptId,
+  categoryUrl: batch.stores[0].pageUrl,
+  complete: false,
+  reason: 'memory_recycle'
+}, { tab: { id: batch.tabId, url: batch.stores[0].pageUrl } });
+batch = (await runner.handle({ type: 'categoryGet' })).batch;
+assert.equal(batch.status, 'paused', 'exceeding memory_recycle limit pauses safely');
+assert.match(batch.message, /内存保护/);
+await runner.handle({ type: 'categoryStop' });
 console.log("category background runner tests passed");

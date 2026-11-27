@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 let state = null;
-let history = [], savedTasks = [], cloudSync = null, loadedTaskProfileId = '', loadedTaskProfileName = '', formDirty = false, hydratedBatchId = '', busy = false, refreshSequence = 0, actionRevision = 0, refreshInFlight = false, refreshPending = false;
+let history = [], savedTasks = [], cloudSync = null, pagePriceCurrency = 'RUB', loadedTaskProfileId = '', loadedTaskProfileName = '', formDirty = false, hydratedBatchId = '', busy = false, refreshSequence = 0, actionRevision = 0, refreshInFlight = false, refreshPending = false;
 const core=globalThis.OzonCategoryCore;
 const catalog=globalThis.OzonCategoryCatalog;
 let catalogData=null, treeSelection=null, confirmedSource='china', draftSelection=null, favorites=[], navPath=[];
@@ -35,7 +35,10 @@ function renderTaskCard(task,batch){
   const dc=task.diagnosticCounts&&typeof task.diagnosticCounts==='object'?task.diagnosticCounts:null;
   const diagnostic=dc?`<details class="diagnostic" data-category-key="${esc(task.sellerKey||task.url||'')}"><summary>唯一 SKU 诊断（${Object.values(dc).reduce((n,v)=>n+(Number(v)||0),0)}）</summary><div class="diagnostic-chips">${Object.entries(diagnosticLabels).filter(([k])=>Number(dc[k])>0).map(([k,v])=>`<span class="diagnostic-chip">${v} ${Number(dc[k])}</span>`).join('')||'<span>暂无原因计数</span>'}</div></details>`:'';
   const isScheduled=batch?.status==='paused'&&Number.isInteger(batch.resumeIndex)&&(batch.stores||[])[batch.resumeIndex]===task;
-  const actions=canManage&&runnable&&!busy?`<div class="store-actions">${!targetReached?`<button type="button" class="soft-primary compact" data-task-action="resume" data-seller-key="${esc(task.sellerKey||'')}">${isScheduled?'下一次继续':'从此类目继续'}</button>`:''}<button type="button" class="compact" data-task-action="skip" data-seller-key="${esc(task.sellerKey||'')}">跳过</button><button type="button" class="danger compact" data-task-action="remove" data-seller-key="${esc(task.sellerKey||'')}">删除</button></div>`:'';
+  const isStopped=batch?.status==='stopped';
+  const resumeLabel=isStopped?'按旧条件续跑此项':(isScheduled?'下一次继续':'从此类目继续');
+  const resumeBtnClass=isStopped?'compact':'soft-primary compact';
+  const actions=canManage&&runnable&&!busy?`<div class="store-actions">${!targetReached?`<button type="button" class="${resumeBtnClass}" data-task-action="resume" data-seller-key="${esc(task.sellerKey||'')}">${resumeLabel}</button>`:''}<button type="button" class="compact" data-task-action="skip" data-seller-key="${esc(task.sellerKey||'')}">跳过</button><button type="button" class="danger compact" data-task-action="remove" data-seller-key="${esc(task.sellerKey||'')}">删除</button></div>`:'';
   return `<article class="store${status==='scanning'?' active':''}">
     <div class="store-top"><strong>${esc(task.name||task.label||task.url||'类目')}</strong><span class="status-badge${status==='scanning'?' running':''}">${esc(labels[status]||status||'等待')}</span></div>
     <div class="store-url">${esc(task.pageUrl||task.url||'')}</div>
@@ -87,9 +90,29 @@ function searchPicker(){const query=normalizeSearch($('catalogSearch').value);if
 async function loadCatalog(){try{const response=await fetch('category-catalog.json');if(!response.ok)throw Error('类目目录无法读取');catalogData=await response.json();$('catalogProvenance').textContent=catalogData.provenance?.note||'本机类目快照';treeSelection=newSelection(confirmedSource).selection;syncCatalogUrls();$('openCatalog').disabled=false;$('catalogLoadState').textContent='选择后可直接开始扫描'}catch(e){$('catalogLoadState').textContent='类目目录无法读取，请重载扩展后重试。';$('message').textContent=e.message}}
 async function refreshFavorites(){favorites=await catalog.readFavorites();const select=$('favoriteSelect');const keep=select.value;select.replaceChildren(new Option('选择本机组合',''),...favorites.map(f=>new Option(`${f.name} · ${f.source==='china'?'中国专区':'普通 Ozon'}`,f.id)));if(favorites.some(f=>f.id===keep))select.value=keep}
 function categoryLabels(){const labels={};for(const n of treeSelection?.selected.values()||[])labels[core.normalizeUrl(n.url)]=catalog.names(n).slice(0,120);return labels}
+function setPagePriceCurrency(currency,{markDirty=false}={}){
+  pagePriceCurrency=currency==='CNY'?'CNY':'RUB';
+  const isCny=pagePriceCurrency==='CNY';
+  const rubBtn=$('pageCurrencyRub'),cnyBtn=$('pageCurrencyCny');
+  if(rubBtn){rubBtn.classList.toggle('active',!isCny);rubBtn.setAttribute('aria-pressed',String(!isCny));}
+  if(cnyBtn){cnyBtn.classList.toggle('active',isCny);cnyBtn.setAttribute('aria-pressed',String(isCny));}
+  const sym=isCny?'¥':'₽';
+  if($('pageMinPrefix'))$('pageMinPrefix').textContent=sym;
+  if($('pageMaxPrefix'))$('pageMaxPrefix').textContent=sym;
+  if(isCny)closeFxEditor();
+  if(markDirty)formDirty=true;
+  renderRubCnyHint();
+  updateContinueHint();
+}
+function formatPageRangeText(opt={}){
+  if(opt.pageMinCny!=null||opt.pageMaxCny!=null)return `${opt.pageMinCny??'不限'}–${opt.pageMaxCny??'不限'} ¥`;
+  if(opt.pageMinRub!=null||opt.pageMaxRub!=null)return `${opt.pageMinRub??'不限'}–${opt.pageMaxRub??'不限'} ₽`;
+  return '';
+}
 function readFilterOptions(){
-  const opt=core.validateOptions({targetCount:$('targetCount').value,perCategoryLimit:$('perCategoryLimit')?.value,minPrice:$('minPrice').value,maxPrice:$('maxPrice').value,pageMinRub:$('pageMinRub').value,pageMaxRub:$('pageMaxRub').value,fxRate:activeFxRate()});
-  return {targetCount:opt.targetCount,perCategoryLimit:opt.perCategoryLimit??null,minPrice:opt.minPrice??null,maxPrice:opt.maxPrice??null,pageMinRub:opt.pageMinRub??null,pageMaxRub:opt.pageMaxRub??null,fxRate:opt.fxRate??activeFxRate()};
+  const rawMin=$('pageMinRub').value,rawMax=$('pageMaxRub').value,isCny=pagePriceCurrency==='CNY';
+  const opt=core.validateOptions({targetCount:$('targetCount').value,perCategoryLimit:$('perCategoryLimit')?.value,minPrice:$('minPrice').value,maxPrice:$('maxPrice').value,pageMinRub:isCny?null:rawMin,pageMaxRub:isCny?null:rawMax,pageMinCny:isCny?rawMin:null,pageMaxCny:isCny?rawMax:null,fxRate:activeFxRate()});
+  return {targetCount:opt.targetCount,perCategoryLimit:opt.perCategoryLimit??null,minPrice:opt.minPrice??null,maxPrice:opt.maxPrice??null,pageMinRub:opt.pageMinRub??null,pageMaxRub:opt.pageMaxRub??null,pageMinCny:opt.pageMinCny??null,pageMaxCny:opt.pageMaxCny??null,fxRate:opt.fxRate??activeFxRate()};
 }
 function readSetupForm(){
   const treeUrls=treeSelection?.urls()||[];
@@ -98,6 +121,12 @@ function readSetupForm(){
   if(!parsed.urls.length||parsed.invalid.length||parsed.overflowCount)throw Error('请提供 1–20 个有效 Ozon 类目链接，修正无效或超限地址。');
   return {urls:parsed.urls,categoryLabels:categoryLabels(),options:readFilterOptions()};
 }
+function applyOptionPriceFields(opt={}){
+  const isCny=opt.pageMinCny!=null||opt.pageMaxCny!=null;
+  if($('pageMinRub'))$('pageMinRub').value=(isCny?opt.pageMinCny:opt.pageMinRub)??'';
+  if($('pageMaxRub'))$('pageMaxRub').value=(isCny?opt.pageMaxCny:opt.pageMaxRub)??'';
+  setPagePriceCurrency(isCny?'CNY':'RUB');
+}
 function syncFormFromBatch(batch){
   if(formDirty||!batch?.id||batch.id===hydratedBatchId)return;
   const opt=batch.options||{};
@@ -105,23 +134,21 @@ function syncFormFromBatch(batch){
   if($('perCategoryLimit'))$('perCategoryLimit').value=opt.perCategoryLimit??'';
   if($('minPrice'))$('minPrice').value=opt.minPrice??'';
   if($('maxPrice'))$('maxPrice').value=opt.maxPrice??'';
-  if($('pageMinRub'))$('pageMinRub').value=opt.pageMinRub??'';
-  if($('pageMaxRub'))$('pageMaxRub').value=opt.pageMaxRub??'';
+  applyOptionPriceFields(opt);
   hydratedBatchId=batch.id;
-  renderRubCnyHint();
 }
 function formatFormFilterBrief(){
   const target=String($('targetCount')?.value||'20').trim()||'20';
   const perCat=String($('perCategoryLimit')?.value||'').trim();
   const minCny=String($('minPrice')?.value||'').trim();
   const maxCny=String($('maxPrice')?.value||'').trim();
-  const minRub=String($('pageMinRub')?.value||'').trim();
-  const maxRub=String($('pageMaxRub')?.value||'').trim();
+  const minPage=String($('pageMinRub')?.value||'').trim();
+  const maxPage=String($('pageMaxRub')?.value||'').trim();
   const parts=[`目标 ${target} 件`];
   if(perCat)parts.push(`单类目上限 ${perCat} 件`);
-  if(minCny||maxCny)parts.push(`人民币 ¥${minCny||'不限'}–¥${maxCny||'不限'}`);
-  if(minRub||maxRub)parts.push(`卢布 ${minRub||'不限'}–${maxRub||'不限'} ₽`);
-  else parts.push('无卢布预筛');
+  if(minCny||maxCny)parts.push(`人民币复核 ¥${minCny||'不限'}–¥${maxCny||'不限'}`);
+  if(minPage||maxPage)parts.push(pagePriceCurrency==='CNY'?`网页人民币 ${minPage||'不限'}–${maxPage||'不限'} ¥`:`网页卢布 ${minPage||'不限'}–${maxPage||'不限'} ₽`);
+  else parts.push('无页面预筛');
   return parts.join(' · ');
 }
 function updateContinueHint(batch=state){
@@ -149,7 +176,8 @@ function formatTaskOptionsSummary(options={}){
   const parts=[`目标 ${options.targetCount||'—'} 件`];
   if(options.perCategoryLimit)parts.push(`单类目上限 ${options.perCategoryLimit} 件`);
   if(options.minPrice!=null||options.maxPrice!=null)parts.push(`人民币 ¥${options.minPrice??'不限'}–¥${options.maxPrice??'不限'}`);
-  if(options.pageMinRub!=null||options.pageMaxRub!=null)parts.push(`卢布 ${options.pageMinRub??'不限'}–${options.pageMaxRub??'不限'} ₽`);
+  const pageText=formatPageRangeText(options);
+  if(pageText)parts.push(`页面预筛 ${pageText}`);
   return parts.join(' · ');
 }
 function loadTaskProfileIntoForm(profile){
@@ -185,14 +213,11 @@ function loadTaskProfileIntoForm(profile){
   if($('perCategoryLimit'))$('perCategoryLimit').value=opt.perCategoryLimit??'';
   if($('minPrice'))$('minPrice').value=opt.minPrice??'';
   if($('maxPrice'))$('maxPrice').value=opt.maxPrice??'';
-  if($('pageMinRub'))$('pageMinRub').value=opt.pageMinRub??'';
-  if($('pageMaxRub'))$('pageMaxRub').value=opt.pageMaxRub??'';
+  applyOptionPriceFields(opt);
   if($('taskProfileName'))$('taskProfileName').value=profile.name||'';
   loadedTaskProfileId=profile.id||'';
   loadedTaskProfileName=profile.name||'';
   formDirty=true;
-  renderRubCnyHint();
-  updateContinueHint();
   $('message').textContent=`已载入常用任务「${profile.name}」（共 ${urls.length} 个类目），可直接修改或点击「开始类目选品」。`;
 }
 function renderSavedTasks(tasks,active){
@@ -280,7 +305,7 @@ function render(batch, archive=history, tasks=savedTasks, nextCloudSync=cloudSyn
   const checked = stores.reduce((a,s)=>a+Number(s.observedCount||0),0);
   const eligible = stores.filter(s=>!s.removedFromQueue&&s.status!=='skipped'&&s.status!=='completed').reduce((a,s)=>a+Number(s.pendingCount||0),0);
   const summaryParts=batch?[labels[batch.status]||batch.status,`新候选 ${selected}/${batch.options?.targetCount||'—'}`,`已检查 ${checked}`,`待复查 ${eligible}`]:[];
-  if(batch){const min=batch.options?.pageMinRub,max=batch.options?.pageMaxRub;summaryParts.push(min==null&&max==null?'页面筛选 未设置':`页面筛选 ${min??'不限'}–${max??'不限'} ₽`)}
+  if(batch){const pt=formatPageRangeText(batch.options);summaryParts.push(pt?`页面筛选 ${pt}`:'页面筛选 未设置')}
   if(batch){const progressAt=formatTimestamp(batch.lastProgressAt),newSkuAt=formatTimestamp(batch.lastNewSkuAt);if(progressAt)summaryParts.push(`最近上报 ${progressAt}`);if(newSkuAt)summaryParts.push(`最近新增 SKU ${newSkuAt}`);if(batch.pageMode)summaryParts.push(`页面${pageModes[batch.pageMode]||'未知'}`)}
   if(batch?.activityStatus)summaryParts.push(activityLabels[batch.activityStatus]||'等待采集连接');
   const diagTotals={};for(const store of stores)for(const [key,value] of Object.entries(store.diagnosticCounts||{}))diagTotals[key]=(diagTotals[key]||0)+(Number(value)||0);
@@ -320,7 +345,7 @@ function render(batch, archive=history, tasks=savedTasks, nextCloudSync=cloudSyn
       $('kpiCandidates').textContent=`${selected} / ${batch.options?.targetCount||'—'}`;
       $('kpiObserved').textContent=String(checked);
       $('kpiReview').textContent=String(eligible);
-      $('kpiRub').textContent=min==null&&max==null?'未设置':`${min??'不限'}–${max??'不限'} ₽`;
+      $('kpiRub').textContent=formatPageRangeText(batch.options)||'未设置';
     }
   }
   $("summary").textContent=batch?summaryParts.join(' · '):"暂无类目批次";
@@ -462,22 +487,29 @@ async function saveFxState(){
 function renderRubCnyHint(){
   const bar=$('rubCnyBar'),amountEl=$('rubCnyAmount'),warnEl=$('rubCnyWarn');
   if(!bar||!amountEl||!warnEl)return;
-  const minRub=parseOptionalNum($('pageMinRub')),maxRub=parseOptionalNum($('pageMaxRub'));
-  if(minRub===null&&maxRub===null){bar.hidden=true;return;}
+  const minVal=parseOptionalNum($('pageMinRub')),maxVal=parseOptionalNum($('pageMaxRub'));
+  if(minVal===null&&maxVal===null){bar.hidden=true;return;}
   bar.hidden=false;
-  if($('fxAutoBtn'))$('fxAutoBtn').hidden=!validFx(fxState.manualRate);
-  if(Number.isNaN(minRub)||Number.isNaN(maxRub)){
-    amountEl.textContent='请输入有效卢布金额';warnEl.hidden=true;return;
+  const isCny=pagePriceCurrency==='CNY';
+  if($('fxEditBtn'))$('fxEditBtn').hidden=isCny;
+  if($('fxAutoBtn'))$('fxAutoBtn').hidden=isCny||!validFx(fxState.manualRate);
+  if(Number.isNaN(minVal)||Number.isNaN(maxVal)){
+    amountEl.textContent=isCny?'请输入有效人民币整数金额':'请输入有效卢布金额';warnEl.hidden=true;return;
   }
-  if(minRub!==null&&maxRub!==null&&minRub>maxRub){
-    amountEl.textContent='卢布最低价不能高于最高价';warnEl.hidden=true;return;
+  if(minVal!==null&&maxVal!==null&&minVal>maxVal){
+    amountEl.textContent=isCny?'页面人民币最低价不能高于最高价':'卢布最低价不能高于最高价';warnEl.hidden=true;return;
   }
-  const rate=activeFxRate();
-  const minCnyVal=minRub!==null?minRub/rate:null;
-  const maxCnyVal=maxRub!==null?maxRub/rate:null;
-  if(minCnyVal!==null&&maxCnyVal!==null)amountEl.textContent=`约合 ${formatCny(minCnyVal)} – ${formatCny(maxCnyVal)}`;
-  else if(minCnyVal!==null)amountEl.textContent=`约合 ${formatCny(minCnyVal)} 起`;
-  else amountEl.textContent=`约合 ${formatCny(maxCnyVal)} 以内`;
+  let minCnyVal=minVal,maxCnyVal=maxVal;
+  if(isCny){
+    amountEl.textContent=minVal!==null&&maxVal!==null?`页面直接按 ¥${minVal} – ¥${maxVal} 预筛`:minVal!==null?`页面按 ¥${minVal} 起预筛`:`页面按 ¥${maxVal} 以内预筛`;
+  }else{
+    const rate=activeFxRate();
+    minCnyVal=minVal!==null?minVal/rate:null;
+    maxCnyVal=maxVal!==null?maxVal/rate:null;
+    if(minCnyVal!==null&&maxCnyVal!==null)amountEl.textContent=`约合 ${formatCny(minCnyVal)} – ${formatCny(maxCnyVal)}`;
+    else if(minCnyVal!==null)amountEl.textContent=`约合 ${formatCny(minCnyVal)} 起`;
+    else amountEl.textContent=`约合 ${formatCny(maxCnyVal)} 以内`;
+  }
   const cnyFloor=parseOptionalNum($('minPrice')),cnyCeil=parseOptionalNum($('maxPrice'));
   const conflict=(cnyFloor!==null&&!Number.isNaN(cnyFloor)&&maxCnyVal!==null&&maxCnyVal<cnyFloor)||(cnyCeil!==null&&!Number.isNaN(cnyCeil)&&minCnyVal!==null&&minCnyVal>cnyCeil);
   if(conflict){warnEl.textContent='· 与人民币区间无重叠';warnEl.hidden=false;}
@@ -529,6 +561,8 @@ if($('fxRateInput'))$('fxRateInput').addEventListener('keydown',e=>{
   if(e.key==='Enter'){e.preventDefault();$('fxSaveBtn')?.click();}
   else if(e.key==='Escape'){e.preventDefault();closeFxEditor();}
 });
+if($('pageCurrencyRub'))$('pageCurrencyRub').onclick=()=>setPagePriceCurrency('RUB',{markDirty:true});
+if($('pageCurrencyCny'))$('pageCurrencyCny').onclick=()=>setPagePriceCurrency('CNY',{markDirty:true});
 for(const id of ['targetCount','perCategoryLimit','pageMinRub','pageMaxRub','minPrice','maxPrice']){
   const el=$(id);if(el){
     const onFormEdit=()=>{formDirty=true;renderRubCnyHint();updateContinueHint();};

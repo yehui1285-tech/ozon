@@ -29,6 +29,23 @@
     if(pageMinRub===null||pageMaxRub===null||pageMinRub>pageMaxRub)throw Error('卢布预筛选需同时填写有效最低价与最高价，最低价不能高于最高价');
     return {pageMinRub,pageMaxRub};
   }
+  function cnyPageBound(value){
+    if(value===null||value===undefined||String(value).trim()==='')return null;
+    const raw=String(value).trim();if(!/^\d{1,7}$/.test(raw)||Number(raw)>1000000)throw Error('人民币预筛选请输入 0–1,000,000 的整数');return Number(raw);
+  }
+  function cnyPageRange(raw={}){
+    const pageMinCny=cnyPageBound(raw.pageMinCny),pageMaxCny=cnyPageBound(raw.pageMaxCny);
+    if(pageMinCny===null&&pageMaxCny===null)return null;
+    if(pageMinCny===null||pageMaxCny===null||pageMinCny>pageMaxCny)throw Error('人民币预筛选需同时填写有效最低价与最高价，最低价不能高于最高价');
+    return {pageMinCny,pageMaxCny};
+  }
+  function pagePriceRange(raw={}){
+    const rub=rubRange(raw),cny=cnyPageRange(raw);
+    if(rub&&cny)throw Error('页面预筛选只能选择卢布或人民币其中一种币种');
+    if(rub)return {currency:'RUB',min:rub.pageMinRub,max:rub.pageMaxRub,...rub};
+    if(cny)return {currency:'CNY',min:cny.pageMinCny,max:cny.pageMaxCny,...cny};
+    return null;
+  }
   function urlRange(u){
     const vals=u.searchParams.getAll('currency_price');if(!vals.length)return '';
     const m=vals.length===1&&vals[0].match(/^(\d{1,8})(?:\.0{1,3})?;(\d{1,8})(?:\.0{1,3})?$/);if(!m)return null;
@@ -46,8 +63,8 @@
     return u.href;
   }
   function pricePageUrl(url,options={}){
-    const c=category(url);if(!c)return '';const r=rubRange(options);if(!r)return c.url;
-    const u=new URL(c.url);u.searchParams.set('currency_price',`${r.pageMinRub}.000;${r.pageMaxRub}.000`);return u.href;
+    const c=category(url);if(!c)return '';const r=pagePriceRange(options);if(!r)return c.url;
+    const u=new URL(c.url);u.searchParams.set('currency_price',`${r.min}.000;${r.max}.000`);return u.href;
   }
   function paginationUrl(url,expected){
     const c=category(url),e=category(expected),canonical=canonicalPage(c);if(!canonical||!canonicalPage(e)||!samePage(url,expected)||!c.parsed.searchParams.has('page')||urlRange(c.parsed)!==urlRange(e.parsed))return '';
@@ -83,7 +100,8 @@
       if(!Number.isInteger(per)||per<1||per>500)throw Error('单类目上限须为1–500的整数');
       perLimitExtra={perCategoryLimit:per};
     }
-    return {targetCount,minPrice,maxPrice,...rubRange(raw),...fxExtra,...perLimitExtra};
+    if(!pagePriceRange(raw)){} // Ensure mutual-exclusion check runs inside validateOptions
+    return {targetCount,minPrice,maxPrice,...rubRange(raw),...cnyPageRange(raw),...fxExtra,...perLimitExtra};
   }
   function parseAmountDigits(t){
     if(!/^\d+(?:[.,]\d+)*$/.test(t))return null;
@@ -120,5 +138,5 @@
     if(scanner.classifyShippingRisk([product.name,product.category,product.rawRiskText].filter(Boolean).join('\n')).type==='suspected_prohibited')return false;
     return priceAllowed(product,options);
   }
-  scope.OzonCategoryCore=Object.freeze({keyFromUrl,normalizeUrl,samePage,paginationUrl,exactPageUrl,pricePageUrl,rubRange,parseUrls,validateOptions,priceAllowed,qualifiedProduct,capturedPrice,capturedRubPrice,capturedAnyPrice});
+  scope.OzonCategoryCore=Object.freeze({keyFromUrl,normalizeUrl,samePage,paginationUrl,exactPageUrl,pricePageUrl,rubRange,cnyPageRange,pagePriceRange,parseUrls,validateOptions,priceAllowed,qualifiedProduct,capturedPrice,capturedRubPrice,capturedAnyPrice});
 })(globalThis);

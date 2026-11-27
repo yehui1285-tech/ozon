@@ -1,5 +1,11 @@
 # CHANGELOG.md - Ozon 项目续接记录
 
+## 2026-11-27 - V1.67 / 0.6.85 类目防 OOM 治本 + 优化 B（续扫栏置顶与 Ozon 人民币网页预筛）
+
+- 类目防 OOM 崩溃治本：`category-scanner.js` 新增跨框架安全的 `pruneScrolledCards`（仅对滚出视口上方超 2 屏且已判定非待复查卡片保留外层容器、设置 `content-visibility: hidden` + `contain-intrinsic-size` 锁高并将图片替换 1×1 透明占位释放解码内存，同时跳过已瘦身卡片遍历）；新增 `FORCE_NEXT_PAGE_SCROLLS = 65` / `FORCE_NEXT_PAGE_SKUS = 180` 及 `performance.memory` 水位阈值解除此前 `pending.size > 0`（`ERP待补`）对提前翻页的阻塞；无下一页时触发 `memory_recycle`，由 `category-background.js` 无感新建干净标签页续扫（单类目上限 5 次）。
+- 优化 B 交互与人民币模式网页预筛：`category.html` 将「下一轮续扫」控制栏 `#continueBar` 置顶移入核心指标卡与诊断栏之间，避免翻越 3 张类目卡片；`category.js` 在批次 `stopped` 状态将单卡继续按钮文案改为中性 `按旧条件续跑此项` 消除与顶部绿色主续扫栏的混淆；`category-core.js` 新增 `cnyPageRange` 与 `pagePriceRange` 支持 `pageMinCny`/`pageMaxCny` 生成 `?currency_price=...` 并互斥双币种，配合 `category.html`/`category.css`/`category.js` 币种切换按钮（`₽ 卢布 / ¥ 人民币`）、`confirmPagePrice`/`detectCurrencyMismatch` 及 `lib/ozon-collector-model.ts` 白名单完成全流程兼容，并同步共享核心到工作台（**无新增 D1 迁移**）。
+- 打包与验证：回滚备份 `_备份_20261127_v167_oom_and_route_b_before`（已轮换清理 `_备份_20261127_v163_route_a_polish_before`，保留 `_备份_20261125_v151_pool_before` 及共 5 份常规备份）。Ozon `node --check`、全量 `npm.cmd test`（含 CNY 预筛核心、卡片瘦身、`pending > 0` 强翻页、`memory_recycle` 重建上限与独立版保留断言）、`verify-project.ps1` 与双版发布构建（`ozon-erp-collector-extension.zip` SHA256 `1470f89ef1b09a46dcc3b45273210b828a478f96ef1f4e33696880f0c8d0893b`；独立版 `ozon-standalone-extension.zip` SHA256 `4b960b5c40bd2c9eb85b5d1efaa5822a6022e3b81ca418625aae3725251b5d24`）全部通过；Workbench 同步、构建与测试完成本地提交待 Codex 部署，真实浏览器长时防崩与人民币网页预筛待现场验收。
+
 ## 2026-11-27 - V1.66 / 0.6.84 打通工作台云端去重与常用类目任务跨电脑同步（优化 A，工作台已上线）
 
 - 工作台云端去重与任务合并接口：`lib/ozon-pool/store.ts` 新增 `readPoolSkuSnapshot` 按 `owner` 增量导出云端商品池与历史已淘汰 SKU（`sinceRevision` 未变返回 `unchanged: true`，单表上限 `100000`）；`lib/ozon-collector-model.ts` 新增 `mergeCategoryTasksPayload` 合并多电脑任务配置、断点（`observedSkus`/`visitedPages`/`exhausted`/`pageUrl`）、`priorQualifiedSkuIds`、`resetAt` 重置边界与 90 天 `deletedTasks` 墓碑；`app/api/ozon/collector/route.ts` 在设备 Bearer Token 分支开放受控 `poolSkus` 与 `categoryTasksSync`（持久化至 R2 `ozon/category-tasks/<ownerKey>/tasks-v1.json`，**无新增 D1 迁移**）。

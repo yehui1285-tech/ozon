@@ -1,10 +1,14 @@
 # Ozon 当前状态
 
-更新时间：2026-11-27（用户确认工作台 V1.66 已成功部署上线，源码 `72a0fa4`，内嵌扩展 `v0.6.84`；双版独立包 `0.6.84` 已构建；无新增 D1 迁移；Ozon 仓库同步推送 `origin/main`）。
+更新时间：2026-11-27（工作台 V1.67 已完成本地构建、测试与提交，内嵌扩展 `v0.6.85` 待 Codex 部署；双版独立包 `0.6.85` 已构建；无新增 D1 迁移；Ozon 仓库即将同步推送 `origin/main`）。
 用途：新对话快速续接。详细过程按需查 [CHANGELOG](CHANGELOG.md) 和 [历史入口](docs/history/README.md)，不把历史待办当作当前任务。
 
 ## 当前版本与结论
 
+- V1.67 / 0.6.85（工作台本地完成构建与测试，待 Codex 部署；双版独立包已构建，**无新增 D1 数据库迁移**）：类目长时扫描防 `Out of Memory` 治本 + 优化 B（续扫栏置顶与 Ozon 人民币网页预筛）：
+  - 防 OOM 治本（`category-scanner.js`、`category-background.js`）：新增框架安全的 `pruneScrolledCards`（不销毁 Ozon Vue/React DOM 节点，只将滚出视口上方超 2 屏且已判定非待复查卡片内的图片替换为 1×1 透明 GIF 并设置 `content-visibility: hidden` + `contain-intrinsic-size` 锁高释内存，并在读取阶段跳过已瘦身卡片）；新增 `FORCE_NEXT_PAGE_SCROLLS = 65` / `FORCE_NEXT_PAGE_SKUS = 180` 及 `performance.memory` 水位兜底，不再被 `ERP待补`（`pending.size > 0`）锁死提前翻页；无下一页时触发 `memory_recycle`（单类目上限 5 次）无感新建干净标签页继续扫。
+  - 优化 B：续扫栏置顶与双币种网页预筛（`category-core.js`、`category.html`、`category.css`、`category.js`、`lib/ozon-collector-model.ts`）：① `#continueBar` 移至核心指标卡 `#kpiGrid` 正下方（结束即可见），`stopped` 状态旧卡片按钮改为中性文案 `按旧条件续跑此项` 防误触；② `category-core.js` 新增 `cnyPageRange` / `pagePriceRange` 支持 `pageMinCny`/`pageMaxCny` 生成 `?currency_price=...` 并互斥双币种，`category.html`/`category.js` 在「Ozon 页面预筛」支持一键切换 `₽ 卢布 / ¥ 人民币`，同步适配 `confirmPagePrice` / `detectCurrencyMismatch` 与 `category-background.js` 全流程及任务同步白名单。
+  - 验证状态：Ozon `node --check`、全量 `npm.cmd test`（含 `test-category-core.mjs` CNY 预筛、`test-category-scanner.mjs` 滚过卡片瘦身与 `pending > 0` 强翻页、`test-category-background.mjs` CNY 预筛及 `memory_recycle` 上限保护、`test-standalone.mjs` 独立版新控件与位置断言）、`verify-project.ps1`、双版发布包（`ozon-erp-collector-extension.zip` SHA256 `1470f89ef1b09a46dcc3b45273210b828a478f96ef1f4e33696880f0c8d0893b`；独立版 `ozon-standalone-extension.zip` SHA256 `4b960b5c40bd2c9eb85b5d1efaa5822a6022e3b81ca418625aae3725251b5d24`），以及 Workbench `sync-workbench-core --check`、`check-release-version.mjs`、`npm.cmd run build`、`ozon-collector.test.mjs`、`ozon-product-pool.test.mjs`、`ozon-workbench-nav.test.mjs` 验证通过。真实浏览器下长时滚图不崩与人民币网页预筛效果待现场验收。回滚备份 `_备份_20261127_v167_oom_and_route_b_before`。
 - V1.66 / 0.6.84（用户确认工作台 V1.66 已上线，源码 `72a0fa4`，**无新增 D1 数据库迁移**；双版独立包已构建）：优化 A 落地——打通工作台云端去重与常用类目任务跨电脑同步：
   - 工作台云端查重与任务合并接口（`lib/ozon-pool/store.ts`、`lib/ozon-collector-model.ts`、`app/api/ozon/collector/route.ts`）：在设备 Bearer Token 鉴权接口新增 `poolSkus`（支持 `sinceRevision` 增量校验，按 `owner` 隔离返回商品池与历史 SKU 轻量列表，单表上限 `100000`）与 `categoryTasksSync`（读写 R2 `ozon/category-tasks/<ownerKey>/tasks-v1.json`，按任务配置更新时间、重置时间戳 `resetAt`、删除墓碑 `deletedTasks`、各电脑类目断点与 `priorQualifiedSkuIds` 并集智能合并，无变化跳过写入）。
   - 扩展端云端去重缓存与跨电脑任务同步（`workbench-bridge.js`、`category-background.js`、`background.js`、`category.html`、`category.js`）：连接工作台后在开扫前自动增量更新本机云端 SKU 缓存（15 秒节流 + 断网兜底沿用旧缓存），`categorySample` 同步校验本机与云端商品池/历史 SKU（命中分别标 `pool_duplicate` / `history_duplicate`）；常用任务保存/删除/重置及批次结束时双向同步合并断点，并在「常用类目任务」区提供 `#cloudSyncBar` 与「立即同步云端去重与任务」按钮。
@@ -31,7 +35,7 @@
 
 ## 当前待验收与已知边界
 
-- 待现场真实验收：双版 `v0.6.84` 多电脑云端 SKU 去重、常用任务跨电脑同步与独立分享版覆盖升级、`v0.6.83` 清空卢布预筛续扫与人民币页面冲突提醒；工作台 V1.66 用户确认已上线。验收完成后进入下一版 V1.67（防 OOM 治本 + 优化 B）。
+- 待现场真实验收：工作台 V1.67 上线后实机验证 `v0.6.85` 滚过卡片瘦身+强制翻页长时防 OOM、续扫栏置顶、Ozon 人民币模式网页预筛、工作台云端 SKU 去重（优化 A）及独立分享版 `0.6.85` 覆盖升级。
 - 本机测试环境未配置 Playwright 模块，隔离浏览器脚本（`test-category-browser.mjs`、`test-product-pool-browser.mjs`、`ozon-pool-browser.mjs` 等）未在本机运行；所有版本均未执行外部站点绕过或自动下单。
 - 工作边界：登录、CAPTCHA 和平台验证由用户处理；1688 自动搜款主线继续暂停（恢复需用户明确指示）；`AGENTS.md` 双线同步交付规则持续生效；常规 `_备份_*` 目录保留最新 5 份（保留 `_备份_20261125_v151_pool_before`）。
 

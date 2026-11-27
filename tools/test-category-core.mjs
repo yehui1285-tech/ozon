@@ -68,4 +68,12 @@ assert.equal(c.validateOptions({ targetCount: 10, minPrice: '100', pageMinRub: '
 assert.equal(c.validateOptions({ targetCount: 50, perCategoryLimit: '20' }).perCategoryLimit, 20);
 assert.equal('perCategoryLimit' in c.validateOptions({ targetCount: 50, perCategoryLimit: '' }), false);
 for (const badLimit of ['0', '501', '12.5', 'abc']) assert.throws(() => c.validateOptions({ targetCount: 50, perCategoryLimit: badLimit }));
+// V1.67: CNY page price prefilter support & currency mutual exclusion
+const cnyOpt = c.validateOptions({ targetCount: 25, minPrice: '100', pageMinCny: '100', pageMaxCny: '500' });
+assert.deepEqual(cnyOpt, { targetCount: 25, minPrice: 100, maxPrice: null, pageMinCny: 100, pageMaxCny: 500 });
+assert.deepEqual(c.cnyPageRange({ pageMinCny: '100', pageMaxCny: '500' }), { pageMinCny: 100, pageMaxCny: 500 });
+assert.deepEqual(c.pagePriceRange({ pageMinCny: '100', pageMaxCny: '500' }), { currency: 'CNY', min: 100, max: 500, pageMinCny: 100, pageMaxCny: 500 });
+assert.equal(c.pricePageUrl(url, cnyOpt), url + '?currency_price=100.000%3B500.000');
+assert.throws(() => c.validateOptions({ targetCount: 10, pageMinRub: '500', pageMaxRub: '2500', pageMinCny: '100', pageMaxCny: '500' }));
+assert.throws(() => c.validateOptions({ targetCount: 10, pageMinCny: '100' }));
 console.log('Category core URL, pagination, target, price, positive label, identity and risk tests passed.');
