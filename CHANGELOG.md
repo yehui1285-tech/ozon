@@ -1,11 +1,12 @@
 # CHANGELOG.md - Ozon 项目续接记录
 
-## 2026-11-27 - V1.63 / 0.6.81 路线 A 视觉统一、入池 Toast 闭环与状态文档归档（待上线发布）
+## 2026-11-27 - V1.63 / 0.6.81 路线 A 视觉统一、入池 Toast 闭环与状态文档归档（已上线站点版本 92）
 
 - 视觉收口与导航统一：`batch.html` 与 `build-standalone.mjs`（`standalone-nav.css`）统一切换为工作台深森绿 `#3a5a40` 与暖灰纸底 `#f7f7f5` 配色，整理批量页按钮主次层级；按用户偏好保留扩展弹窗 `popup.html` 原蓝紫配色不变，严格保留全部元素 ID 与独立版剥离锚点。
 - 商品池「本批加入商品池」交互闭环：工作台 `app/ozon/pool/pool-desk.tsx` 与 `pool.css` 在入池后弹出右下角 Toast（有新增带「仅看刚入池这批」一键跳批按钮，全重复提示并带「切换全部状态查看」按钮），并在扫描批次下拉框标记 `· 已入池`；扩展 `category.js` 与 `product-pool.js` 在本机入池后将右上「打开本机商品池」指向 `?batchId=`（全重复时附 `&filter=all`）实现跨页直达。
-- 文档归档与现场反馈同步：记录用户实测 `v0.6.80` 卢布预筛页可正常自动滚动；将 `PROJECT_STATUS.md` 中 `0.6.40–0.6.69` 及 `V1.51–V1.58` 旧详情归档至 `docs/history/PROJECT_STATUS-2026-11-27-v0640-v0669.md` 并更新 `docs/history/README.md`（**无新增 D1 数据库迁移**）。
-- 打包与验证：回滚备份 `_备份_20261127_v163_route_a_polish_before`（已轮换清理 `_备份_20261127_v159_category_ui_before`，保留 `_备份_20261125_v151_pool_before` 及共 5 份常规备份）。Ozon `npm.cmd test`（含 `test-standalone.mjs` 深森绿导航断言）、`verify-project.ps1`、双版发布构建（`ozon-erp-collector-extension.zip` SHA256 `526B9C97AC4242B3938F49541B1295BEF78572F16DE8A9AE42F71030C54CF507`；独立版 `ozon-standalone-extension.zip` SHA256 `7873BB2A826434CD010359D9EAEEBE3E506C82E3F3083FB2CAEAF1A103F29271`）、Workbench `sync-workbench-core --check`、`check-release-version.mjs`（`V1.62 → V1.63`）、`npm.cmd run build`、`ozon-product-pool.test.mjs` 与 `ozon-workbench-nav.test.mjs` 全部通过；真实浏览器视觉效果、入池 Toast 跳批与独立版 `0.6.81` 升级待用户现场验收。
+- 文档归档与现场反馈同步：记录用户实测 `v0.6.80` 真实 Ozon 类目（「中国专区 · 学校与学习用品」，`1200–30000 ₽`）自动滚动与采集命中 `50 / 50`（检查 `702` 件、零崩溃）；将 `PROJECT_STATUS.md` 中 `0.6.40–0.6.69` 及 `V1.51–V1.58` 旧详情归档至 `docs/history/PROJECT_STATUS-2026-11-27-v0640-v0669.md` 并更新 `docs/history/README.md`（**无新增 D1 数据库迁移**）。
+- 打包与验证：回滚备份 `_备份_20261127_v163_route_a_polish_before`（已轮换清理 `_备份_20261127_v159_category_ui_before`，保留 `_备份_20261125_v151_pool_before` 及共 5 份常规备份）。Ozon `npm.cmd test`（含 `test-standalone.mjs` 深森绿导航断言）、`verify-project.ps1`、双版发布构建（`ozon-erp-collector-extension.zip` SHA256 `526B9C97AC4242B3938F49541B1295BEF78572F16DE8A9AE42F71030C54CF507`；独立版 `ozon-standalone-extension.zip` SHA256 `7873BB2A826434CD010359D9EAEEBE3E506C82E3F3083FB2CAEAF1A103F29271`）、Workbench `sync-workbench-core --check`、`check-release-version.mjs`（`V1.62 → V1.63`）、`npm.cmd run build`、`ozon-product-pool.test.mjs` 与 `ozon-workbench-nav.test.mjs` 全部通过。
+- 线上部署：Codex 已将工作台 V1.63 部署上线（站点版本 `92`，Workbench 提交 `b1310db`，部署 ID `appgdep_6b0920b7086c8191899a671b9a0adec8`，共享核心、生产构建、登录页 HTTP 200 及内嵌扩展 `v0.6.81` SHA256 校验通过，下载接口配置为 `ozon-erp-collector-extension-v0.6.81.zip`，无新增 D1 迁移；登录后实际下载未验证）。真实浏览器视觉效果、入池 Toast 跳批与独立版 `0.6.81` 升级待用户现场验收。
 
 ## 2026-11-27 - V1.62 / 0.6.80 修复卢布预筛确认卡顿并支持 Ozon 卢布卡片直接扫描入池（已上线站点版本 91）
 
