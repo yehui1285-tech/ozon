@@ -1,5 +1,10 @@
 # CHANGELOG.md - Ozon 项目续接记录
 
+## 2026-11-27 - V1.59 / 0.6.77 扩展与独立版「类目选品」页面视觉重构（本机，未发布）
+
+- 排版与视觉重构：按确认后的效果图重构 `category.html`、`category.css`、`category.js`（**无新增 D1 数据库迁移**）：统一工作台深森绿 `#3a5a40` 与暖灰纸底 `#f7f7f5` 规范；将参数筛选重构为 3 组等高对齐输入栏（消除标签折行与错位）；固定「当前批次」单行标题与状态徽章，新增 4 格 KPI 概览条与可折叠原因诊断框；批内操作与「运行诊断 / 历史批次」对齐排布；三级联动类目选择弹窗同步换肤；严格保留全部 DOM ID、`build-standalone.mjs` 独立版生成锚点与原有业务逻辑不变。
+- 打包与验证：回滚备份 `_备份_20261127_v159_category_ui_before`（已轮换清理 `_备份_20261126_v155_qp_icons_before`，保留 `_备份_20261125_v151_pool_before` 及共 5 份常规备份）。Ozon `npm.cmd test`（含 `test-standalone.mjs`）、双版发布构建（`ozon-erp-collector-extension.zip` 与工作台内嵌包 SHA256 `F5A6F26F209A7EA5A020EB804F1230C165A661AE7CE8207C353896E502B16E0A` 一致）、Workbench `npm.cmd run build`、272/272 测试与 `V1.58 → V1.59` 版本校验全部通过；尚未推送 Ozon GitHub 或部署线上，双版真实浏览器「类目选品」视觉效果待验收。
+
 ## 2026-11-27 - V1.58 / 0.6.76 商品池新增按扫描设备与扫描批次筛选（已上线站点版本 87）
 
 - 工作台设备/批次筛选：`product-pool-core.js` 新增 `batchId` / `deviceId` 查询规范化与 `batchIds` 匹配；`lib/ozon-pool/store.ts` 基于既有 `payload.batchIds` 与 `ozon_scan_batches`、`ozon_collector_devices` 实现单账号下按扫描设备汇总或按具体「电脑 + 时间」批次筛选，并返回批次分面列表（追溯历史全部已入池记录，**无新增 D1 数据库迁移**）；`app/ozon/pool/pool-desk.tsx` 新增「全部设备 / 批次」分组下拉框，快速核价「下一件」与批量操作严格保持在当前筛选范围内。

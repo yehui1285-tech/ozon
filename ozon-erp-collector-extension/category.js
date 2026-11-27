@@ -35,9 +35,9 @@ function renderTaskCard(task,batch){
   const dc=task.diagnosticCounts&&typeof task.diagnosticCounts==='object'?task.diagnosticCounts:null;
   const diagnostic=dc?`<details class="diagnostic" data-category-key="${esc(task.sellerKey||task.url||'')}"><summary>唯一 SKU 诊断（${Object.values(dc).reduce((n,v)=>n+(Number(v)||0),0)}）</summary><div class="diagnostic-chips">${Object.entries(diagnosticLabels).filter(([k])=>Number(dc[k])>0).map(([k,v])=>`<span class="diagnostic-chip">${v} ${Number(dc[k])}</span>`).join('')||'<span>暂无原因计数</span>'}</div></details>`:'';
   const isScheduled=batch?.status==='paused'&&Number.isInteger(batch.resumeIndex)&&(batch.stores||[])[batch.resumeIndex]===task;
-  const actions=canManage&&runnable&&!busy?`<div class="store-actions">${!targetReached?`<button type="button" data-task-action="resume" data-seller-key="${esc(task.sellerKey||'')}">${isScheduled?'下一次继续':'从此类目继续'}</button>`:''}<button type="button" data-task-action="skip" data-seller-key="${esc(task.sellerKey||'')}">跳过</button><button type="button" class="danger" data-task-action="remove" data-seller-key="${esc(task.sellerKey||'')}">删除</button></div>`:'';
-  return `<article class="store">
-    <div class="store-top"><strong>${esc(task.name||task.label||task.url||'类目')}</strong><span>${esc(labels[status]||status||'等待')}</span></div>
+  const actions=canManage&&runnable&&!busy?`<div class="store-actions">${!targetReached?`<button type="button" class="soft-primary compact" data-task-action="resume" data-seller-key="${esc(task.sellerKey||'')}">${isScheduled?'下一次继续':'从此类目继续'}</button>`:''}<button type="button" class="compact" data-task-action="skip" data-seller-key="${esc(task.sellerKey||'')}">跳过</button><button type="button" class="danger compact" data-task-action="remove" data-seller-key="${esc(task.sellerKey||'')}">删除</button></div>`:'';
+  return `<article class="store${status==='scanning'?' active':''}">
+    <div class="store-top"><strong>${esc(task.name||task.label||task.url||'类目')}</strong><span class="status-badge${status==='scanning'?' running':''}">${esc(labels[status]||status||'等待')}</span></div>
     <div class="store-url">${esc(task.pageUrl||task.url||'')}</div>
     <div class="counts">已检查 ${Number(task.observedCount||0)} · 新候选 ${Number(task.qualifiedCount||0)} · ${status==='skipped'?'历史待复查':'待复查'} ${Number(task.pendingCount||0)}</div>
     <div class="counts">发现商品 ${task.discoveredCount??'—'} · ERP 就绪 ${task.erpReadyCount??'—'} · 标签命中 ${task.labelHitCount??'—'}</div>
@@ -118,7 +118,27 @@ function render(batch, archive=history) {
     if(times.length)diagnosticLines.push(times.join(' · '));
     if(batch.recentWaitReason)diagnosticLines.push(`最近等待：${waitReasons[batch.recentWaitReason]||'查看诊断记录'}`);
   }
+  if($('diagBox'))$('diagBox').hidden=!batch;
   $('diagnosticOverview').hidden=!batch;$('diagnosticOverview').textContent=diagnosticLines.join('\n');
+  const statusBadge=$('batchStatusBadge');
+  if(statusBadge){
+    statusBadge.hidden=!batch;
+    if(batch){
+      statusBadge.textContent=labels[batch.status]||batch.status||'';
+      statusBadge.className='status-badge'+(['running','scanning'].includes(batch.status)?' running':'');
+    }
+  }
+  const kpiGrid=$('kpiGrid');
+  if(kpiGrid){
+    kpiGrid.hidden=!batch;
+    if(batch){
+      const min=batch.options?.pageMinRub,max=batch.options?.pageMaxRub;
+      $('kpiCandidates').textContent=`${selected} / ${batch.options?.targetCount||'—'}`;
+      $('kpiObserved').textContent=String(checked);
+      $('kpiReview').textContent=String(eligible);
+      $('kpiRub').textContent=min==null&&max==null?'未设置':`${min??'不限'}–${max??'不限'} ₽`;
+    }
+  }
   $("summary").textContent=batch?summaryParts.join(' · '):"暂无类目批次";
   $("message").textContent = batch?.message || "";
   const visibleStores=stores.filter(task=>!task.removedFromQueue);

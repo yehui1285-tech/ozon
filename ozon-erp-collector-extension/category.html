@@ -8,12 +8,12 @@
 </head>
 <body>
   <main class="shell">
-    <header><div><p class="eyebrow">OZON · 本机任务</p><h1>类目选品</h1><p class="intro">逐类目检查商品。遇到站点验证或登录时，请在当前标签页手动完成。</p></div><a href="product-pool.html">打开本机商品池</a></header>
+    <header class="page-header"><div><p class="eyebrow">OZON · 本机任务</p><h1>类目选品</h1><p class="intro">逐类目检查商品。遇到站点验证或登录时，请在当前标签页手动完成。</p></div><a class="pool-link" href="product-pool.html">打开本机商品池 →</a></header>
     <section class="card setup">
-      <h2>新建类目任务</h2>
+      <div class="section-head"><div class="card-title-group"><h2>新建类目任务</h2></div></div>
       <section class="catalog" aria-labelledby="catalogTitle">
-        <div class="section-head"><h3 id="catalogTitle">类目目录</h3><span id="catalogCount">已选 0 / 20</span></div>
-        <div class="catalog-launch"><button id="openCatalog" type="button" disabled>选择类目</button><span id="catalogSourceLabel">中国专区</span><span id="catalogLoadState" role="status">正在读取目录…</span></div>
+        <div class="catalog-head"><div class="catalog-head-left"><h3 id="catalogTitle">类目目录</h3><span id="catalogSourceLabel" class="source-tag">中国专区</span></div><span id="catalogCount" class="count-pill">已选 0 / 20</span></div>
+        <div class="catalog-launch"><button id="openCatalog" class="soft-primary" type="button" disabled>选择类目</button><span id="catalogLoadState" role="status">正在读取目录…</span></div>
         <div id="catalogSelected" class="catalog-selected" aria-label="已确认类目"></div>
         <dialog id="catalogDialog" class="catalog-dialog" aria-labelledby="catalogDialogTitle">
           <div class="dialog-heading"><div><h2 id="catalogDialogTitle">选择类目</h2><p>点击名称向右展开；勾选任一级类目为一个扫描任务，不自动拆分下级。</p></div><button id="catalogDone" class="primary" type="button">完成选择</button></div>
@@ -29,27 +29,28 @@
           <div class="dialog-footer"><p class="catalog-note" id="catalogProvenance"></p><button id="catalogCancel" type="button">取消</button></div>
         </dialog>
       </section>
-      <label for="urls">自定义类目链接（可选） <span>与所选类目合计最多 20 个</span></label>
-      <textarea id="urls" rows="3" placeholder="https://www.ozon.ru/category/..."></textarea>
+      <div class="urls-block"><label class="urls-label" for="urls">自定义类目链接（可选） <span>与所选类目合计最多 20 个</span></label><textarea id="urls" rows="2" placeholder="https://www.ozon.ru/category/..."></textarea></div>
       <div class="fields">
-        <label>本批目标新品数<input id="targetCount" type="number" min="1" max="500" value="20"></label>
-        <label>最低价格（可选，CNY ¥）<input id="minPrice" type="number" min="0" step="0.01" placeholder="不限制"></label>
-        <label>最高价格（可选，CNY ¥）<input id="maxPrice" type="number" min="0" step="0.01" placeholder="不限制"></label>
-        <label>页面最低价（可选，RUB ₽）<input id="pageMinRub" type="number" min="0" max="10000000" step="1" placeholder="不限制"></label>
-        <label>页面最高价（可选，RUB ₽）<input id="pageMaxRub" type="number" min="0" max="10000000" step="1" placeholder="不限制"></label>
+        <div class="param-group"><label class="param-label" for="targetCount"><span>本批目标新品数</span><span class="param-unit">1–500</span></label><div class="input-wrap"><input id="targetCount" type="number" min="1" max="500" value="20"><span class="input-suffix">件</span></div></div>
+        <div class="param-group"><div class="param-label"><span>人民币复核区间</span><span class="param-unit">CNY ¥ · 可选</span></div><div class="range-pair"><label class="input-wrap"><span class="input-prefix">¥</span><input id="minPrice" type="number" min="0" step="0.01" placeholder="不限制" aria-label="最低价格（可选，CNY ¥）"></label><span class="range-sep">–</span><label class="input-wrap"><span class="input-prefix">¥</span><input id="maxPrice" type="number" min="0" step="0.01" placeholder="不限制" aria-label="最高价格（可选，CNY ¥）"></label></div></div>
+        <div class="param-group"><div class="param-label"><span>Ozon 页面预筛</span><span class="param-unit">RUB ₽ · 可选</span></div><div class="range-pair"><label class="input-wrap"><span class="input-prefix">₽</span><input id="pageMinRub" type="number" min="0" max="10000000" step="1" placeholder="不限制" aria-label="页面最低价（可选，RUB ₽）"></label><span class="range-sep">–</span><label class="input-wrap"><span class="input-prefix">₽</span><input id="pageMaxRub" type="number" min="0" max="10000000" step="1" placeholder="不限制" aria-label="页面最高价（可选，RUB ₽）"></label></div></div>
       </div>
-      <p class="notice">卢布区间用于 Ozon 网页预筛选，两端均填写或均留空；人民币区间仍用于采集后的复核，不自动换算汇率。</p>
-      <label for="backgroundExperiment" style="display:flex;align-items:center;gap:8px"><input id="backgroundExperiment" type="checkbox" style="width:auto" disabled>后台持续采集（试验，暂不可用）</label>
-      <p class="notice">当前 Chrome 扩展权限不支持按需申请调试连接，试验模式已停用。类目采集仍使用普通后台扫描；站点验证仍需人工处理。</p>
-      <div class="actions"><button class="primary" id="start">开始类目选品</button><button id="pause">暂停</button><button id="resume">继续</button><button class="danger" id="stop">停止</button></div>
-      <p id="message" role="status" aria-live="polite"></p>
+      <p class="notice rule-note">卢布区间用于 Ozon 网页预筛选，两端均填写或均留空；人民币区间仍用于采集后的复核，不自动换算汇率。</p>
+      <div class="setup-footer"><div class="actions"><button class="primary" id="start">开始类目选品</button><button id="pause">暂停</button><button id="resume">继续</button><button class="danger" id="stop">停止</button></div><p id="message" role="status" aria-live="polite"></p></div>
+      <div class="experiment-note"><label for="backgroundExperiment"><input id="backgroundExperiment" type="checkbox" disabled>后台持续采集（试验，暂不可用）</label><p class="notice">当前 Chrome 扩展权限不支持按需申请调试连接，试验模式已停用。类目采集仍使用普通后台扫描；站点验证仍需人工处理。</p></div>
     </section>
-    <section class="card"><div class="section-head"><h2>当前批次</h2><span id="summary">读取中…</span></div><div id="diagnosticOverview" class="diagnostic-overview" hidden></div><div id="batch"></div>
-      <div class="actions batch-actions"><button id="openScanTab">查看采集页面</button><button id="addPool">本批加入商品池（本机）</button><button id="exportBatch">导出本批 CSV</button><button id="syncWorkbench">同步本批到工作台</button><button id="deleteCurrentBatch" class="danger">删除当前已结束批次</button></div>
-      <div class="actions"><button id="exportDiagnostic">导出运行诊断</button><label>选择诊断批次 <select id="diagnosticHistory" aria-label="选择诊断批次"><option value="">当前批次</option></select></label></div>
-      <p class="notice" id="syncNote">工作台版可将本批同步至云端，再到工作台类目选品页面确认入池；本机商品池与工作台账号隔离。</p>
-      <div class="actions"><label>历史批次 <select id="historyBatch" aria-label="历史类目批次"><option value="">选择已结束批次</option></select></label><button id="addHistoryPool" disabled>历史批次加入本机商品池</button><button id="exportHistoryBatch" disabled>导出历史批次 CSV</button><button id="deleteHistoryBatch" class="danger" disabled>删除所选历史批次</button><button id="cleanupEmptyBatches" class="danger">清理已结束的 0 候选批次</button></div>
-      <p class="notice">删除仅清理本机类目批次记录，不会删除本机商品池、SKU 历史或工作台云端数据。运行中和暂停中的批次受保护。</p>
+    <section class="card">
+      <div class="section-head"><div class="card-title-group"><h2>当前批次</h2><span id="batchStatusBadge" class="status-badge" hidden></span></div><span id="summary" class="batch-meta-line">读取中…</span></div>
+      <div id="kpiGrid" class="kpi-grid" hidden><div class="kpi-tile"><div class="kpi-label">新候选 / 目标</div><div class="kpi-value accent" id="kpiCandidates">0 / —</div></div><div class="kpi-tile"><div class="kpi-label">已检查商品</div><div class="kpi-value" id="kpiObserved">0</div></div><div class="kpi-tile"><div class="kpi-label">待人工复查</div><div class="kpi-value" id="kpiReview">0</div></div><div class="kpi-tile"><div class="kpi-label">页面卢布预筛</div><div class="kpi-value small" id="kpiRub">未设置</div></div></div>
+      <details id="diagBox" class="diag-box" open hidden><summary><span>原因诊断与浏览器状态</span><span class="diag-summary-sub">点击折叠 / 展开 ▾</span></summary><div id="diagnosticOverview" class="diagnostic-overview" hidden></div></details>
+      <div id="batch"></div>
+      <div class="actions batch-actions"><div class="batch-actions-left"><button id="syncWorkbench">同步本批到工作台</button><button id="addPool" class="soft-primary">本批加入商品池（本机）</button><button id="exportBatch">导出本批 CSV</button><button id="openScanTab">查看采集页面</button></div><button id="deleteCurrentBatch" class="danger">删除当前已结束批次</button></div>
+      <div class="tools-section">
+        <div class="tool-row"><label class="tool-label" for="diagnosticHistory">运行诊断</label><select id="diagnosticHistory" class="tool-select" aria-label="选择诊断批次"><option value="">当前批次</option></select><button id="exportDiagnostic">导出运行诊断</button></div>
+        <div class="tool-row"><label class="tool-label" for="historyBatch">历史批次</label><select id="historyBatch" class="tool-select" aria-label="历史类目批次"><option value="">选择已结束批次</option></select><button id="addHistoryPool" disabled>历史批次加入本机商品池</button><button id="exportHistoryBatch" disabled>导出历史批次 CSV</button><button id="deleteHistoryBatch" class="danger" disabled>删除所选历史批次</button><button id="cleanupEmptyBatches" class="danger">清理已结束的 0 候选批次</button></div>
+        <p class="notice" id="syncNote">工作台版可将本批同步至云端，再到工作台类目选品页面确认入池；本机商品池与工作台账号隔离。</p>
+        <p class="notice">删除仅清理本机类目批次记录，不会删除本机商品池、SKU 历史或工作台云端数据。运行中和暂停中的批次受保护。</p>
+      </div>
     </section>
   </main>
   <script src="store-scanner-core.js"></script><script src="category-core.js"></script><script src="category-catalog.js"></script><script src="category.js"></script>
