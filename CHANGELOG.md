@@ -1,5 +1,11 @@
 # CHANGELOG.md - Ozon 项目续接记录
 
+## 2026-11-27 - V1.66 / 0.6.84 打通工作台云端去重与常用类目任务跨电脑同步（优化 A，工作台已提交待部署）
+
+- 工作台云端去重与任务合并接口：`lib/ozon-pool/store.ts` 新增 `readPoolSkuSnapshot` 按 `owner` 增量导出云端商品池与历史已淘汰 SKU（`sinceRevision` 未变返回 `unchanged: true`，单表上限 `100000`）；`lib/ozon-collector-model.ts` 新增 `mergeCategoryTasksPayload` 合并多电脑任务配置、断点（`observedSkus`/`visitedPages`/`exhausted`/`pageUrl`）、`priorQualifiedSkuIds`、`resetAt` 重置边界与 90 天 `deletedTasks` 墓碑；`app/api/ozon/collector/route.ts` 在设备 Bearer Token 分支开放受控 `poolSkus` 与 `categoryTasksSync`（持久化至 R2 `ozon/category-tasks/<ownerKey>/tasks-v1.json`，**无新增 D1 迁移**）。
+- 扩展端云端缓存、跨电脑任务同步与独立版隔离：`workbench-bridge.js` 暴露 `OzonWorkbenchCloud`，实现 15 秒节流+修订号增量拉取云端 SKU、内存 Set 秒级查重（`ozonWorkbenchCloudSkusV1`）及断网兜底保留缓存；`category-background.js` 在开扫前刷新云端缓存、`categorySample` 同时查询本机池与 `OzonWorkbenchCloud`、维护删除墓碑与重置时间戳并双向同步常用任务；`background.js` 新增 `wbSyncCloudState` 与 `WB_ALARM` 自动刷新同步；`category.html`/`category.css`/`category.js` 在「常用类目任务」卡新增 `#cloudSyncBar` 与手动同步按钮。独立分享版由 `build-standalone.mjs` 自动剥离全部 `wb*` 钩子与 `workbench-bridge.js`，保持零云端账号依赖。
+- 打包与验证：回滚备份 `_备份_20261127_v166_cloud_dedup_and_task_sync_before`（已轮换清理 `_备份_20261127_v162_rub_scan_support_before`，保留 `_备份_20261125_v151_pool_before` 及共 5 份常规备份）。Ozon `node --check`、全量 `npm.cmd test`（含 `test-category-background.mjs` 云端查重与任务状态导入导出、`test-standalone.mjs` 剥离与 DOM 保留断言）、`verify-project.ps1`、双版构建（`ozon-erp-collector-extension.zip` SHA256 `dd7418d59d3a0f1e6906bf99c45b138d61a9813378f950d4c43862c9201d5e93`；独立版 `ozon-standalone-extension.zip` SHA256 `bcde58764a58680edcc8e0e13683a42cbb0628d14c0ede3bc4f134f739ced369`），以及 Workbench `sync-workbench-core --check`、`check-release-version.mjs`（`V1.65 → V1.66`）、`npm.cmd run build`、`ozon-collector.test.mjs`（9/9）、`ozon-product-pool.test.mjs` 与 `ozon-workbench-nav.test.mjs`（2/2）全部通过，Workbench 提交 `72a0fa4`。真实浏览器多电脑实测与工作台 V1.66 部署待完成。
+
 ## 2026-11-27 - V1.65 / 0.6.83 修复类目续扫沿用旧卢布条件与非卢布货币冲突提示（工作台已上线）
 
 - 续扫条件同步与所见即所得回填：`category.js` 新增 `syncFormFromBatch`、`readFilterOptions` 与 `formDirty` 追踪——加载已结束/已有批次时自动将 `options` 回填至顶部表单（手工修改及载入常用任务后不再覆盖）；点击「仅扫剩余类目 / 继续扫下一轮」时显式传入全部表单筛选字段（包括清空的可选字段 `null`），彻底解决上方已清空卢布预筛但续扫后仍携带上一轮 `?currency_price=...` 与 `pageMinRub/pageMaxRub` 的问题，同时动态在 `#continueHint` 展示将生效条件摘要。

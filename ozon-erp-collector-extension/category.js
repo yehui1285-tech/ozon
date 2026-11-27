@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 let state = null;
-let history = [], savedTasks = [], loadedTaskProfileId = '', loadedTaskProfileName = '', formDirty = false, hydratedBatchId = '', busy = false, refreshSequence = 0, actionRevision = 0, refreshInFlight = false, refreshPending = false;
+let history = [], savedTasks = [], cloudSync = null, loadedTaskProfileId = '', loadedTaskProfileName = '', formDirty = false, hydratedBatchId = '', busy = false, refreshSequence = 0, actionRevision = 0, refreshInFlight = false, refreshPending = false;
 const core=globalThis.OzonCategoryCore;
 const catalog=globalThis.OzonCategoryCatalog;
 let catalogData=null, treeSelection=null, confirmedSource='china', draftSelection=null, favorites=[], navPath=[];
@@ -247,12 +247,33 @@ function renderSavedTasks(tasks,active){
     }
   });
 }
-function render(batch, archive=history, tasks=savedTasks) {
+function renderCloudSyncBar(cs=cloudSync){
+  const bar=$('cloudSyncBar'),statusEl=$('cloudSyncStatus'),btn=$('syncCloudNow');
+  if(!bar||!statusEl||!btn)return;
+  if(!cs){bar.hidden=true;return;}
+  bar.hidden=false;
+  if(!cs.connected){
+    statusEl.textContent='工作台未连接（当前仅按本机商品池去重；在插件弹窗连接工作台即可跨电脑云端去重并同步常用任务）';
+    btn.hidden=true;
+    return;
+  }
+  btn.hidden=false;
+  btn.disabled=busy;
+  const skuTime=formatTimestamp(cs.skusSyncedAt),taskTime=formatTimestamp(cs.tasksSyncedAt);
+  const parts=[`已打通工作台云端去重（商品池 ${Number(cs.poolCount||0)} · 历史 ${Number(cs.historyCount||0)}${cs.truncated?' · 上限截断':''}）`];
+  if(skuTime)parts.push(`去重同步于 ${skuTime}`);
+  if(taskTime)parts.push(`任务同步于 ${taskTime}`);
+  if(cs.error)parts.push(`同步异常：${cs.error}`);
+  statusEl.textContent=parts.join(' · ');
+}
+function render(batch, archive=history, tasks=savedTasks, nextCloudSync=cloudSync) {
   const expandedDiagnostics=batch?.id===state?.id?new Set([...$('batch').querySelectorAll('.diagnostic[open]')].map(item=>item.dataset.categoryKey)):new Set();
   $("backgroundExperiment").checked=false;
   state = batch || null;
   history=Array.isArray(archive)?archive:[];
   savedTasks=Array.isArray(tasks)?tasks:savedTasks;
+  cloudSync=nextCloudSync!==undefined?nextCloudSync:cloudSync;
+  renderCloudSyncBar(cloudSync);
   syncFormFromBatch(batch);
   const stores = Array.isArray(batch?.stores) ? batch.stores : [];
   const selected = stores.reduce((a,s)=>a+Number(s.qualifiedCount||0),0);
@@ -351,7 +372,7 @@ function render(batch, archive=history, tasks=savedTasks) {
   const currentEmpty=finishedBatch&&Number(batch?.qualifiedSkuIds?.length||0)===0&&stores.reduce((n,s)=>n+Number(s.qualifiedCount||0),0)===0;
   $("cleanupEmptyBatches").disabled=busy||(!currentEmpty&&!history.some(b=>["completed","stopped","failed"].includes(b.status)&&Number(b.qualifiedCount||b.count||0)===0));
 }
-async function refresh() { if(busy)return;if(refreshInFlight){refreshPending=true;return}refreshInFlight=true;const sequence=++refreshSequence,revision=actionRevision;try { const r=await send({type:"categoryGet"});if(!busy&&sequence===refreshSequence&&revision===actionRevision)render(r.batch||r.state||null,r.history,r.tasks); } catch(e) { if(!busy&&sequence===refreshSequence&&revision===actionRevision)$("message").textContent=e.message; } finally {refreshInFlight=false;if(refreshPending){refreshPending=false;if(!busy)void refresh()}} }
+async function refresh() { if(busy)return;if(refreshInFlight){refreshPending=true;return}refreshInFlight=true;const sequence=++refreshSequence,revision=actionRevision;try { const r=await send({type:"categoryGet"});if(!busy&&sequence===refreshSequence&&revision===actionRevision)render(r.batch||r.state||null,r.history,r.tasks,Object.hasOwn(r,'cloudSync')?r.cloudSync:cloudSync); } catch(e) { if(!busy&&sequence===refreshSequence&&revision===actionRevision)$("message").textContent=e.message; } finally {refreshInFlight=false;if(refreshPending){refreshPending=false;if(!busy)void refresh()}} }
 $("start").onclick = async () => {
   try{
     const {urls,categoryLabels:labelsMap,options}=readSetupForm();
@@ -383,7 +404,8 @@ for(const [btnId,mode] of [['continueRemaining','remaining_only'],['continueNext
     }catch(e){$("message").textContent=e.message;}
   };
 }
-async function perform(message){if(busy)return null;actionRevision++;refreshSequence++;busy=true;render(state);try{const r=await send(message);busy=false;render(Object.hasOwn(r,'batch')?r.batch:state,Array.isArray(r.history)?r.history:history,Array.isArray(r.tasks)?r.tasks:savedTasks);let note=r.message||r.batch?.message||'操作已完成。';if(message.type==='categoryAddPool'){note=r.added>0?`已新增 ${r.added} 件到本机商品池 · 重复 ${r.duplicates||0} · 历史排除 ${r.historySkipped||0}`:r.duplicates>0?`本批 ${r.duplicates} 件均已在商品池中（新增 0 件），可点右上角打开商品池切换「全部状态」查看。`:`未新增商品（历史排除 ${r.historySkipped||0} · 无效或待复核 ${r.riskSkipped||0}）`;const link=document.querySelector('a.pool-link'),targetId=message.batchId||state?.id||'';if(link&&targetId)link.href=`product-pool.html?batchId=${encodeURIComponent(targetId)}${r.added===0&&r.duplicates>0?'&filter=all':''}`;}$("message").textContent=note;return r;}catch(e){busy=false;render(state);$("message").textContent=e.message;return null;}}
+async function perform(message){if(busy)return null;actionRevision++;refreshSequence++;busy=true;render(state);try{const r=await send(message);busy=false;const cs=Object.hasOwn(r,'cloudSync')?r.cloudSync:cloudSync;render(Object.hasOwn(r,'batch')?r.batch:state,Array.isArray(r.history)?r.history:history,Array.isArray(r.tasks)?r.tasks:savedTasks,cs);let note=r.message||r.batch?.message||'操作已完成。';if(message.type==='categoryAddPool'){note=r.added>0?`已新增 ${r.added} 件到本机商品池 · 重复 ${r.duplicates||0} · 历史排除 ${r.historySkipped||0}`:r.duplicates>0?`本批 ${r.duplicates} 件均已在商品池中（新增 0 件），可点右上角打开商品池切换「全部状态」查看。`:`未新增商品（历史排除 ${r.historySkipped||0} · 无效或待复核 ${r.riskSkipped||0}）`;const link=document.querySelector('a.pool-link'),targetId=message.batchId||state?.id||'';if(link&&targetId)link.href=`product-pool.html?batchId=${encodeURIComponent(targetId)}${r.added===0&&r.duplicates>0?'&filter=all':''}`;}$("message").textContent=note;return r;}catch(e){busy=false;render(state);$("message").textContent=e.message;return null;}}
+if($("syncCloudNow"))$("syncCloudNow").onclick=async()=>{const r=await perform({type:'wbSyncCloudState'});if(r?.ok){const msg=`云端去重与任务同步完成：商品池 ${Number(r.cloudSync?.poolCount||0)} 条、历史 ${Number(r.cloudSync?.historyCount||0)} 条、常用任务 ${Number(r.cloudSync?.taskCount||0)} 个。`;await refresh();$("message").textContent=msg;}};
 for(const [id,type] of [["pause","categoryPause"],["resume","categoryResume"],["stop","categoryStop"],["addPool","categoryAddPool"],["syncWorkbench","categorySyncWorkbench"]]) if($(id))$(id).onclick=()=>perform({type,batchId:state?.id,...(id==='resume'?{backgroundExperiment:$("backgroundExperiment").checked}:{})});
 $("historyBatch").onchange=()=>{$("addHistoryPool").disabled=$("exportHistoryBatch").disabled=$("deleteHistoryBatch").disabled=busy||!$("historyBatch").value};
 $("addHistoryPool").onclick=()=>perform({type:'categoryAddPool',batchId:$("historyBatch").value});
@@ -396,7 +418,7 @@ $("exportDiagnostic").onclick=()=>{const batchId=$('diagnosticHistory').value||s
 $("diagnosticHistory").onchange=()=>{$("exportDiagnostic").disabled=busy||!state&&!$("diagnosticHistory").value};
 $("exportBatch").onclick=()=>exportCsv(state?.id);$("exportHistoryBatch").onclick=()=>exportCsv($("historyBatch").value);
 $("openScanTab").onclick=async()=>{try{if(!Number.isInteger(state?.tabId))return;const tab=await chrome.tabs.get(state.tabId);if(!tab)throw Error('采集页面已关闭');await chrome.tabs.update(tab.id,{active:true});if(tab.windowId!=null)await chrome.windows.update(tab.windowId,{focused:true});}catch(e){$("message").textContent=e.message}};
-chrome.storage.onChanged.addListener((changes,area)=>{if(area==='local'&&(changes.ozonCategoryBatchV1||changes.ozonCategoryBatchHistoryV1||changes.ozonCategoryTasksV1))void refresh();if(area==='local'&&changes.ozonCategoryFxRateV1){const val=changes.ozonCategoryFxRateV1.newValue;if(val&&typeof val==='object'){fxState={autoRate:val.autoRate??null,autoFetchedAt:Number(val.autoFetchedAt)||0,manualRate:val.manualRate??null};renderRubCnyHint();}}});
+chrome.storage.onChanged.addListener((changes,area)=>{if(area==='local'&&(changes.ozonCategoryBatchV1||changes.ozonCategoryBatchHistoryV1||changes.ozonCategoryTasksV1||changes.ozonWorkbenchCloudSkusV1||changes.ozonWorkbenchCategoryTasksSyncV1||changes.ozonWorkbenchSettingsV1))void refresh();if(area==='local'&&changes.ozonCategoryFxRateV1){const val=changes.ozonCategoryFxRateV1.newValue;if(val&&typeof val==='object'){fxState={autoRate:val.autoRate??null,autoFetchedAt:Number(val.autoFetchedAt)||0,manualRate:val.manualRate??null};renderRubCnyHint();}}});
 window.addEventListener('focus',()=>void refresh());
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')void refresh()});
 window.setInterval(()=>{if(['running','scanning'].includes(state?.status)&&document.visibilityState==='visible')void refresh()},2500);

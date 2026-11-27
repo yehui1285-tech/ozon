@@ -7,7 +7,7 @@ let created = [], reloads=0, sentMessages=[], debuggerCommands=[], debuggerAttac
 const storage = { async get(k) { return k ? { ...(data[k] ? { [k]: data[k] } : {}) } : { ...data }; }, async set(v) { Object.assign(data, v); }, async remove(k) { for (const key of Array.isArray(k) ? k : [k]) delete data[key]; } };
 let declaredDebugger=true;
 const chrome = {
-  runtime:{getManifest:()=>({version:'0.6.83',permissions:declaredDebugger?['debugger']:[]})},
+  runtime:{getManifest:()=>({version:'0.6.84',permissions:declaredDebugger?['debugger']:[]})},
   storage: { local: storage,session:{async get(k){return {[k]:sessionData[k]}},async set(v){Object.assign(sessionData,v)},async remove(k){delete sessionData[k]}} },
   alarms:{async get(n){return alarms.get(n)},async create(n,o){alarms.set(n,o)},async clear(n){alarms.delete(n)}},
   tabs: {
@@ -718,4 +718,54 @@ assert.equal(batch.stores[0].pageUrl, 'https://www.ozon.ru/category/rub1-951/', 
 assert.ok(batch.stores[0].observedSkus.includes('95101'));
 assert.ok(batch.priorQualifiedSkuIds.includes('95101'));
 await runner.handle({ type: 'categoryStop' });
+
+// V1.66: Cloud deduplication (OzonWorkbenchCloud) + task state export/import/tombstones.
+let cloudRefreshes = 0, cloudSyncs = 0;
+const mockCloudProducts = new Set(['96001']), mockCloudHistory = new Set(['96002']);
+context.OzonWorkbenchCloud = {
+  async refreshCloudSkus() { cloudRefreshes++; return { ok: true }; },
+  async lookupCloudSkus(skus) {
+    const products = {}, history = {};
+    for (const s of skus) { if (mockCloudProducts.has(String(s))) products[String(s)] = true; if (mockCloudHistory.has(String(s))) history[String(s)] = true; }
+    return { products, history };
+  },
+  async syncCategoryTasks() { cloudSyncs++; return { ok: true }; },
+  async status() { return { connected: true, poolCount: mockCloudProducts.size, historyCount: mockCloudHistory.size, revision: 12 }; }
+};
+const initialGetWithCloud = await runner.handle({ type: 'categoryGet' });
+assert.equal(initialGetWithCloud.cloudSync.connected, true);
+assert.equal(initialGetWithCloud.cloudSync.poolCount, 1);
+await runner.handle({ type: 'categoryStart', urls: 'https://www.ozon.ru/category/cloud-960/', targetCount: 5, minPrice: 10, confirmArchiveOverflow: true });
+assert.equal(cloudRefreshes, 1, 'starting category batch refreshes cloud SKU cache');
+batch = (await runner.handle({ type: 'categoryGet' })).batch;
+await runner.handle({
+  type: 'categorySample',
+  batchId: batch.id,
+  attemptId: batch.attemptId,
+  categoryUrl: batch.stores[0].url,
+  observedSkus: ['96001', '96002', '96003'],
+  products: [
+    { sku: '96001', name: 'Cloud Pool Dup', link: 'https://www.ozon.ru/product/p-96001', price: '50', qualified: true, shippingRisk: { type: 'clear' } },
+    { sku: '96002', name: 'Cloud History Dup', link: 'https://www.ozon.ru/product/p-96002', price: '50', qualified: true, shippingRisk: { type: 'clear' } },
+    { sku: '96003', name: 'Cloud Fresh', link: 'https://www.ozon.ru/product/p-96003', price: '50', qualified: true, shippingRisk: { type: 'clear' } }
+  ]
+}, { tab: { id: batch.tabId, url: batch.stores[0].url } });
+batch = (await runner.handle({ type: 'categoryGet' })).batch;
+assert.equal(batch.stores[0].qualifiedCount, 1, 'cloud pool & history SKUs are excluded from qualified count');
+assert.equal(batch.stores[0].diagnosticDecisions['96001'], 'pool_duplicate');
+assert.equal(batch.stores[0].diagnosticDecisions['96002'], 'history_duplicate');
+assert.equal(batch.stores[0].diagnosticDecisions['96003'], 'accepted');
+await runner.handle({ type: 'categoryStop' });
+const cloudSaved = await runner.handle({ type: 'categoryTaskProfileSave', name: '云同步任务', urls: ['https://www.ozon.ru/category/cloud-960/'], targetCount: 5, minPrice: 10 });
+await runner.handle({ type: 'categoryTaskProfileDelete', taskId: cloudSaved.task.id });
+const exportedTasks = await runner.exportTasksState();
+assert.equal(exportedTasks.tasks.length, 0);
+assert.ok(exportedTasks.deletedTasks[cloudSaved.task.id], 'deleting a task records tombstone');
+assert.ok(cloudSyncs >= 2, 'task profile mutations notify cloud sync');
+await runner.applyMergedTasksState({
+  tasks: [{ id: 'task-merged-1', name: '远端同步任务', urls: ['https://www.ozon.ru/category/cloud-960/'], categoryLabels: {}, options: { targetCount: 5, minPrice: 10, maxPrice: null }, checkpoints: {}, priorQualifiedSkuIds: [], runCount: 1, totalQualifiedCount: 2, updatedAt: new Date().toISOString() }],
+  deletedTasks: exportedTasks.deletedTasks
+});
+assert.equal((await runner.handle({ type: 'categoryGet' })).tasks[0].id, 'task-merged-1');
+delete context.OzonWorkbenchCloud;
 console.log("category background runner tests passed");

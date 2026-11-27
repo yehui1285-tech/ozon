@@ -1,9 +1,96 @@
 // Explicit narrow-scope Ozon workbench connection. Never sends cookies or page contents.
-const WB_ORIGIN='https://deep-breath-design-desk.yehui1285.chatgpt.site',WB_API=WB_ORIGIN+'/api/ozon/collector',WB_SETTINGS='ozonWorkbenchSettingsV1',WB_PENDING='ozonWorkbenchPendingDetailV1',WB_ALARM='ozonWorkbenchSyncV1',WB_BATCH_BACKLOG='ozonWorkbenchBatchBacklogV1';
+const WB_ORIGIN='https://deep-breath-design-desk.yehui1285.chatgpt.site',WB_API=WB_ORIGIN+'/api/ozon/collector',WB_SETTINGS='ozonWorkbenchSettingsV1',WB_PENDING='ozonWorkbenchPendingDetailV1',WB_ALARM='ozonWorkbenchSyncV1',WB_BATCH_BACKLOG='ozonWorkbenchBatchBacklogV1',WB_CLOUD_SKUS='ozonWorkbenchCloudSkusV1',WB_TASKS_SYNC='ozonWorkbenchCategoryTasksSyncV1';
+const WB_SKU_THROTTLE_MS=15000;
+let wbCloudCache={loaded:false,revision:null,poolSet:new Set(),historySet:new Set(),poolCount:0,historyCount:0,truncated:false,syncedAt:'',error:''},wbCloudLoading=null,wbCloudRefreshing=null,wbTasksSyncing=null,wbLastRefreshAt=0;
 async function wbSettings(){return (await chrome.storage.local.get(WB_SETTINGS))[WB_SETTINGS]||{token:'',auto:true}}
 async function wbRequest(token,body){if(!/^[a-f0-9]{64}$/.test(token||''))throw Error('请先在插件弹窗连接工作台');const res=await fetch(WB_API,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify(body),credentials:'omit',redirect:'error',signal:AbortSignal.timeout(25000)});const data=await res.json().catch(()=>({}));if(!res.ok||!data.ok)throw Error(data.error||'工作台连接失败（'+res.status+'）');return data}
-async function wbConnect(message){const old=await wbSettings();const token=String(message.token||'').trim().toLowerCase();await wbRequest(token,{action:'ping'});await chrome.storage.local.set({[WB_SETTINGS]:{...old,token,auto:message.auto!==false}});await chrome.alarms.create(WB_ALARM,{periodInMinutes:1});return {ok:true,connected:true}}
-async function wbDisconnect(){await chrome.storage.local.remove(WB_SETTINGS);await chrome.alarms.clear(WB_ALARM);return {ok:true}}
+async function wbEnsureCloudLoaded(){
+ if(wbCloudCache.loaded)return wbCloudCache;
+ if(!wbCloudLoading)wbCloudLoading=(async()=>{
+  const stored=(await chrome.storage.local.get(WB_CLOUD_SKUS))[WB_CLOUD_SKUS];
+  if(stored&&typeof stored==='object'){
+   const poolSet=new Set((Array.isArray(stored.poolSkus)?stored.poolSkus:[]).map(String).filter(s=>/^\d+$/.test(s)));
+   const historySet=new Set((Array.isArray(stored.historySkus)?stored.historySkus:[]).map(String).filter(s=>/^\d+$/.test(s)));
+   wbCloudCache={loaded:true,revision:Number.isSafeInteger(stored.revision)?stored.revision:null,poolSet,historySet,poolCount:poolSet.size,historyCount:historySet.size,truncated:Boolean(stored.truncated),syncedAt:String(stored.syncedAt||''),error:''};
+  }else{wbCloudCache.loaded=true;}
+ })().finally(()=>{wbCloudLoading=null;});
+ await wbCloudLoading;
+ return wbCloudCache;
+}
+async function wbRefreshCloudSkus(force=false){
+ if(wbCloudRefreshing)return wbCloudRefreshing;
+ wbCloudRefreshing=(async()=>{
+  await wbEnsureCloudLoaded();
+  const settings=await wbSettings();
+  if(!settings.token)return {ok:true,connected:false,skipped:true};
+  if(!force&&wbLastRefreshAt&&Date.now()-wbLastRefreshAt<WB_SKU_THROTTLE_MS){
+   return {ok:true,connected:true,cached:true,revision:wbCloudCache.revision,poolCount:wbCloudCache.poolCount,historyCount:wbCloudCache.historyCount};
+  }
+  wbLastRefreshAt=Date.now();
+  try{
+   const body={action:'poolSkus',...( !force && Number.isSafeInteger(wbCloudCache.revision) ? {sinceRevision:wbCloudCache.revision} : {} )};
+   const data=await wbRequest(settings.token,body);
+   const stamp=new Date().toISOString();
+   if(!data.unchanged){
+    const poolSkus=(Array.isArray(data.poolSkus)?data.poolSkus:[]).map(String).filter(s=>/^\d+$/.test(s));
+    const historySkus=(Array.isArray(data.historySkus)?data.historySkus:[]).map(String).filter(s=>/^\d+$/.test(s));
+    const poolSet=new Set(poolSkus),historySet=new Set(historySkus);
+    const rev=Number.isSafeInteger(data.revision)?data.revision:0;
+    wbCloudCache={loaded:true,revision:rev,poolSet,historySet,poolCount:poolSet.size,historyCount:historySet.size,truncated:Boolean(data.truncated),syncedAt:stamp,error:''};
+    await chrome.storage.local.set({[WB_CLOUD_SKUS]:{revision:rev,poolSkus,historySkus,truncated:Boolean(data.truncated),syncedAt:stamp}});
+   }else{
+    wbCloudCache.syncedAt=stamp;wbCloudCache.error='';
+   }
+   return {ok:true,connected:true,unchanged:Boolean(data.unchanged),revision:wbCloudCache.revision,poolCount:wbCloudCache.poolCount,historyCount:wbCloudCache.historyCount,syncedAt:stamp};
+  }catch(e){
+   wbCloudCache.error=e.message;
+   if(force)throw e;
+   return {ok:false,connected:true,error:e.message};
+  }
+ })();
+ try{return await wbCloudRefreshing}finally{wbCloudRefreshing=null}
+}
+async function wbLookupCloudSkus(skus){
+ await wbEnsureCloudLoaded();
+ const products={},history={};
+ for(const raw of Array.isArray(skus)?skus:[]){
+  const sku=String(raw??'').trim();
+  if(!/^\d+$/.test(sku))continue;
+  if(wbCloudCache.poolSet.has(sku))products[sku]=true;
+  if(wbCloudCache.historySet.has(sku))history[sku]=true;
+ }
+ return {products,history};
+}
+async function wbSyncCategoryTasks(manual=false){
+ if(wbTasksSyncing)return wbTasksSyncing;
+ wbTasksSyncing=(async()=>{
+  const settings=await wbSettings();
+  if(!settings.token){if(manual)throw Error('请先在插件弹窗连接工作台');return {ok:true,skipped:true};}
+  if(!manual&&settings.auto===false)return {ok:true,skipped:true};
+  if(!globalThis.OzonCategoryBackground?.exportTasksState||!globalThis.OzonCategoryBackground?.applyMergedTasksState)return {ok:true,skipped:true};
+  const local=await globalThis.OzonCategoryBackground.exportTasksState();
+  const data=await wbRequest(settings.token,{action:'categoryTasksSync',payload:{tasks:local.tasks||[],deletedTasks:local.deletedTasks||{}}});
+  await globalThis.OzonCategoryBackground.applyMergedTasksState({tasks:data.tasks||[],deletedTasks:data.deletedTasks||{}});
+  const stamp=new Date().toISOString();
+  await chrome.storage.local.set({[WB_TASKS_SYNC]:{syncedAt:stamp,updatedAt:data.updatedAt||stamp,taskCount:(data.tasks||[]).length,error:''}});
+  return {ok:true,taskCount:(data.tasks||[]).length,syncedAt:stamp,changed:Boolean(data.changed)};
+ })().catch(async e=>{
+  const prev=(await chrome.storage.local.get(WB_TASKS_SYNC))[WB_TASKS_SYNC]||{};
+  await chrome.storage.local.set({[WB_TASKS_SYNC]:{...prev,error:e.message}}).catch(()=>null);
+  if(manual)throw e;
+  return {ok:false,error:e.message};
+ }).finally(()=>{wbTasksSyncing=null;});
+ return wbTasksSyncing;
+}
+async function wbCloudSyncStatus(){
+ await wbEnsureCloudLoaded();
+ const settings=await wbSettings();
+ const taskSync=(await chrome.storage.local.get(WB_TASKS_SYNC))[WB_TASKS_SYNC]||{};
+ return {connected:Boolean(settings.token),poolCount:wbCloudCache.poolCount,historyCount:wbCloudCache.historyCount,revision:wbCloudCache.revision,truncated:wbCloudCache.truncated,skusSyncedAt:wbCloudCache.syncedAt||'',taskCount:Number(taskSync.taskCount)||0,tasksSyncedAt:String(taskSync.syncedAt||''),error:wbCloudCache.error||String(taskSync.error||'')};
+}
+async function wbConnect(message){const old=await wbSettings();const token=String(message.token||'').trim().toLowerCase();await wbRequest(token,{action:'ping'});await chrome.storage.local.set({[WB_SETTINGS]:{...old,token,auto:message.auto!==false}});await chrome.alarms.create(WB_ALARM,{periodInMinutes:1});void wbRefreshCloudSkus(true).catch(()=>null);void wbSyncCategoryTasks(false).catch(()=>null);return {ok:true,connected:true}}
+async function wbDisconnect(){await chrome.storage.local.remove([WB_SETTINGS,WB_CLOUD_SKUS,WB_TASKS_SYNC]);wbCloudCache={loaded:true,revision:null,poolSet:new Set(),historySet:new Set(),poolCount:0,historyCount:0,truncated:false,syncedAt:'',error:''};wbLastRefreshAt=0;await chrome.alarms.clear(WB_ALARM);return {ok:true}}
+globalThis.OzonWorkbenchCloud=Object.freeze({refreshCloudSkus:wbRefreshCloudSkus,lookupCloudSkus:wbLookupCloudSkus,syncCategoryTasks:wbSyncCategoryTasks,status:wbCloudSyncStatus});
 async function wbStatus(){const settings=await wbSettings(),sync=(await chrome.storage.local.get('ozonWorkbenchLastSync'))['ozonWorkbenchLastSync'];return {ok:true,connected:!!settings.token,auto:settings.auto!==false,sync}}
 async function wbAuto(enabled){const s=await wbSettings();if(!s.token)throw Error('请先连接工作台');await chrome.storage.local.set({[WB_SETTINGS]:{...s,auto:!!enabled}});return {ok:true}}
 const wbDetailQueue=globalThis.OzonStoreScannerCore.createSerializedExecutor();

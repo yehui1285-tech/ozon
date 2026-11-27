@@ -40,12 +40,12 @@ assert.ok(fs.existsSync(path.join(dir,'category-background.js')));
 assert.ok(fs.existsSync(path.join(dir,'category-catalog.js')));
 assert.ok(fs.existsSync(path.join(dir,'category-catalog.json')));
 assert.doesNotMatch(read('category.html'),/id="syncWorkbench"/);
-for (const id of ['rubCnyBar','rubCnyAmount','rubCnyWarn','fxEditBtn','fxRateInput','perCategoryLimit','saveTaskProfile','savedTaskList','continueBar','continueRemaining','continueNextRound']) {
+for (const id of ['rubCnyBar','rubCnyAmount','rubCnyWarn','fxEditBtn','fxRateInput','perCategoryLimit','saveTaskProfile','savedTaskList','cloudSyncBar','continueBar','continueRemaining','continueNextRound']) {
   assert.ok(read('category.html').includes(`id="${id}"`), `standalone category.html retains #${id}`);
 }
 assert.match(read('standalone-nav.css'), /#3a5a40/);
 assert.doesNotMatch(read('standalone-nav.css'), /#405ec5/);
-assert.doesNotMatch(read('background.js'),/wbSyncCategory/);
+assert.doesNotMatch(read('background.js'),/wbSyncCategory|wbSyncCloudState|wbRefreshCloudSkus|wbSyncCategoryTasks/);
 assert.equal(read("product-pool-core.js"),fs.readFileSync("ozon-erp-collector-extension/product-pool-core.js","utf8"));
 // Run the generated pricing-page bridge with an in-memory local draft and real row patch core.
 const testKey='ozon_pricing_draft_v1',record={id:'a',sku:'123',green:'10',black:'12',commission:'8',freight:'2',cost:'5',factorOverride:'',quoteOverride:'',link:'',source:'',note:''},other={...record,id:'b',sku:'456',note:'preserve'};

@@ -3,8 +3,11 @@
   const KEY = "ozonCategoryBatchV1";
   const HISTORY_KEY = "ozonCategoryBatchHistoryV1";
   const TASKS_KEY = "ozonCategoryTasksV1";
+  const TASKS_DELETED_KEY = "ozonCategoryTasksDeletedV1";
   const HISTORY_LIMIT = 5;
   const TASKS_LIMIT = 30;
+  const TASKS_DELETED_LIMIT = 100;
+  const TASKS_DELETED_TTL_MS = 90 * 24 * 60 * 60 * 1000;
   const CHECKPOINT_SKU_LIMIT = 5000;
   const ALARM = 'ozon-category-runner';
   const PROTECTION_KEY = 'ozonCategoryScanProtectionV1';
@@ -116,7 +119,7 @@
     if (win?.tabs?.[0]) return win.tabs[0];
     return chrome.tabs.create({url,active:false});
   }
-  async function save(batch) { reconcileExperiment(batch);batch.updatedAt = now();await chrome.storage.local.set({[KEY]:batch});if(batch.status==='running'){const alarm=await chrome.alarms?.get?.(ALARM);if(!alarm||alarm.periodInMinutes!==0.5)await chrome.alarms?.create?.(ALARM,{periodInMinutes:0.5})}else{await chrome.alarms?.clear?.(ALARM);if(experimentDebuggerTabId===batch.tabId&&batch.activityStatus==='focus-emulation-enabled')batch.activityStatus='focus-emulation-released';await releaseFocusExperiment(batch.tabId);await releaseTab(batch.tabId);await chrome.storage.local.set({[KEY]:batch})}if(batch?.taskProfileId)await syncTaskCheckpoint(batch);return batch; }
+  async function save(batch) { reconcileExperiment(batch);batch.updatedAt = now();await chrome.storage.local.set({[KEY]:batch});if(batch.status==='running'){const alarm=await chrome.alarms?.get?.(ALARM);if(!alarm||alarm.periodInMinutes!==0.5)await chrome.alarms?.create?.(ALARM,{periodInMinutes:0.5})}else{await chrome.alarms?.clear?.(ALARM);if(experimentDebuggerTabId===batch.tabId&&batch.activityStatus==='focus-emulation-enabled')batch.activityStatus='focus-emulation-released';await releaseFocusExperiment(batch.tabId);await releaseTab(batch.tabId);await chrome.storage.local.set({[KEY]:batch})}if(batch?.taskProfileId){await syncTaskCheckpoint(batch);if(finished(batch))void scope.OzonWorkbenchCloud?.syncCategoryTasks?.(false)?.catch?.(()=>null);}return batch; }
   function bounded(promise,ms=MESSAGE_TIMEOUT_MS){let timer;return Promise.race([promise,new Promise(resolve=>{timer=setTimeout(()=>resolve(null),ms)})]).finally(()=>clearTimeout(timer))}
   function phase(batch,mode,message){batch.pageMode=mode;batch.message=message;return batch}
   async function waitStatus(batch,message){if(batch.pageMode!=='waiting'||batch.message!==message){phase(batch,'waiting',message);await save(batch)}}
@@ -160,6 +163,33 @@
     const clean = (Array.isArray(tasks) ? tasks : []).slice(0, TASKS_LIMIT);
     await chrome.storage.local.set({ [TASKS_KEY]: clean });
     return clean;
+  }
+  async function readDeletedTasks() {
+    const raw = (await chrome.storage.local.get(TASKS_DELETED_KEY))[TASKS_DELETED_KEY];
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+    const cutoff = Date.now() - TASKS_DELETED_TTL_MS;
+    const entries = Object.entries(raw).filter(([id, ts]) => typeof id === 'string' && id && Number.isFinite(Date.parse(String(ts))) && Date.parse(String(ts)) >= cutoff);
+    entries.sort((a, b) => Date.parse(String(b[1])) - Date.parse(String(a[1])));
+    return Object.fromEntries(entries.slice(0, TASKS_DELETED_LIMIT));
+  }
+  async function writeDeletedTasks(map) {
+    const clean = map && typeof map === 'object' && !Array.isArray(map) ? map : {};
+    const cutoff = Date.now() - TASKS_DELETED_TTL_MS;
+    const entries = Object.entries(clean).filter(([id, ts]) => typeof id === 'string' && id && Number.isFinite(Date.parse(String(ts))) && Date.parse(String(ts)) >= cutoff);
+    entries.sort((a, b) => Date.parse(String(b[1])) - Date.parse(String(a[1])));
+    const pruned = Object.fromEntries(entries.slice(0, TASKS_DELETED_LIMIT));
+    await chrome.storage.local.set({ [TASKS_DELETED_KEY]: pruned });
+    return pruned;
+  }
+  async function exportTasksState() {
+    return queue(async () => ({ tasks: await readTasks(), deletedTasks: await readDeletedTasks() }));
+  }
+  async function applyMergedTasksState(merged) {
+    return queue(async () => {
+      if (!merged || typeof merged !== 'object') return;
+      if (Array.isArray(merged.tasks)) await writeTasks(merged.tasks);
+      if (merged.deletedTasks && typeof merged.deletedTasks === 'object') await writeDeletedTasks(merged.deletedTasks);
+    });
   }
   function reconcileCheckpointPageUrl(cpPageUrl, baseUrl, options) {
     const expectedBase = core.pricePageUrl(baseUrl, options);
@@ -461,6 +491,7 @@
       archived.unshift(clone(existingBatch));
       await chrome.storage.local.set({ [HISTORY_KEY]: archived.slice(0, HISTORY_LIMIT) });
     }
+    await scope.OzonWorkbenchCloud?.refreshCloudSkus?.(false)?.catch?.(() => null);
     const id = `category-${uuid()}`;
     const priorQualifiedSkuIds = capUniqueList(config.priorQualifiedSkuIds, CHECKPOINT_SKU_LIMIT);
     const stores = entries.map((entry, i) => {
@@ -520,7 +551,7 @@
     return queue(async () => {
       let batch = await read();
       switch (m.type) {
-        case "categoryGet": return { ok: true, batch: clone(batch), history: (await snapshotHistory()).map(historySummary), tasks: (await readTasks()).map(taskProfileSummary) };
+        case "categoryGet": return { ok: true, batch: clone(batch), history: (await snapshotHistory()).map(historySummary), tasks: (await readTasks()).map(taskProfileSummary), cloudSync: (await scope.OzonWorkbenchCloud?.status?.().catch(() => null)) || null };
         case "categoryStart": {
           const parsed = core.parseUrls(m.urls, 20);
           const urls = Array.isArray(parsed) ? parsed : parsed.urls;
@@ -609,6 +640,7 @@
             profile.categoryLabels = categoryLabels;
             profile.options = options;
             profile.updatedAt = stamp;
+            profile.configUpdatedAt = stamp;
             tasks.splice(existingIdx, 1);
             tasks.unshift(profile);
           } else {
@@ -627,11 +659,14 @@
               lastBatchId: null,
               createdAt: stamp,
               updatedAt: stamp,
+              configUpdatedAt: stamp,
+              resetAt: '',
               lastRunAt: null
             };
             tasks.unshift(profile);
           }
           const saved = await writeTasks(tasks);
+          void scope.OzonWorkbenchCloud?.syncCategoryTasks?.(false)?.catch?.(() => null);
           return { ok: true, task: taskProfileSummary(profile), tasks: saved.map(taskProfileSummary), message: `已保存常用类目任务「${name}」` };
         }
         case "categoryTaskProfileDelete": {
@@ -640,6 +675,10 @@
           const next = tasks.filter(t => t.id !== id);
           if (next.length === tasks.length) throw Error("找不到要删除的常用类目任务");
           await writeTasks(next);
+          const deleted = await readDeletedTasks();
+          deleted[id] = now();
+          await writeDeletedTasks(deleted);
+          void scope.OzonWorkbenchCloud?.syncCategoryTasks?.(false)?.catch?.(() => null);
           return { ok: true, tasks: next.map(taskProfileSummary), message: "已删除常用类目任务" };
         }
         case "categoryTaskProfileReset": {
@@ -647,6 +686,7 @@
           const tasks = await readTasks();
           const target = tasks.find(t => t.id === id);
           if (!target) throw Error("找不到要重置的常用类目任务");
+          const resetStamp = now();
           target.checkpoints = {};
           target.priorQualifiedSkuIds = [];
           target.batchQualifiedCounts = {};
@@ -655,8 +695,10 @@
           target.totalQualifiedCount = 0;
           target.lastBatchId = null;
           target.lastRunAt = null;
-          target.updatedAt = now();
+          target.resetAt = resetStamp;
+          target.updatedAt = resetStamp;
           await writeTasks(tasks);
+          void scope.OzonWorkbenchCloud?.syncCategoryTasks?.(false)?.catch?.(() => null);
           return { ok: true, task: taskProfileSummary(target), tasks: tasks.map(taskProfileSummary), message: `已重置「${target.name}」的扫描进度，将从第 1 页重新扫描` };
         }
         case "categoryTaskProfileRun": {
@@ -791,7 +833,9 @@
           batch.lastProgressAt=now();if(observed.size>beforeObserved){batch.lastNewSkuAt=batch.lastProgressAt;task.crashRecoveryCount=0;}batch.recoveryAttempts=0;batch.noResponseCount=0;
           task.activityStatus=batch.activityStatus||'native-background-only';
           phase(batch,effectiveHidden?'background':'foreground',effectiveHidden?'后台扫描类目商品（页面加载可能较慢）':'正在扫描类目商品');
-          const pool = await scope.OzonProductPoolDB.lookup((m.products || []).map(raw => raw?.sku));
+          const skuList = (m.products || []).map(raw => raw?.sku);
+          const pool = await scope.OzonProductPoolDB.lookup(skuList);
+          const cloudPool = await scope.OzonWorkbenchCloud?.lookupCloudSkus?.(skuList)?.catch?.(() => null);
           const qualifiedSeen = new Set(batch.qualifiedSkuIds || []);
           const priorSeen = new Set(batch.priorQualifiedSkuIds || []);
           const beforeQualified=qualifiedSeen.size;
@@ -814,7 +858,7 @@
             if (products.length>=remaining) {if(/^\d{1,24}$/.test(sku)&&!finalOutcomes.has(decisions[sku]))decisions[sku]='target_limit';continue;}
             const product = normalizeSampleProduct(raw, batch);
             let reason='invalid_candidate';
-            if(product){if(qualifiedSeen.has(product.sku))reason=decisions[product.sku]==='accepted'||batch.results?.[task.sellerKey]?.products?.[product.sku]?'accepted':'batch_duplicate';else if(priorSeen.has(product.sku))reason='history_duplicate';else if(pool.products?.[product.sku])reason='pool_duplicate';else if(Object.hasOwn(pool.history||{},product.sku))reason='history_duplicate';else {reason='accepted';qualifiedSeen.add(product.sku);products.push(product);}}
+            if(product){if(qualifiedSeen.has(product.sku))reason=decisions[product.sku]==='accepted'||batch.results?.[task.sellerKey]?.products?.[product.sku]?'accepted':'batch_duplicate';else if(priorSeen.has(product.sku))reason='history_duplicate';else if(pool.products?.[product.sku]||cloudPool?.products?.[product.sku])reason='pool_duplicate';else if(Object.hasOwn(pool.history||{},product.sku)||Object.hasOwn(cloudPool?.history||{},product.sku))reason='history_duplicate';else {reason='accepted';qualifiedSeen.add(product.sku);products.push(product);}}
             if(/^\d{1,24}$/.test(sku)&&decisions[sku]!=='accepted')decisions[sku]=reason;
           }
           const title=typeof m.categoryName==='string'?m.categoryName.trim().slice(0,120):'';
@@ -1022,5 +1066,5 @@
       }
     });
   }
-  scope.OzonCategoryBackground = Object.freeze({ handle, onUpdated, onRemoved, onAlarm, onRestart, snapshot, snapshotHistory });
+  scope.OzonCategoryBackground = Object.freeze({ handle, onUpdated, onRemoved, onAlarm, onRestart, snapshot, snapshotHistory, exportTasksState, applyMergedTasksState });
 })(globalThis);

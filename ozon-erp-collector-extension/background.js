@@ -1312,6 +1312,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   else if (message?.type === "wbStatus") operation = wbStatus();
   else if (message?.type === "wbAuto") operation = wbAuto(message.enabled);
   else if (message?.type === "wbSyncBatch") operation = wbSyncBatch(true);
+  else if (message?.type === "wbSyncCloudState") operation = (async () => ({ ok: true, skus: await wbRefreshCloudSkus(true), tasks: await wbSyncCategoryTasks(true), cloudSync: await wbCloudSyncStatus() }))();
   else if (message?.type === "categorySyncWorkbench") operation = sender.url===chrome.runtime.getURL('category.html')?wbSyncCategory(true):Promise.reject(Error('请从类目选品管理页同步。'));
   else if (typeof message?.type === 'string' && message.type.startsWith('category')) operation = batchOperation(()=>categoryOperation(message,sender));
   else if (message?.type === "readBlackPriceFromProductUrl") operation = readBlackPriceFromProductUrl(message.url);
@@ -1398,7 +1399,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if(alarm.name===WB_ALARM){void wbSyncBatch(false);void wbSyncCategory(false);return;}
+  if(alarm.name===WB_ALARM){void wbSyncBatch(false);void wbSyncCategory(false);void wbRefreshCloudSkus(false);void wbSyncCategoryTasks(false);return;}
   if(alarm.name==='ozon-category-runner'){void OzonCategoryBackground.onAlarm(alarm);return;}
   if (alarm.name === BATCH_NEXT_ALARM) {
     batchOperation(() => continueBatchAfterCooldown({ source: "alarm-fallback" })).catch((error) => batchOperation(() => failCurrentBatchStore(error.message || String(error))));
