@@ -114,6 +114,10 @@ assert.equal(core.normalizeImageUrl("https://evil.example/1.jpg"), "");
 assert.equal(core.normalizeImageUrl("https://ir.ozone.ru/icon.svg"), "");
 assert.equal(core.normalizePageQuery({ source: "category" }).source, "category");
 assert.equal(core.normalizePageQuery({ source: "invalid" }).source, "");
+assert.equal(core.normalizePageQuery({ batchId: "  batch-b  ", deviceId: " dev-1 " }).batchId, "batch-b");
+assert.equal(core.normalizePageQuery({ batchId: "batch-b", deviceId: " dev-1 " }).deviceId, "dev-1");
+assert.equal(core.matchesPageQuery(categoryPool.products["100"], core.normalizePageQuery({ filter: "all", batchId: "batch-b" })), true);
+assert.equal(core.matchesPageQuery(categoryPool.products["700"], core.normalizePageQuery({ filter: "all", batchId: "batch-b" })), false);
 const imgPool = core.addBatch(core.emptyPool(), capture("batch-img-1", ["801"], {
   "801": { ...product("801", "500"), monthlySales: "120", imageUrl: "https://ir.ozone.ru/s3/m/wc250/801.jpg" },
 }), "2026-11-26T08:00:00Z").state;

@@ -74,7 +74,7 @@ function createThumb(item) {
   return box;
 }
 async function loadPage(at = offset) {
-  const options=core.normalizePageQuery({query:$("query").value,filter:$("filter").value,source:$("source")?.value||"",sort:$("sort").value,offset:at,limit:pageSize});
+  const options=core.normalizePageQuery({query:$("query").value,filter:$("filter").value,source:$("source")?.value||"",batchId:$("batchFilter")?.value||"",sort:$("sort").value,offset:at,limit:pageSize});
   const {page}=await send({type:"getProductPoolPage",...options});
   if(!Array.isArray(page?.items)||page.items.length>pageSize||!Number.isSafeInteger(page.offset)||!Number.isSafeInteger(page.matched))throw Error("商品池分页响应异常");
   pageInfo=page;offset=page.offset;appliedQuery=options;
@@ -105,6 +105,19 @@ function render() {
   $("total").textContent = pageInfo.total;
   $("newCount").textContent = pageInfo.newCount;
   $("historyCount").textContent = pageInfo.historyCount;
+  const batchSel=$("batchFilter");
+  if(batchSel){
+    const currentBatch=batchSel.value||appliedQuery.batchId||"";
+    batchSel.replaceChildren();
+    option(batchSel,"","全部批次");
+    for(const b of (pageInfo.batches||[])){
+      const prefix=String(b.id||"").startsWith("category-")?"类目":"店铺";
+      const ts=b.updatedAt?new Date(b.updatedAt).toLocaleString("zh-CN",{hour12:false,year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"}):String(b.id||"").slice(0,16);
+      option(batchSel,b.id,`${prefix} · ${ts}（${b.count} 件）`);
+    }
+    if(currentBatch&&!Array.from(batchSel.options).some(o=>o.value===currentBatch))option(batchSel,currentBatch,`当前批次（${currentBatch.slice(0,18)}）`);
+    batchSel.value=currentBatch;
+  }
   const page = pageInfo.items;
   const visible=new Set(page.map(p=>p.sku));for(const sku of selected)if(!visible.has(sku)){selected.delete(sku);selectionExpected.delete(sku);}
   $("rows").replaceChildren();
@@ -214,7 +227,7 @@ function render() {
   globalThis.ozonLocalQuick?.sync(page);
   if(table){table.scrollTop=scrollTop;table.scrollLeft=scrollLeft;}
 }
-async function refresh(at=offset) {if(poolWriteOrLoadBusy())return;clearTimeout(searchTimer);searchPending=false;refreshBusy=true;render();try {await loadPage(at);}catch(e){$("query").value=appliedQuery.query;$("filter").value=appliedQuery.filter;if($("source"))$("source").value=appliedQuery.source;$("sort").value=appliedQuery.sort;feedback(e.message,true);}finally{refreshBusy=false;render();}}
+async function refresh(at=offset) {if(poolWriteOrLoadBusy())return;clearTimeout(searchTimer);searchPending=false;refreshBusy=true;render();try {await loadPage(at);}catch(e){$("query").value=appliedQuery.query;$("filter").value=appliedQuery.filter;if($("source"))$("source").value=appliedQuery.source;if($("batchFilter"))$("batchFilter").value=appliedQuery.batchId||"";$("sort").value=appliedQuery.sort;feedback(e.message,true);}finally{refreshBusy=false;render();}}
 function updateSelection(page) {
   const count=selected.size, selectedOnPage=page.filter(p=>selected.has(p.sku)).length;
   $("selectionCount").textContent=`已选 ${count} 件`;
@@ -225,7 +238,7 @@ function updateSelection(page) {
   $("saveSelected").disabled=poolOperationBusy()||!page.some(p=>selected.has(p.sku)&&drafts.has(p.sku));
   $("rejectSelected").disabled=poolOperationBusy()||!count;
   $("refresh").disabled=poolOperationBusy();$("importHistory").disabled=poolOperationBusy();
-  $("query").disabled=poolWriteOrLoadBusy();$("filter").disabled=poolOperationBusy();if($("source"))$("source").disabled=poolOperationBusy();$("sort").disabled=poolOperationBusy();
+  $("query").disabled=poolWriteOrLoadBusy();$("filter").disabled=poolOperationBusy();if($("source"))$("source").disabled=poolOperationBusy();if($("batchFilter"))$("batchFilter").disabled=poolOperationBusy();$("sort").disabled=poolOperationBusy();
   for(const id of ["export","backup","exportHistory"])$(id).disabled=poolOperationBusy();
 }
 function visiblePage(){return pageInfo.items;}
@@ -250,7 +263,7 @@ function download(name,text,type) {
   const a = document.createElement("a"); a.href=url; a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1500);
 }
 $("query").addEventListener("input",()=>{if(poolWriteOrLoadBusy())return;clearTimeout(searchTimer);clearSelection();searchPending=true;render();searchTimer=setTimeout(()=>void refresh(0),180);});
-for(const id of ["filter","source","sort"])if($(id))$(id).addEventListener("change",()=>{if(poolOperationBusy())return;clearSelection();void refresh(0);});
+for(const id of ["filter","source","batchFilter","sort"])if($(id))$(id).addEventListener("change",()=>{if(poolOperationBusy())return;clearSelection();void refresh(0);});
 if($("showImages"))$("showImages").addEventListener("change",()=>{showImages=$("showImages").checked;try{localStorage.setItem(showImagesKey,showImages?"1":"0");}catch{}render();});
 $("previous").addEventListener("click",()=>{if(poolOperationBusy())return;clearSelection();void refresh(Math.max(0,offset-pageSize));});
 $("next").addEventListener("click",()=>{if(poolOperationBusy())return;clearSelection();void refresh(offset+pageSize);});

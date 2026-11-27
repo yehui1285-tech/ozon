@@ -23,10 +23,14 @@
     const integer = (value, fallback) => value == null || value === "" || !Number.isSafeInteger(Number(value)) ? fallback : Number(value);
     const filter = raw.filter === "all" ? "" : raw.filter == null ? "pending" : String(raw.filter);
     const source = raw.source === "category" || raw.source === "store" ? raw.source : "";
+    const batchId = String(raw.batchId ?? "").trim().slice(0, 120);
+    const deviceId = String(raw.deviceId ?? "").trim().slice(0, 120);
     return {
       query: String(raw.query ?? "").trim().toLowerCase().slice(0, 200),
       filter: filter === "" || filter === "pending" || Object.hasOwn(statuses, filter) ? filter : "pending",
       source,
+      batchId,
+      deviceId,
       sort: ["recent", "oldest", "savedRecent", "savedOldest"].includes(raw.sort) ? raw.sort : "recent",
       offset: Math.max(0, integer(raw.offset, 0)),
       limit: Math.max(1, Math.min(50, integer(raw.limit, 50))),
@@ -34,7 +38,8 @@
   }
   function matchesPageQuery(item, options) {
     const mode = item.sourceMode === "category" ? "category" : "store";
-    return matchesStatus(item, options.filter) && (!options.source || mode === options.source) && [item.sku,item.title,item.category,item.storeName].some(s => String(s ?? "").toLowerCase().includes(options.query));
+    const batchOk = !options.batchId || (Array.isArray(item.batchIds) && item.batchIds.includes(options.batchId));
+    return matchesStatus(item, options.filter) && (!options.source || mode === options.source) && batchOk && [item.sku,item.title,item.category,item.storeName].some(s => String(s ?? "").toLowerCase().includes(options.query));
   }
   function comparePoolItems(a, b, sort) {
     const cmp = (x,y) => String(x ?? "") < String(y ?? "") ? -1 : String(x ?? "") > String(y ?? "") ? 1 : 0;

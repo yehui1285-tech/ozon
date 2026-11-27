@@ -47,6 +47,7 @@
     searchChanges.get(bucket).set(sku, {
       sku, status: String(item.status ?? ""), lastSeenAt: String(item.lastSeenAt ?? ""),
       manualSavedAt: String(item.manualSavedAt ?? ""),
+      batchIds: Array.isArray(item.batchIds) ? item.batchIds.map(String) : [],
       sourceMode: item.sourceMode === "category" ? "category" : "store",
       title: String(item.title ?? ""), category: String(item.category ?? ""), storeName: String(item.storeName ?? ""),
     });
@@ -97,18 +98,18 @@
             await writeSearchChanges(tx, searchChanges, true);
           }
           tx.objectStore("meta").put(1, "ready");
-          tx.objectStore("meta").put(3, "searchVersion");
+          tx.objectStore("meta").put(4, "searchVersion");
         });
-      } else if ((await transact(db, ["meta"], "readonly", tx => request(tx.objectStore("meta").get("searchVersion")))) !== 3) {
+      } else if ((await transact(db, ["meta"], "readonly", tx => request(tx.objectStore("meta").get("searchVersion")))) !== 4) {
         await transact(db, ["products", "listing", "search", "meta"], "readwrite", async tx => {
-          if (await request(tx.objectStore("meta").get("searchVersion")) === 3) return;
+          if (await request(tx.objectStore("meta").get("searchVersion")) === 4) return;
           const products = tx.objectStore("products");
           const [keys, values] = await Promise.all([request(products.getAllKeys()), request(products.getAll())]);
           tx.objectStore("search").clear();
           const searchChanges = new Map();
           for (let i = 0; i < keys.length; i++) putProduct(tx, String(keys[i]), values[i], searchChanges);
           await writeSearchChanges(tx, searchChanges, true);
-          tx.objectStore("meta").put(3, "searchVersion");
+          tx.objectStore("meta").put(4, "searchVersion");
         });
       }
       return db;
@@ -198,10 +199,34 @@
     });
   }
 
+  async function collectBatches(search) {
+    const map = new Map();
+    let nextRange;
+    for (;;) {
+      const blocks = await request(search.getAll(nextRange, 16));
+      for (const block of blocks) {
+        for (const row of Object.values(block.rows)) {
+          for (const rawId of (row.batchIds || [])) {
+            const id = String(rawId || "");
+            if (!id) continue;
+            const cur = map.get(id) || { id, count: 0, updatedAt: "" };
+            cur.count += 1;
+            const seen = String(row.lastSeenAt || "");
+            if (seen > cur.updatedAt) cur.updatedAt = seen;
+            map.set(id, cur);
+          }
+        }
+      }
+      if (blocks.length < 16) break;
+      nextRange = IDBKeyRange.lowerBound(blocks[blocks.length - 1].id, true);
+    }
+    return [...map.values()].sort((a, b) => (b.updatedAt < a.updatedAt ? -1 : b.updatedAt > a.updatedAt ? 1 : b.id < a.id ? -1 : b.id > a.id ? 1 : 0));
+  }
+
   async function matchingPage(listing, search, opts) {
     const { source, range, direction } = pageSource(listing, opts);
     const keys = [];
-    if (!opts.query && !opts.source && !["savedRecent", "savedOldest"].includes(opts.sort)) {
+    if (!opts.query && !opts.source && !opts.batchId && !["savedRecent", "savedOldest"].includes(opts.sort)) {
       const matched = await request(source.count(range));
       const offset = pageOffset(opts.offset, matched, opts.limit);
       let skip = offset;
@@ -238,13 +263,13 @@
   async function page(raw) {
     const opts = core.normalizePageQuery(raw);
     return transact(await ready(), dataStores, "readonly", async tx => {
-      const products = tx.objectStore("products"), listing = tx.objectStore("listing");
-      const [total, newCount, historyCount, found] = await Promise.all([
+      const products = tx.objectStore("products"), listing = tx.objectStore("listing"), search = tx.objectStore("search");
+      const [total, newCount, historyCount, found, batches] = await Promise.all([
         request(products.count()), request(listing.index("newCount").count(1)), request(tx.objectStore("history").count()),
-        matchingPage(listing, tx.objectStore("search"), opts),
+        matchingPage(listing, search, opts), collectBatches(search),
       ]);
       const items = await Promise.all(found.keys.map(sku => request(products.get(sku))));
-      return { items, total, matched: found.matched, newCount, historyCount, offset: found.offset, limit: opts.limit };
+      return { items, total, matched: found.matched, newCount, historyCount, offset: found.offset, limit: opts.limit, batches };
     });
   }
 
