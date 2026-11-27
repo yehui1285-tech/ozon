@@ -65,4 +65,7 @@ assert.equal(c.priceAllowed({ ...base, price: '900 ₽' }, { minPrice: 100, maxP
 assert.equal(c.priceAllowed({ ...base, price: '1 480 ₽' }, { minPrice: null, maxPrice: null }), true);
 assert.equal(c.priceAllowed({ ...base, price: '88 ₽' }, opt), false);
 assert.equal(c.validateOptions({ targetCount: 10, minPrice: '100', pageMinRub: '1300', pageMaxRub: '30000', fxRate: 12.37 }).fxRate, 12.37);
+assert.equal(c.validateOptions({ targetCount: 50, perCategoryLimit: '20' }).perCategoryLimit, 20);
+assert.equal('perCategoryLimit' in c.validateOptions({ targetCount: 50, perCategoryLimit: '' }), false);
+for (const badLimit of ['0', '501', '12.5', 'abc']) assert.throws(() => c.validateOptions({ targetCount: 50, perCategoryLimit: badLimit }));
 console.log('Category core URL, pagination, target, price, positive label, identity and risk tests passed.');

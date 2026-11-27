@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 let state = null;
-let history = [], busy = false, refreshSequence = 0, actionRevision = 0, refreshInFlight = false, refreshPending = false;
+let history = [], savedTasks = [], loadedTaskProfileId = '', loadedTaskProfileName = '', busy = false, refreshSequence = 0, actionRevision = 0, refreshInFlight = false, refreshPending = false;
 const core=globalThis.OzonCategoryCore;
 const catalog=globalThis.OzonCategoryCatalog;
 let catalogData=null, treeSelection=null, confirmedSource='china', draftSelection=null, favorites=[], navPath=[];
@@ -87,11 +87,132 @@ function searchPicker(){const query=normalizeSearch($('catalogSearch').value);if
 async function loadCatalog(){try{const response=await fetch('category-catalog.json');if(!response.ok)throw Error('类目目录无法读取');catalogData=await response.json();$('catalogProvenance').textContent=catalogData.provenance?.note||'本机类目快照';treeSelection=newSelection(confirmedSource).selection;syncCatalogUrls();$('openCatalog').disabled=false;$('catalogLoadState').textContent='选择后可直接开始扫描'}catch(e){$('catalogLoadState').textContent='类目目录无法读取，请重载扩展后重试。';$('message').textContent=e.message}}
 async function refreshFavorites(){favorites=await catalog.readFavorites();const select=$('favoriteSelect');const keep=select.value;select.replaceChildren(new Option('选择本机组合',''),...favorites.map(f=>new Option(`${f.name} · ${f.source==='china'?'中国专区':'普通 Ozon'}`,f.id)));if(favorites.some(f=>f.id===keep))select.value=keep}
 function categoryLabels(){const labels={};for(const n of treeSelection?.selected.values()||[])labels[core.normalizeUrl(n.url)]=catalog.names(n).slice(0,120);return labels}
-function render(batch, archive=history) {
+function readSetupForm(){
+  const treeUrls=treeSelection?.urls()||[];
+  const manual=$('urls').value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
+  const parsed=core.parseUrls([...manual,...treeUrls]);
+  if(!parsed.urls.length||parsed.invalid.length||parsed.overflowCount)throw Error('请提供 1–20 个有效 Ozon 类目链接，修正无效或超限地址。');
+  const options=core.validateOptions({targetCount:$('targetCount').value,perCategoryLimit:$('perCategoryLimit')?.value,minPrice:$('minPrice').value,maxPrice:$('maxPrice').value,pageMinRub:$('pageMinRub').value,pageMaxRub:$('pageMaxRub').value,fxRate:activeFxRate()});
+  return {urls:parsed.urls,categoryLabels:categoryLabels(),options};
+}
+function confirmArchiveIfNeeded(){
+  const needed=history.length>=5&&!!state;
+  if(needed&&!confirm('历史类目批次已达 5 份，新任务可能替换最早批次；请先将需要的历史商品入池或同步。是否继续？'))return null;
+  return needed;
+}
+function continuationCounts(batch){
+  const stores=Array.isArray(batch?.stores)?batch.stores:[];
+  const isExcluded=t=>!t?.url||t.removedFromQueue===true||t.exhausted===true||(t.status==='skipped'&&t.skipReason==='手动跳过');
+  const remainingCount=stores.filter(t=>!isExcluded(t)&&t.status!=='completed').length;
+  const resumableCount=stores.filter(t=>!isExcluded(t)).length;
+  return {remainingCount,resumableCount};
+}
+function formatTaskOptionsSummary(options={}){
+  const parts=[`目标 ${options.targetCount||'—'} 件`];
+  if(options.perCategoryLimit)parts.push(`单类目上限 ${options.perCategoryLimit} 件`);
+  if(options.minPrice!=null||options.maxPrice!=null)parts.push(`人民币 ¥${options.minPrice??'不限'}–¥${options.maxPrice??'不限'}`);
+  if(options.pageMinRub!=null||options.pageMaxRub!=null)parts.push(`卢布 ${options.pageMinRub??'不限'}–${options.pageMaxRub??'不限'} ₽`);
+  return parts.join(' · ');
+}
+function loadTaskProfileIntoForm(profile){
+  if(!profile)return;
+  const urls=Array.isArray(profile.urls)?profile.urls:[];
+  const manualUrls=[];
+  if(catalogData){
+    const chinaSel=catalog.makeSelection(catalogData.china||[]);
+    const ordSel=catalog.makeSelection(catalogData.ordinary||[]);
+    const chinaByUrl=new Map([...chinaSel.byId.values()].map(n=>[core.normalizeUrl(n.url),n]));
+    const ordByUrl=new Map([...ordSel.byId.values()].map(n=>[core.normalizeUrl(n.url),n]));
+    const chinaHits=urls.filter(u=>chinaByUrl.has(core.normalizeUrl(u)));
+    const ordHits=urls.filter(u=>ordByUrl.has(core.normalizeUrl(u)));
+    const pickOrdinary=!chinaHits.length&&ordHits.length>0;
+    const chosenSource=pickOrdinary?'ordinary':'china';
+    const chosenMap=pickOrdinary?ordByUrl:chinaByUrl;
+    const chosenSel=pickOrdinary?ordSel:chinaSel;
+    for(const u of urls){
+      const norm=core.normalizeUrl(u);
+      const node=chosenMap.get(norm);
+      if(node){try{chosenSel.add(node);}catch{manualUrls.push(u);}}
+      else manualUrls.push(u);
+    }
+    confirmedSource=chosenSource;
+    treeSelection=chosenSel;
+    syncCatalogUrls();
+  }else{
+    manualUrls.push(...urls);
+  }
+  $('urls').value=manualUrls.join('\n');
+  const opt=profile.options||{};
+  if($('targetCount'))$('targetCount').value=opt.targetCount??20;
+  if($('perCategoryLimit'))$('perCategoryLimit').value=opt.perCategoryLimit??'';
+  if($('minPrice'))$('minPrice').value=opt.minPrice??'';
+  if($('maxPrice'))$('maxPrice').value=opt.maxPrice??'';
+  if($('pageMinRub'))$('pageMinRub').value=opt.pageMinRub??'';
+  if($('pageMaxRub'))$('pageMaxRub').value=opt.pageMaxRub??'';
+  if($('taskProfileName'))$('taskProfileName').value=profile.name||'';
+  loadedTaskProfileId=profile.id||'';
+  loadedTaskProfileName=profile.name||'';
+  renderRubCnyHint();
+  $('message').textContent=`已载入常用任务「${profile.name}」（共 ${urls.length} 个类目），可直接修改或点击「开始类目选品」。`;
+}
+function renderSavedTasks(tasks,active){
+  const listEl=$('savedTaskList'),countEl=$('savedTaskCount');
+  if(!listEl||!countEl)return;
+  const rows=Array.isArray(tasks)?tasks:[];
+  countEl.textContent=`${rows.length} 个`;
+  if(!rows.length){
+    listEl.innerHTML='<div class="empty">还没有常用类目任务。选好类目与筛选条件后，在上方填写任务名称并点「保存为常用任务」。</div>';
+    return;
+  }
+  listEl.innerHTML=rows.map(task=>{
+    const stats=task.stats||{};
+    const total=stats.totalCategories??(task.urls?.length||0);
+    const remaining=stats.remainingCategories??total;
+    const badgeText=remaining>0?`${remaining}/${total} 类目可续扫`:'已全部扫到底';
+    const hasProgress=(task.runCount||0)>0||(stats.observedTotal||0)>0||(stats.priorQualifiedCount||0)>0;
+    return `<article class="saved-task-item">
+      <div class="saved-task-info">
+        <div class="saved-task-head"><strong>${esc(task.name||'未命名任务')}</strong><span class="status-badge${remaining>0?'':' running'}">${esc(badgeText)}</span></div>
+        <div class="saved-task-meta">${esc(formatTaskOptionsSummary(task.options))}</div>
+        <div class="saved-task-meta">已跑 ${Number(task.runCount||0)} 轮 · 累计采得 ${Number(task.totalQualifiedCount||0)} 件 · 已避重 SKU ${Number(stats.priorQualifiedCount||0)} 个 · 已检查 ${Number(stats.observedTotal||0)} 个</div>
+      </div>
+      <div class="saved-task-actions">
+        <button type="button" class="primary compact" data-profile-action="run" data-profile-id="${esc(task.id)}" ${busy||active||remaining===0?'disabled':''}>按进度继续扫</button>
+        <button type="button" class="soft-primary compact" data-profile-action="load" data-profile-id="${esc(task.id)}" ${busy?'disabled':''}>载入配置</button>
+        <button type="button" class="compact" data-profile-action="reset" data-profile-id="${esc(task.id)}" ${busy||!hasProgress?'disabled':''}>重置进度</button>
+        <button type="button" class="danger compact" data-profile-action="delete" data-profile-id="${esc(task.id)}" ${busy?'disabled':''}>删除</button>
+      </div>
+    </article>`;
+  }).join('');
+  listEl.querySelectorAll('[data-profile-action]').forEach(btn=>btn.onclick=()=>{
+    const action=btn.dataset.profileAction,id=btn.dataset.profileId;
+    const target=savedTasks.find(t=>t.id===id);
+    if(!target)return;
+    if(action==='load'){loadTaskProfileIntoForm(target);return;}
+    if(action==='delete'){
+      if(!confirm(`确认删除常用类目任务「${target.name}」及其中保存的断点进度？已入池商品不受影响。`))return;
+      if(loadedTaskProfileId===id){loadedTaskProfileId='';loadedTaskProfileName='';}
+      void perform({type:'categoryTaskProfileDelete',taskId:id});
+      return;
+    }
+    if(action==='reset'){
+      if(!confirm(`确认重置「${target.name}」的页码断点与已避重 SKU 记录？下次将从第 1 页重新扫描。`))return;
+      void perform({type:'categoryTaskProfileReset',taskId:id});
+      return;
+    }
+    if(action==='run'){
+      const confirmArchive=confirmArchiveIfNeeded();
+      if(confirmArchive===null)return;
+      void perform({type:'categoryTaskProfileRun',taskId:id,mode:'resume_all',confirmArchiveOverflow:confirmArchive,backgroundExperiment:$('backgroundExperiment').checked});
+    }
+  });
+}
+function render(batch, archive=history, tasks=savedTasks) {
   const expandedDiagnostics=batch?.id===state?.id?new Set([...$('batch').querySelectorAll('.diagnostic[open]')].map(item=>item.dataset.categoryKey)):new Set();
   $("backgroundExperiment").checked=false;
   state = batch || null;
   history=Array.isArray(archive)?archive:[];
+  savedTasks=Array.isArray(tasks)?tasks:savedTasks;
   const stores = Array.isArray(batch?.stores) ? batch.stores : [];
   const selected = stores.reduce((a,s)=>a+Number(s.qualifiedCount||0),0);
   const checked = stores.reduce((a,s)=>a+Number(s.observedCount||0),0);
@@ -150,6 +271,21 @@ function render(batch, archive=history) {
   $('batch').querySelectorAll('.diagnostic').forEach(item=>{item.open=expandedDiagnostics.has(item.dataset.categoryKey)});
   const active = ["running","paused","scanning"].includes(batch?.status);
   const finishedBatch = ["completed","stopped","failed"].includes(batch?.status);
+  renderSavedTasks(savedTasks, active);
+  const continueBar=$('continueBar'),continueRemaining=$('continueRemaining'),continueNextRound=$('continueNextRound'),continueHint=$('continueHint');
+  if(continueBar&&continueRemaining&&continueNextRound){
+    const {remainingCount,resumableCount}=finishedBatch?continuationCounts(batch):{remainingCount:0,resumableCount:0};
+    continueBar.hidden=!(finishedBatch&&(remainingCount>0||resumableCount>0));
+    continueRemaining.hidden=remainingCount===0;
+    continueRemaining.disabled=busy||active||remainingCount===0;
+    continueRemaining.textContent=`仅扫剩余类目 (${remainingCount})`;
+    continueNextRound.hidden=resumableCount===0;
+    continueNextRound.disabled=busy||active||resumableCount===0;
+    continueNextRound.textContent=`继续扫下一轮 (${resumableCount})`;
+    if(continueHint)continueHint.textContent=remainingCount>0
+      ? `本批还有 ${remainingCount} 个未完成类目，也可对全部 ${resumableCount} 个未耗尽类目从断点续扫并跳过本轮已采 SKU`
+      : `本批已采集完成但还有 ${resumableCount} 个类目未扫到底，可从已保存断点续扫下一轮并跳过本轮已采 SKU`;
+  }
   $("batch").querySelectorAll('[data-task-action]').forEach(button=>button.onclick=()=>{
     const action=button.dataset.taskAction,sellerKey=button.dataset.sellerKey;
     if(!sellerKey||!state||!['paused','stopped'].includes(state.status))return;
@@ -176,16 +312,36 @@ function render(batch, archive=history) {
   const currentEmpty=finishedBatch&&Number(batch?.qualifiedSkuIds?.length||0)===0&&stores.reduce((n,s)=>n+Number(s.qualifiedCount||0),0)===0;
   $("cleanupEmptyBatches").disabled=busy||(!currentEmpty&&!history.some(b=>["completed","stopped","failed"].includes(b.status)&&Number(b.qualifiedCount||b.count||0)===0));
 }
-async function refresh() { if(busy)return;if(refreshInFlight){refreshPending=true;return}refreshInFlight=true;const sequence=++refreshSequence,revision=actionRevision;try { const r=await send({type:"categoryGet"});if(!busy&&sequence===refreshSequence&&revision===actionRevision)render(r.batch||r.state||null,r.history); } catch(e) { if(!busy&&sequence===refreshSequence&&revision===actionRevision)$("message").textContent=e.message; } finally {refreshInFlight=false;if(refreshPending){refreshPending=false;if(!busy)void refresh()}} }
+async function refresh() { if(busy)return;if(refreshInFlight){refreshPending=true;return}refreshInFlight=true;const sequence=++refreshSequence,revision=actionRevision;try { const r=await send({type:"categoryGet"});if(!busy&&sequence===refreshSequence&&revision===actionRevision)render(r.batch||r.state||null,r.history,r.tasks); } catch(e) { if(!busy&&sequence===refreshSequence&&revision===actionRevision)$("message").textContent=e.message; } finally {refreshInFlight=false;if(refreshPending){refreshPending=false;if(!busy)void refresh()}} }
 $("start").onclick = async () => {
-  try{const treeUrls=treeSelection?.urls()||[];const manual=$('urls').value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);const parsed=core.parseUrls([...manual,...treeUrls]);if(!parsed.urls.length||parsed.invalid.length||parsed.overflowCount)throw Error('请提供 1–20 个有效 Ozon 类目链接，修正无效或超限地址。');
-    const options=core.validateOptions({targetCount:$("targetCount").value,minPrice:$("minPrice").value,maxPrice:$("maxPrice").value,pageMinRub:$("pageMinRub").value,pageMaxRub:$("pageMaxRub").value,fxRate:activeFxRate()});
-    const needsArchiveConfirmation=history.length>=5&&!!state;
-    if(needsArchiveConfirmation&&!confirm('历史类目批次已达 5 份，新任务可能替换最早批次；请先将需要的历史商品入池或同步。是否继续？'))return;
-    await perform({type:"categoryStart",urls:parsed.urls,categoryLabels:categoryLabels(),...options,backgroundExperiment:$("backgroundExperiment").checked,confirmArchiveOverflow:needsArchiveConfirmation});
+  try{
+    const {urls,categoryLabels:labelsMap,options}=readSetupForm();
+    const confirmArchive=confirmArchiveIfNeeded();
+    if(confirmArchive===null)return;
+    const taskName=$('taskProfileName')?.value.trim()||'';
+    const matchedProfile=loadedTaskProfileId&&taskName===loadedTaskProfileName?loadedTaskProfileId:'';
+    await perform({type:"categoryStart",urls,categoryLabels:labelsMap,...options,taskProfileId:matchedProfile,taskProfileName:matchedProfile?loadedTaskProfileName:'',backgroundExperiment:$("backgroundExperiment").checked,confirmArchiveOverflow:confirmArchive});
   }catch(e){$("message").textContent=e.message;}
 };
-async function perform(message){if(busy)return;actionRevision++;refreshSequence++;busy=true;render(state);try{const r=await send(message);busy=false;render(Object.hasOwn(r,'batch')?r.batch:state,Array.isArray(r.history)?r.history:history);let note=r.message||r.batch?.message||'操作已完成。';if(message.type==='categoryAddPool'){note=r.added>0?`已新增 ${r.added} 件到本机商品池 · 重复 ${r.duplicates||0} · 历史排除 ${r.historySkipped||0}`:r.duplicates>0?`本批 ${r.duplicates} 件均已在商品池中（新增 0 件），可点右上角打开商品池切换「全部状态」查看。`:`未新增商品（历史排除 ${r.historySkipped||0} · 无效或待复核 ${r.riskSkipped||0}）`;const link=document.querySelector('a.pool-link'),targetId=message.batchId||state?.id||'';if(link&&targetId)link.href=`product-pool.html?batchId=${encodeURIComponent(targetId)}${r.added===0&&r.duplicates>0?'&filter=all':''}`;}$("message").textContent=note;}catch(e){busy=false;render(state);$("message").textContent=e.message;}}
+if($("saveTaskProfile"))$("saveTaskProfile").onclick=async()=>{
+  try{
+    const name=$('taskProfileName')?.value.trim()||'';
+    if(!name)throw Error('请先输入常用任务名称再保存');
+    const {urls,categoryLabels:labelsMap,options}=readSetupForm();
+    const taskId=loadedTaskProfileId&&name===loadedTaskProfileName?loadedTaskProfileId:'';
+    const r=await perform({type:'categoryTaskProfileSave',taskId,name,urls,categoryLabels:labelsMap,...options});
+    if(r?.task?.id){loadedTaskProfileId=r.task.id;loadedTaskProfileName=r.task.name;}
+  }catch(e){$("message").textContent=e.message;}
+};
+for(const [btnId,mode] of [['continueRemaining','remaining_only'],['continueNextRound','resume_all']]){
+  if($(btnId))$(btnId).onclick=()=>{
+    if(!state||!["completed","stopped","failed"].includes(state.status))return;
+    const confirmArchive=confirmArchiveIfNeeded();
+    if(confirmArchive===null)return;
+    void perform({type:'categoryContinueNextRound',batchId:state.id,mode,confirmArchiveOverflow:confirmArchive,backgroundExperiment:$("backgroundExperiment").checked});
+  };
+}
+async function perform(message){if(busy)return null;actionRevision++;refreshSequence++;busy=true;render(state);try{const r=await send(message);busy=false;render(Object.hasOwn(r,'batch')?r.batch:state,Array.isArray(r.history)?r.history:history,Array.isArray(r.tasks)?r.tasks:savedTasks);let note=r.message||r.batch?.message||'操作已完成。';if(message.type==='categoryAddPool'){note=r.added>0?`已新增 ${r.added} 件到本机商品池 · 重复 ${r.duplicates||0} · 历史排除 ${r.historySkipped||0}`:r.duplicates>0?`本批 ${r.duplicates} 件均已在商品池中（新增 0 件），可点右上角打开商品池切换「全部状态」查看。`:`未新增商品（历史排除 ${r.historySkipped||0} · 无效或待复核 ${r.riskSkipped||0}）`;const link=document.querySelector('a.pool-link'),targetId=message.batchId||state?.id||'';if(link&&targetId)link.href=`product-pool.html?batchId=${encodeURIComponent(targetId)}${r.added===0&&r.duplicates>0?'&filter=all':''}`;}$("message").textContent=note;return r;}catch(e){busy=false;render(state);$("message").textContent=e.message;return null;}}
 for(const [id,type] of [["pause","categoryPause"],["resume","categoryResume"],["stop","categoryStop"],["addPool","categoryAddPool"],["syncWorkbench","categorySyncWorkbench"]]) if($(id))$(id).onclick=()=>perform({type,batchId:state?.id,...(id==='resume'?{backgroundExperiment:$("backgroundExperiment").checked}:{})});
 $("historyBatch").onchange=()=>{$("addHistoryPool").disabled=$("exportHistoryBatch").disabled=$("deleteHistoryBatch").disabled=busy||!$("historyBatch").value};
 $("addHistoryPool").onclick=()=>perform({type:'categoryAddPool',batchId:$("historyBatch").value});
@@ -198,7 +354,7 @@ $("exportDiagnostic").onclick=()=>{const batchId=$('diagnosticHistory').value||s
 $("diagnosticHistory").onchange=()=>{$("exportDiagnostic").disabled=busy||!state&&!$("diagnosticHistory").value};
 $("exportBatch").onclick=()=>exportCsv(state?.id);$("exportHistoryBatch").onclick=()=>exportCsv($("historyBatch").value);
 $("openScanTab").onclick=async()=>{try{if(!Number.isInteger(state?.tabId))return;const tab=await chrome.tabs.get(state.tabId);if(!tab)throw Error('采集页面已关闭');await chrome.tabs.update(tab.id,{active:true});if(tab.windowId!=null)await chrome.windows.update(tab.windowId,{focused:true});}catch(e){$("message").textContent=e.message}};
-chrome.storage.onChanged.addListener((changes,area)=>{if(area==='local'&&(changes.ozonCategoryBatchV1||changes.ozonCategoryBatchHistoryV1))void refresh();if(area==='local'&&changes.ozonCategoryFxRateV1){const val=changes.ozonCategoryFxRateV1.newValue;if(val&&typeof val==='object'){fxState={autoRate:val.autoRate??null,autoFetchedAt:Number(val.autoFetchedAt)||0,manualRate:val.manualRate??null};renderRubCnyHint();}}});
+chrome.storage.onChanged.addListener((changes,area)=>{if(area==='local'&&(changes.ozonCategoryBatchV1||changes.ozonCategoryBatchHistoryV1||changes.ozonCategoryTasksV1))void refresh();if(area==='local'&&changes.ozonCategoryFxRateV1){const val=changes.ozonCategoryFxRateV1.newValue;if(val&&typeof val==='object'){fxState={autoRate:val.autoRate??null,autoFetchedAt:Number(val.autoFetchedAt)||0,manualRate:val.manualRate??null};renderRubCnyHint();}}});
 window.addEventListener('focus',()=>void refresh());
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')void refresh()});
 window.setInterval(()=>{if(['running','scanning'].includes(state?.status)&&document.visibilityState==='visible')void refresh()},2500);

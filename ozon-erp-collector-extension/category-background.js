@@ -2,7 +2,10 @@
   "use strict";
   const KEY = "ozonCategoryBatchV1";
   const HISTORY_KEY = "ozonCategoryBatchHistoryV1";
+  const TASKS_KEY = "ozonCategoryTasksV1";
   const HISTORY_LIMIT = 5;
+  const TASKS_LIMIT = 30;
+  const CHECKPOINT_SKU_LIMIT = 5000;
   const ALARM = 'ozon-category-runner';
   const PROTECTION_KEY = 'ozonCategoryScanProtectionV1';
   const STALE_MS = 15000, MESSAGE_TIMEOUT_MS = 4000, RECOVERY_LIMIT = 2;
@@ -113,7 +116,7 @@
     if (win?.tabs?.[0]) return win.tabs[0];
     return chrome.tabs.create({url,active:false});
   }
-  async function save(batch) { reconcileExperiment(batch);batch.updatedAt = now();await chrome.storage.local.set({[KEY]:batch});if(batch.status==='running'){const alarm=await chrome.alarms?.get?.(ALARM);if(!alarm||alarm.periodInMinutes!==0.5)await chrome.alarms?.create?.(ALARM,{periodInMinutes:0.5})}else{await chrome.alarms?.clear?.(ALARM);if(experimentDebuggerTabId===batch.tabId&&batch.activityStatus==='focus-emulation-enabled')batch.activityStatus='focus-emulation-released';await releaseFocusExperiment(batch.tabId);await releaseTab(batch.tabId);await chrome.storage.local.set({[KEY]:batch})}return batch; }
+  async function save(batch) { reconcileExperiment(batch);batch.updatedAt = now();await chrome.storage.local.set({[KEY]:batch});if(batch.status==='running'){const alarm=await chrome.alarms?.get?.(ALARM);if(!alarm||alarm.periodInMinutes!==0.5)await chrome.alarms?.create?.(ALARM,{periodInMinutes:0.5})}else{await chrome.alarms?.clear?.(ALARM);if(experimentDebuggerTabId===batch.tabId&&batch.activityStatus==='focus-emulation-enabled')batch.activityStatus='focus-emulation-released';await releaseFocusExperiment(batch.tabId);await releaseTab(batch.tabId);await chrome.storage.local.set({[KEY]:batch})}if(batch?.taskProfileId)await syncTaskCheckpoint(batch);return batch; }
   function bounded(promise,ms=MESSAGE_TIMEOUT_MS){let timer;return Promise.race([promise,new Promise(resolve=>{timer=setTimeout(()=>resolve(null),ms)})]).finally(()=>clearTimeout(timer))}
   function phase(batch,mode,message){batch.pageMode=mode;batch.message=message;return batch}
   async function waitStatus(batch,message){if(batch.pageMode!=='waiting'||batch.message!==message){phase(batch,'waiting',message);await save(batch)}}
@@ -149,6 +152,117 @@
   }
   function snapshot() { return read().then(batch => batch ? { batch: clone(batch), stores: clone(batch.results || {}) } : null); }
   async function snapshotHistory() { return clone((await chrome.storage.local.get(HISTORY_KEY))[HISTORY_KEY] || []); }
+  async function readTasks() {
+    const raw = (await chrome.storage.local.get(TASKS_KEY))[TASKS_KEY];
+    return Array.isArray(raw) ? clone(raw) : [];
+  }
+  async function writeTasks(tasks) {
+    const clean = (Array.isArray(tasks) ? tasks : []).slice(0, TASKS_LIMIT);
+    await chrome.storage.local.set({ [TASKS_KEY]: clean });
+    return clean;
+  }
+  function reconcileCheckpointPageUrl(cpPageUrl, baseUrl, options) {
+    const expectedBase = core.pricePageUrl(baseUrl, options);
+    if (!cpPageUrl || !core.samePage(cpPageUrl, baseUrl)) return expectedBase;
+    const exact = core.exactPageUrl(cpPageUrl);
+    if (!exact) return expectedBase;
+    if (exact === expectedBase) return exact;
+    if (core.paginationUrl?.(exact, expectedBase)) return exact;
+    return expectedBase;
+  }
+  function capUniqueList(list, limit) {
+    const seen = new Set();
+    for (const item of Array.isArray(list) ? list : []) {
+      const s = String(item || '').trim();
+      if (s) seen.add(s);
+    }
+    const arr = [...seen];
+    return arr.length > limit ? arr.slice(arr.length - limit) : arr;
+  }
+  function computeProfileStats(profile) {
+    const urls = Array.isArray(profile?.urls) ? profile.urls : [];
+    const cps = profile?.checkpoints || {};
+    let exhaustedCount = 0;
+    let observedTotal = 0;
+    for (const url of urls) {
+      const cp = cps[core.keyFromUrl(url)];
+      if (!cp) continue;
+      if (cp.exhausted === true) exhaustedCount++;
+      observedTotal += Number(cp.observedCount ?? cp.observedSkus?.length ?? 0) || 0;
+    }
+    return {
+      totalCategories: urls.length,
+      exhaustedCount,
+      remainingCategories: Math.max(0, urls.length - exhaustedCount),
+      observedTotal,
+      priorQualifiedCount: (profile?.priorQualifiedSkuIds || []).length
+    };
+  }
+  const taskProfileSummary = profile => ({ ...clone(profile), stats: computeProfileStats(profile) });
+  async function syncTaskCheckpoint(batch) {
+    if (!batch?.taskProfileId) return;
+    const tasks = await readTasks();
+    const index = tasks.findIndex(t => t.id === batch.taskProfileId);
+    if (index < 0) return;
+    const profile = tasks[index];
+    profile.checkpoints ||= {};
+    profile.batchStoreCounts ||= {};
+    for (const task of batch.stores || []) {
+      const key = task.sellerKey || core.keyFromUrl(task.url);
+      if (!key) continue;
+      const prevCp = profile.checkpoints[key] || {};
+      const observedSkus = capUniqueList([...(prevCp.observedSkus || []), ...(task.observedSkus || [])], CHECKPOINT_SKU_LIMIT);
+      const visitedPages = capUniqueList([...(prevCp.visitedPages || []), ...(task.visitedPages || [])], 200);
+      const bsKey = `${batch.id}:${key}`;
+      const prevStoreCount = Number(profile.batchStoreCounts[bsKey]) || 0;
+      const currStoreCount = Number(task.qualifiedCount) || 0;
+      let nextStoreQual = Number(prevCp.qualifiedCount) || 0;
+      if (currStoreCount >= prevStoreCount) {
+        nextStoreQual += currStoreCount - prevStoreCount;
+        profile.batchStoreCounts[bsKey] = currStoreCount;
+      }
+      profile.checkpoints[key] = {
+        pageUrl: task.pageUrl || prevCp.pageUrl || task.url,
+        visitedPages,
+        observedSkus,
+        exhausted: prevCp.exhausted === true || task.exhausted === true,
+        observedCount: observedSkus.length,
+        qualifiedCount: nextStoreQual,
+        updatedAt: now()
+      };
+    }
+    profile.batchQualifiedCounts ||= {};
+    const prevBatchCount = Number(profile.batchQualifiedCounts[batch.id]) || 0;
+    const currBatchCount = (batch.qualifiedSkuIds || []).length;
+    if (currBatchCount >= prevBatchCount) {
+      profile.totalQualifiedCount = Math.max(0, Number(profile.totalQualifiedCount) || 0) + (currBatchCount - prevBatchCount);
+      profile.batchQualifiedCounts[batch.id] = currBatchCount;
+    }
+    profile.priorQualifiedSkuIds = capUniqueList([...(profile.priorQualifiedSkuIds || []), ...(batch.priorQualifiedSkuIds || []), ...(batch.qualifiedSkuIds || [])], CHECKPOINT_SKU_LIMIT);
+    profile.lastBatchId = batch.id;
+    profile.updatedAt = now();
+    await writeTasks(tasks);
+  }
+  function selectContinuationEntries(source, mode = 'remaining_only') {
+    const stores = Array.isArray(source?.stores) ? source.stores : [];
+    const selected = [];
+    for (const task of stores) {
+      if (!task?.url) continue;
+      if (task.removedFromQueue === true || task.exhausted === true) continue;
+      if (task.status === 'skipped' && task.skipReason === '手动跳过') continue;
+      if (mode === 'remaining_only' && task.status === 'completed') continue;
+      selected.push({
+        url: task.url,
+        label: task.label || '',
+        checkpoint: {
+          pageUrl: task.pageUrl || task.url,
+          visitedPages: task.visitedPages || [],
+          observedSkus: task.observedSkus || []
+        }
+      });
+    }
+    return selected;
+  }
   const finished = batch => !!batch && ["completed", "stopped", "failed"].includes(batch.status);
   const emptyFinished = batch => finished(batch) && qualifiedTotal(batch) === 0;
   const historySummary = batch => ({ id: batch.id, status: batch.status, updatedAt: batch.updatedAt, qualifiedCount: qualifiedTotal(batch), storeCount: batch.stores?.length || 0 });
@@ -332,31 +446,254 @@
     if (!scanner.productAllowedForTaskQueue(p)) return null;
     return { ...p, sku, link };
   }
+  async function startCategoryBatch(existingBatch, config) {
+    if (existingBatch && ["running", "paused"].includes(existingBatch.status)) {
+      throw Error("已有类目批次正在运行或暂停，请先停止");
+    }
+    const entries = Array.isArray(config.entries) ? config.entries : [];
+    if (!entries.length || entries.length > 20) throw Error("请提供 1–20 个有效的 Ozon 类目链接");
+    const options = core.validateOptions(config.options || {});
+    if (existingBatch) {
+      const archived = await snapshotHistory();
+      if (archived.length >= HISTORY_LIMIT && !config.confirmArchiveOverflow) {
+        throw Error("类目历史已满，请先导出或入池，再明确确认轮换最旧批次");
+      }
+      archived.unshift(clone(existingBatch));
+      await chrome.storage.local.set({ [HISTORY_KEY]: archived.slice(0, HISTORY_LIMIT) });
+    }
+    const id = `category-${uuid()}`;
+    const priorQualifiedSkuIds = capUniqueList(config.priorQualifiedSkuIds, CHECKPOINT_SKU_LIMIT);
+    const stores = entries.map((entry, i) => {
+      const url = core.normalizeUrl(entry.url);
+      if (!url) throw Error("请提供 1–20 个有效的 Ozon 类目链接");
+      const kind = sourceKind(url);
+      const label = typeof entry.label === 'string' ? entry.label.trim().slice(0, 120) : '';
+      const cp = entry.checkpoint || {};
+      const targetPageUrl = reconcileCheckpointPageUrl(cp.pageUrl, url, options);
+      const visitedPages = capUniqueList(cp.visitedPages, 200);
+      const observedSkus = capUniqueList(cp.observedSkus, CHECKPOINT_SKU_LIMIT);
+      const hasCheckpoint = observedSkus.length > 0 || visitedPages.length > 0 || targetPageUrl !== core.pricePageUrl(url, options);
+      return {
+        sellerKey: core.keyFromUrl(url),
+        url,
+        pageUrl: targetPageUrl,
+        ...(core.rubRange(options) ? { pagePriceStatus: 'pending' } : {}),
+        sourceKind: kind,
+        ...(label ? { label, name: (kind === 'china' ? '中国专区 · ' : '普通类目 · ') + label } : {}),
+        status: i === 0 ? "scanning" : "pending",
+        observedCount: observedSkus.length,
+        qualifiedCount: 0,
+        pendingCount: 0,
+        observedSkus,
+        visitedPages,
+        ...(hasCheckpoint ? { resumedFromCheckpoint: true, note: `已续接上轮进度（已检查 ${observedSkus.length} 个商品）` } : {})
+      };
+    });
+    const batch = {
+      id,
+      sourceMode: "category",
+      status: "running",
+      currentIndex: 0,
+      tabId: null,
+      attemptId: null,
+      options,
+      stores,
+      results: {},
+      ...(priorQualifiedSkuIds.length ? { priorQualifiedSkuIds } : {}),
+      ...(config.taskProfileId ? { taskProfileId: config.taskProfileId } : {}),
+      ...(config.taskProfileName ? { taskProfileName: config.taskProfileName } : {}),
+      ...(config.continueMode ? { continueMode: config.continueMode } : {}),
+      updatedAt: now(),
+      message: config.startMessage || "类目扫描已开始",
+      addedCount: 0,
+      backgroundExperiment: config.backgroundExperiment === true,
+      activityStatus: config.backgroundExperiment === true ? 'starting' : 'native-background-only',
+      diagnosticEvents: []
+    };
+    diagnosticEvent(batch, 'start', config.continueMode || '');
+    await openCurrent(batch, true);
+    return batch;
+  }
   async function handle(message, sender = {}) {
     const m = message || {};
     if (!String(m.type || "").startsWith("category")) return null;
     return queue(async () => {
       let batch = await read();
       switch (m.type) {
-        case "categoryGet": return { ok: true, batch: clone(batch), history: (await snapshotHistory()).map(historySummary) };
+        case "categoryGet": return { ok: true, batch: clone(batch), history: (await snapshotHistory()).map(historySummary), tasks: (await readTasks()).map(taskProfileSummary) };
         case "categoryStart": {
-          if (batch && ["running", "paused"].includes(batch.status)) throw Error("已有类目批次正在运行或暂停，请先停止");
           const parsed = core.parseUrls(m.urls, 20);
           const urls = Array.isArray(parsed) ? parsed : parsed.urls;
           if (!urls?.length||parsed.invalid?.length||parsed.overflowCount) throw Error("请提供 1–20 个有效的 Ozon 类目链接");
-          const options = core.validateOptions({ targetCount: m.targetCount, minPrice: m.minPrice, maxPrice: m.maxPrice, pageMinRub:m.pageMinRub, pageMaxRub:m.pageMaxRub, fxRate:m.fxRate });
-          if (batch) {
-            const archived = await snapshotHistory();
-            if (archived.length >= HISTORY_LIMIT && !m.confirmArchiveOverflow) throw Error("类目历史已满，请先导出或入池，再明确确认轮换最旧批次");
-            archived.unshift(clone(batch));
-            await chrome.storage.local.set({ [HISTORY_KEY]: archived.slice(0,HISTORY_LIMIT) });
+          const entries = urls.map(url => ({
+            url,
+            label: m.categoryLabels && Object.hasOwn(m.categoryLabels, url) && typeof m.categoryLabels[url] === 'string' ? m.categoryLabels[url].trim().slice(0, 120) : ''
+          }));
+          batch = await startCategoryBatch(batch, {
+            entries,
+            options: { targetCount: m.targetCount, minPrice: m.minPrice, maxPrice: m.maxPrice, pageMinRub: m.pageMinRub, pageMaxRub: m.pageMaxRub, fxRate: m.fxRate, perCategoryLimit: m.perCategoryLimit },
+            confirmArchiveOverflow: m.confirmArchiveOverflow,
+            backgroundExperiment: m.backgroundExperiment,
+            taskProfileId: typeof m.taskProfileId === 'string' ? m.taskProfileId.trim() : '',
+            taskProfileName: typeof m.taskProfileName === 'string' ? m.taskProfileName.trim().slice(0, 80) : ''
+          });
+          return { ok: true, batch: clone(batch), tasks: (await readTasks()).map(taskProfileSummary) };
+        }
+        case "categoryContinueNextRound": {
+          const sourceId = m.batchId || batch?.id;
+          const source = batch?.id === sourceId ? batch : (await snapshotHistory()).find(x => x.id === sourceId);
+          if (!source) throw Error("找不到要续扫的类目批次");
+          if (["running", "paused"].includes(source.status)) throw Error("请先停止或结束该批次，再续扫下一轮");
+          const mode = m.mode === 'resume_all' ? 'resume_all' : 'remaining_only';
+          const entries = selectContinuationEntries(source, mode);
+          if (!entries.length) {
+            throw Error(mode === 'remaining_only' ? "本批已无剩余未完成类目，可使用「继续扫下一轮」或重新新建扫描" : "本批所有类目均已扫描到底或已移出，没有可继续的类目");
           }
-          const id = `category-${uuid()}`;
-          const stores = urls.map((url, i) => {const kind=sourceKind(url),label=m.categoryLabels&&Object.hasOwn(m.categoryLabels,url)&&typeof m.categoryLabels[url]==='string'?m.categoryLabels[url].trim().slice(0,120):'';return { sellerKey: core.keyFromUrl(url), url, pageUrl:core.pricePageUrl(url,options), ...(core.rubRange(options)?{pagePriceStatus:'pending'}:{}), sourceKind:kind, ...(label?{label,name:(kind==='china'?'中国专区 · ':'普通类目 · ')+label}:{}), status: i === 0 ? "scanning" : "pending", observedCount: 0, qualifiedCount: 0, pendingCount: 0, observedSkus: [], visitedPages: [] }});
-          batch = { id, sourceMode: "category", status: "running", currentIndex: 0, tabId: null, attemptId: null, options, stores, results: {}, updatedAt: now(), message: "类目扫描已开始", addedCount: 0, backgroundExperiment: m.backgroundExperiment===true, activityStatus: m.backgroundExperiment===true?'starting':'native-background-only', diagnosticEvents:[] };
-          diagnosticEvent(batch,'start');
-          await openCurrent(batch, true);
-          return { ok: true, batch: clone(batch) };
+          const optSource = {
+            ...(source.options || {}),
+            ...(m.targetCount !== undefined ? { targetCount: m.targetCount } : {}),
+            ...(m.minPrice !== undefined ? { minPrice: m.minPrice } : {}),
+            ...(m.maxPrice !== undefined ? { maxPrice: m.maxPrice } : {}),
+            ...(m.pageMinRub !== undefined ? { pageMinRub: m.pageMinRub } : {}),
+            ...(m.pageMaxRub !== undefined ? { pageMaxRub: m.pageMaxRub } : {}),
+            ...(m.fxRate !== undefined ? { fxRate: m.fxRate } : {}),
+            ...(m.perCategoryLimit !== undefined ? { perCategoryLimit: m.perCategoryLimit } : {})
+          };
+          const priorQualifiedSkuIds = capUniqueList([...(source.priorQualifiedSkuIds || []), ...(source.qualifiedSkuIds || [])], CHECKPOINT_SKU_LIMIT);
+          batch = await startCategoryBatch(batch, {
+            entries,
+            options: optSource,
+            priorQualifiedSkuIds,
+            confirmArchiveOverflow: m.confirmArchiveOverflow,
+            backgroundExperiment: typeof m.backgroundExperiment === 'boolean' ? m.backgroundExperiment : source.backgroundExperiment,
+            taskProfileId: source.taskProfileId || '',
+            taskProfileName: source.taskProfileName || '',
+            continueMode: mode,
+            startMessage: mode === 'remaining_only' ? `已续接剩余 ${entries.length} 个类目开始新一轮扫描` : `已从上次进度续接 ${entries.length} 个类目开始下一轮扫描`
+          });
+          if (source.taskProfileId) {
+            const tasks = await readTasks();
+            const target = tasks.find(t => t.id === source.taskProfileId);
+            if (target) {
+              target.runCount = (Number(target.runCount) || 0) + 1;
+              target.lastRunAt = now();
+              target.lastBatchId = batch.id;
+              await writeTasks(tasks);
+            }
+          }
+          return { ok: true, batch: clone(batch), history: (await snapshotHistory()).map(historySummary), tasks: (await readTasks()).map(taskProfileSummary) };
+        }
+        case "categoryTaskProfileSave": {
+          const name = String(m.name || '').trim().slice(0, 80);
+          if (!name) throw Error("请输入任务名称");
+          const parsed = core.parseUrls(m.urls, 20);
+          const urls = Array.isArray(parsed) ? parsed : parsed.urls;
+          if (!urls?.length || parsed.invalid?.length || parsed.overflowCount) throw Error("请提供 1–20 个有效的 Ozon 类目链接");
+          const options = core.validateOptions({ targetCount: m.targetCount, minPrice: m.minPrice, maxPrice: m.maxPrice, pageMinRub: m.pageMinRub, pageMaxRub: m.pageMaxRub, fxRate: m.fxRate, perCategoryLimit: m.perCategoryLimit });
+          const categoryLabels = {};
+          for (const url of urls) {
+            if (m.categoryLabels && Object.hasOwn(m.categoryLabels, url) && typeof m.categoryLabels[url] === 'string') {
+              const lbl = m.categoryLabels[url].trim().slice(0, 120);
+              if (lbl) categoryLabels[url] = lbl;
+            }
+          }
+          const tasks = await readTasks();
+          const taskId = String(m.taskId || '').trim();
+          const existingIdx = taskId ? tasks.findIndex(t => t.id === taskId) : -1;
+          const stamp = now();
+          let profile;
+          if (existingIdx >= 0) {
+            profile = tasks[existingIdx];
+            profile.name = name;
+            profile.urls = urls;
+            profile.categoryLabels = categoryLabels;
+            profile.options = options;
+            profile.updatedAt = stamp;
+            tasks.splice(existingIdx, 1);
+            tasks.unshift(profile);
+          } else {
+            profile = {
+              id: `task-${uuid()}`,
+              name,
+              urls,
+              categoryLabels,
+              options,
+              checkpoints: {},
+              priorQualifiedSkuIds: [],
+              batchQualifiedCounts: {},
+              batchStoreCounts: {},
+              runCount: 0,
+              totalQualifiedCount: 0,
+              lastBatchId: null,
+              createdAt: stamp,
+              updatedAt: stamp,
+              lastRunAt: null
+            };
+            tasks.unshift(profile);
+          }
+          const saved = await writeTasks(tasks);
+          return { ok: true, task: taskProfileSummary(profile), tasks: saved.map(taskProfileSummary), message: `已保存常用类目任务「${name}」` };
+        }
+        case "categoryTaskProfileDelete": {
+          const id = String(m.taskId || '').trim();
+          const tasks = await readTasks();
+          const next = tasks.filter(t => t.id !== id);
+          if (next.length === tasks.length) throw Error("找不到要删除的常用类目任务");
+          await writeTasks(next);
+          return { ok: true, tasks: next.map(taskProfileSummary), message: "已删除常用类目任务" };
+        }
+        case "categoryTaskProfileReset": {
+          const id = String(m.taskId || '').trim();
+          const tasks = await readTasks();
+          const target = tasks.find(t => t.id === id);
+          if (!target) throw Error("找不到要重置的常用类目任务");
+          target.checkpoints = {};
+          target.priorQualifiedSkuIds = [];
+          target.batchQualifiedCounts = {};
+          target.batchStoreCounts = {};
+          target.runCount = 0;
+          target.totalQualifiedCount = 0;
+          target.lastBatchId = null;
+          target.lastRunAt = null;
+          target.updatedAt = now();
+          await writeTasks(tasks);
+          return { ok: true, task: taskProfileSummary(target), tasks: tasks.map(taskProfileSummary), message: `已重置「${target.name}」的扫描进度，将从第 1 页重新扫描` };
+        }
+        case "categoryTaskProfileRun": {
+          const id = String(m.taskId || '').trim();
+          const tasks = await readTasks();
+          const target = tasks.find(t => t.id === id);
+          if (!target) throw Error("找不到要运行的常用类目任务");
+          const mode = m.mode === 'fresh' ? 'fresh' : 'resume_all';
+          const entries = [];
+          for (const url of target.urls || []) {
+            const key = core.keyFromUrl(url);
+            const cp = mode === 'fresh' ? null : target.checkpoints?.[key];
+            if (mode !== 'fresh' && cp?.exhausted === true) continue;
+            entries.push({ url, label: target.categoryLabels?.[url] || '', checkpoint: cp || null });
+          }
+          if (!entries.length) throw Error("该常用任务中的类目已全部扫描到底，可先「重置进度」后再重跑");
+          const priorQualifiedSkuIds = mode === 'fresh' ? [] : capUniqueList(target.priorQualifiedSkuIds, CHECKPOINT_SKU_LIMIT);
+          batch = await startCategoryBatch(batch, {
+            entries,
+            options: target.options || {},
+            priorQualifiedSkuIds,
+            confirmArchiveOverflow: m.confirmArchiveOverflow,
+            backgroundExperiment: m.backgroundExperiment,
+            taskProfileId: target.id,
+            taskProfileName: target.name,
+            continueMode: mode === 'fresh' ? '' : 'task_profile_resume',
+            startMessage: `已按任务「${target.name}」进度启动扫描（${entries.length} 个类目）`
+          });
+          const refreshedTasks = await readTasks();
+          const refreshedTarget = refreshedTasks.find(t => t.id === target.id);
+          if (refreshedTarget) {
+            refreshedTarget.runCount = (Number(refreshedTarget.runCount) || 0) + 1;
+            refreshedTarget.lastRunAt = now();
+            refreshedTarget.lastBatchId = batch.id;
+            await writeTasks(refreshedTasks);
+          }
+          return { ok: true, batch: clone(batch), history: (await snapshotHistory()).map(historySummary), tasks: (await readTasks()).map(taskProfileSummary) };
         }
         case "categoryPause":
         case "categoryStop": {
@@ -456,6 +793,7 @@
           phase(batch,effectiveHidden?'background':'foreground',effectiveHidden?'后台扫描类目商品（页面加载可能较慢）':'正在扫描类目商品');
           const pool = await scope.OzonProductPoolDB.lookup((m.products || []).map(raw => raw?.sku));
           const qualifiedSeen = new Set(batch.qualifiedSkuIds || []);
+          const priorSeen = new Set(batch.priorQualifiedSkuIds || []);
           const beforeQualified=qualifiedSeen.size;
           const decisions=task.diagnosticDecisions ||= {};
           const discovered=new Set(task.discoveredSkus||[]);
@@ -466,14 +804,17 @@
               decisions[sku]=outcome;
             }
           }
-          const remaining = Math.max(0, batch.options.targetCount - qualifiedSeen.size);
+          const batchRemaining = Math.max(0, batch.options.targetCount - qualifiedSeen.size);
+          const taskAccepted = Object.keys(batch.results?.[task.sellerKey]?.products || {}).length;
+          const perCatLimit = Number.isInteger(batch.options?.perCategoryLimit) ? batch.options.perCategoryLimit : null;
+          const remaining = perCatLimit !== null ? Math.min(batchRemaining, Math.max(0, perCatLimit - taskAccepted)) : batchRemaining;
           const products = [];
           for (const raw of m.products || []) {
             const sku=String(raw?.sku||'').trim();
             if (products.length>=remaining) {if(/^\d{1,24}$/.test(sku)&&!finalOutcomes.has(decisions[sku]))decisions[sku]='target_limit';continue;}
             const product = normalizeSampleProduct(raw, batch);
             let reason='invalid_candidate';
-            if(product){if(qualifiedSeen.has(product.sku))reason=decisions[product.sku]==='accepted'||batch.results?.[task.sellerKey]?.products?.[product.sku]?'accepted':'batch_duplicate';else if(pool.products?.[product.sku])reason='pool_duplicate';else if(Object.hasOwn(pool.history||{},product.sku))reason='history_duplicate';else {reason='accepted';qualifiedSeen.add(product.sku);products.push(product);}}
+            if(product){if(qualifiedSeen.has(product.sku))reason=decisions[product.sku]==='accepted'||batch.results?.[task.sellerKey]?.products?.[product.sku]?'accepted':'batch_duplicate';else if(priorSeen.has(product.sku))reason='history_duplicate';else if(pool.products?.[product.sku])reason='pool_duplicate';else if(Object.hasOwn(pool.history||{},product.sku))reason='history_duplicate';else {reason='accepted';qualifiedSeen.add(product.sku);products.push(product);}}
             if(/^\d{1,24}$/.test(sku)&&decisions[sku]!=='accepted')decisions[sku]=reason;
           }
           const title=typeof m.categoryName==='string'?m.categoryName.trim().slice(0,120):'';
@@ -490,9 +831,25 @@
           task.diagnosticCounts=diagnosisCounts(task);
           batch.diagnosticBrowser=await browserSnapshot(batch,m.pageReportedHidden,m.pageFocused);
           task.observedSkus = [...new Set([...task.observedSkus, ...Object.keys(output.products)])];
-          const stop = finishAtTarget(batch);
-          if (stop) {diagnosticEvent(batch,'target_reached');await stopScanner(batch);}
-          await save(batch); return { ok: true, stop, pageNativeHidden: batch.backgroundExperiment?await nativePageHidden(batch.tabId):false, ...(m.compactAck?{}:{batch:clone(batch)}) };
+          const stopBatch = finishAtTarget(batch);
+          const hitPerCategoryLimit = !stopBatch && perCatLimit !== null && task.qualifiedCount >= perCatLimit;
+          if (stopBatch) {
+            diagnosticEvent(batch,'target_reached');
+            await stopScanner(batch);
+            await save(batch);
+          } else if (hitPerCategoryLimit) {
+            task.status = "completed";
+            task.perCategoryLimitReached = true;
+            task.note = `已达单类目上限 ${perCatLimit} 件，自动切换下一类目`;
+            delete task.waitSince; delete task.waitReason;
+            diagnosticEvent(batch,'category_limit_reached',task.note);
+            await stopScanner(batch);
+            await advance(batch);
+          } else {
+            await save(batch);
+          }
+          const stop = stopBatch || hitPerCategoryLimit;
+          return { ok: true, stop, pageNativeHidden: batch.backgroundExperiment?await nativePageHidden(batch.tabId):false, ...(m.compactAck?{}:{batch:clone(batch)}) };
         }
         case "categoryWait": {
           const task = assertActive(batch,m,sender);
@@ -538,7 +895,7 @@
           }
           if (m.complete === true && m.reason === "visible_catalog_end" && !effectivelyHidden) {
             diagnosticEvent(batch,'category_complete');
-            task.status = "completed"; delete task.waitSince; delete task.waitReason;
+            task.status = "completed"; task.exhausted = true; delete task.waitSince; delete task.waitReason;
             await advance(batch);
             return {ok:true,batch:clone(batch)};
           } else { await stopScanner(batch);delete task.waitSince;delete task.waitReason;task.status = "partial";batch.status = "paused";const verificationWhy={http_denied:'检测到站点访问受限（HTTP 状态提示），需人工检查',access_restricted:'检测到站点访问受限，需人工检查',security_prompt:'检测到站点安全验证，需人工完成',login_required:'页面要求登录，请在采集页人工处理'};

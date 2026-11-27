@@ -7,7 +7,7 @@ let created = [], reloads=0, sentMessages=[], debuggerCommands=[], debuggerAttac
 const storage = { async get(k) { return k ? { ...(data[k] ? { [k]: data[k] } : {}) } : { ...data }; }, async set(v) { Object.assign(data, v); }, async remove(k) { for (const key of Array.isArray(k) ? k : [k]) delete data[key]; } };
 let declaredDebugger=true;
 const chrome = {
-  runtime:{getManifest:()=>({version:'0.6.81',permissions:declaredDebugger?['debugger']:[]})},
+  runtime:{getManifest:()=>({version:'0.6.82',permissions:declaredDebugger?['debugger']:[]})},
   storage: { local: storage,session:{async get(k){return {[k]:sessionData[k]}},async set(v){Object.assign(sessionData,v)},async remove(k){delete sessionData[k]}} },
   alarms:{async get(n){return alarms.get(n)},async create(n,o){alarms.set(n,o)},async clear(n){alarms.delete(n)}},
   tabs: {
@@ -532,4 +532,122 @@ assert.ok(batch.diagnosticEvents.some(e => e.type === 'tab_crash_limit'));
 assert.equal(batch.results['category:333'].products['88001'].sku, '88001');
 scriptFail = false; tickMode = 'running';
 await runner.handle({ type: 'categoryStop' });
+
+// V1.64: perCategoryLimit rotates cleanly across categories before batch targetCount.
+await runner.handle({
+  type: 'categoryStart',
+  urls: 'https://www.ozon.ru/category/c1-901/\nhttps://www.ozon.ru/category/c2-902/\nhttps://www.ozon.ru/category/c3-903/',
+  targetCount: 4,
+  perCategoryLimit: 2,
+  minPrice: 10,
+  maxPrice: 500,
+  confirmArchiveOverflow: true
+});
+batch = (await runner.handle({ type: 'categoryGet' })).batch;
+const perCatRes1 = await runner.handle({
+  type: 'categorySample',
+  batchId: batch.id,
+  attemptId: batch.attemptId,
+  categoryUrl: batch.stores[0].url,
+  observedSkus: ['90101', '90102', '90103'],
+  products: [
+    { sku: '90101', name: 'P1', link: 'https://www.ozon.ru/product/p-90101', price: '50', qualified: true, shippingRisk: { type: 'clear' } },
+    { sku: '90102', name: 'P2', link: 'https://www.ozon.ru/product/p-90102', price: '60', qualified: true, shippingRisk: { type: 'clear' } },
+    { sku: '90103', name: 'P3', link: 'https://www.ozon.ru/product/p-90103', price: '70', qualified: true, shippingRisk: { type: 'clear' } }
+  ]
+}, { tab: { id: batch.tabId, url: batch.stores[0].url } });
+assert.equal(perCatRes1.stop, true, 'hitting perCategoryLimit stops scanning current category');
+batch = (await runner.handle({ type: 'categoryGet' })).batch;
+assert.equal(batch.status, 'running', 'batch remains running after perCategoryLimit advances to next category');
+assert.equal(batch.currentIndex, 1, 'perCategoryLimit advances to category 2');
+assert.equal(batch.stores[0].status, 'completed');
+assert.equal(batch.stores[0].perCategoryLimitReached, true);
+assert.equal(batch.stores[0].exhausted, undefined, 'perCategoryLimit does not mark category exhausted');
+assert.equal(batch.stores[0].qualifiedCount, 2, 'perCategoryLimit caps single category candidates');
+
+// Finish batch early on category 2 and test categoryContinueNextRound (remaining_only & resume_all).
+await runner.handle({ type: 'categoryStop' });
+batch = (await runner.handle({ type: 'categoryGet' })).batch;
+assert.equal(batch.status, 'stopped');
+
+// remaining_only includes uncompleted c2 (partial checkpoint) & c3 (pending), skips completed c1.
+await runner.handle({ type: 'categoryContinueNextRound', batchId: batch.id, mode: 'remaining_only', confirmArchiveOverflow: true });
+batch = (await runner.handle({ type: 'categoryGet' })).batch;
+assert.deepEqual(Array.from(batch.stores, s => s.sellerKey), ['category:902', 'category:903']);
+assert.deepEqual(Array.from(batch.priorQualifiedSkuIds || []), ['90101', '90102']);
+
+// Exhaust c2, then resume_all skips exhausted c2 and carries checkpoint of non-exhausted c3.
+await runner.handle({
+  type: 'categoryPageDone',
+  batchId: batch.id,
+  attemptId: batch.attemptId,
+  categoryUrl: batch.stores[0].url,
+  complete: true,
+  reason: 'visible_catalog_end'
+}, { tab: { id: batch.tabId, url: batch.stores[0].url } });
+batch = (await runner.handle({ type: 'categoryGet' })).batch;
+assert.equal(batch.stores[0].exhausted, true);
+const c3ResumeUrl = `${batch.stores[1].url}?page=2`;
+await runner.handle({
+  type: 'categorySample',
+  batchId: batch.id,
+  attemptId: batch.attemptId,
+  categoryUrl: batch.stores[1].url,
+  observedSkus: ['90101', '90301'],
+  products: [
+    { sku: '90101', name: 'Prior SKU duplicate', link: 'https://www.ozon.ru/product/p-90101', price: '50', qualified: true, shippingRisk: { type: 'clear' } },
+    { sku: '90301', name: 'P301', link: 'https://www.ozon.ru/product/p-90301', price: '80', qualified: true, shippingRisk: { type: 'clear' } }
+  ]
+}, { tab: { id: batch.tabId, url: batch.stores[1].url } });
+batch = (await runner.handle({ type: 'categoryGet' })).batch;
+assert.equal(batch.stores[1].qualifiedCount, 1, 'priorQualifiedSkuIds 90101 is filtered as prior duplicate');
+assert.equal(batch.stores[1].diagnosticDecisions['90101'], 'history_duplicate');
+await runner.handle({ type: 'categoryStop' });
+const endedRound2 = (await runner.handle({ type: 'categoryGet' })).batch;
+await runner.handle({ type: 'categoryContinueNextRound', batchId: endedRound2.id, mode: 'resume_all', confirmArchiveOverflow: true });
+batch = (await runner.handle({ type: 'categoryGet' })).batch;
+assert.deepEqual(Array.from(batch.stores, s => s.sellerKey), ['category:903'], 'resume_all omits exhausted category:902');
+assert.ok(batch.stores[0].observedSkus.includes('90301'));
+assert.ok(batch.priorQualifiedSkuIds.includes('90301'));
+await runner.handle({ type: 'categoryStop' });
+
+// V1.64: Saved reusable category task profiles lifecycle + checkpoint auto-sync.
+const savedResp = await runner.handle({
+  type: 'categoryTaskProfileSave',
+  name: '日常三类目',
+  urls: ['https://www.ozon.ru/category/c1-901/', 'https://www.ozon.ru/category/c2-902/'],
+  targetCount: 10,
+  perCategoryLimit: 5,
+  minPrice: 20,
+  maxPrice: 300,
+  pageMinRub: 1200,
+  pageMaxRub: 25000
+});
+assert.equal(savedResp.tasks.length, 1);
+const taskId = savedResp.task.id;
+await runner.handle({ type: 'categoryTaskProfileRun', taskId, confirmArchiveOverflow: true });
+batch = (await runner.handle({ type: 'categoryGet' })).batch;
+assert.equal(batch.taskProfileId, taskId);
+await runner.handle({
+  type: 'categorySample',
+  batchId: batch.id,
+  attemptId: batch.attemptId,
+  categoryUrl: batch.stores[0].pageUrl,
+  observedSkus: ['91001'],
+  pagePriceConfirmed: true,
+  products: [{ sku: '91001', name: 'T1', link: 'https://www.ozon.ru/product/p-91001', price: '100', qualified: true, shippingRisk: { type: 'clear' } }]
+}, { tab: { id: batch.tabId, url: batch.stores[0].pageUrl } });
+await runner.handle({ type: 'categoryStop' });
+let tasksAfterRun = (await runner.handle({ type: 'categoryGet' })).tasks;
+assert.equal(tasksAfterRun[0].runCount, 1);
+assert.equal(tasksAfterRun[0].totalQualifiedCount, 1);
+assert.ok(tasksAfterRun[0].priorQualifiedSkuIds.includes('91001'));
+assert.ok(tasksAfterRun[0].checkpoints['category:901'].observedSkus.includes('91001'));
+await runner.handle({ type: 'categoryTaskProfileReset', taskId });
+tasksAfterRun = (await runner.handle({ type: 'categoryGet' })).tasks;
+assert.equal(tasksAfterRun[0].runCount, 0);
+assert.equal(tasksAfterRun[0].totalQualifiedCount, 0);
+assert.equal(tasksAfterRun[0].priorQualifiedSkuIds.length, 0);
+await runner.handle({ type: 'categoryTaskProfileDelete', taskId });
+assert.equal((await runner.handle({ type: 'categoryGet' })).tasks.length, 0);
 console.log("category background runner tests passed");

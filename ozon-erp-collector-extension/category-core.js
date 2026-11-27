@@ -76,7 +76,14 @@
       if(!Number.isFinite(fx)||fx<0.1||fx>1000)throw Error('参考汇率无效');
       fxExtra={fxRate:fx};
     }
-    return {targetCount,minPrice,maxPrice,...rubRange(raw),...fxExtra};
+    const perLimitRaw=raw.perCategoryLimit;
+    let perLimitExtra={};
+    if(perLimitRaw!==null&&perLimitRaw!==undefined&&String(perLimitRaw).trim()!==''){
+      const per=Number(perLimitRaw);
+      if(!Number.isInteger(per)||per<1||per>500)throw Error('单类目上限须为1–500的整数');
+      perLimitExtra={perCategoryLimit:per};
+    }
+    return {targetCount,minPrice,maxPrice,...rubRange(raw),...fxExtra,...perLimitExtra};
   }
   function parseAmountDigits(t){
     if(!/^\d+(?:[.,]\d+)*$/.test(t))return null;

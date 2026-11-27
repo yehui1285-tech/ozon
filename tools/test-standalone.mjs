@@ -40,7 +40,7 @@ assert.ok(fs.existsSync(path.join(dir,'category-background.js')));
 assert.ok(fs.existsSync(path.join(dir,'category-catalog.js')));
 assert.ok(fs.existsSync(path.join(dir,'category-catalog.json')));
 assert.doesNotMatch(read('category.html'),/id="syncWorkbench"/);
-for (const id of ['rubCnyBar','rubCnyAmount','rubCnyWarn','fxEditBtn','fxRateInput']) {
+for (const id of ['rubCnyBar','rubCnyAmount','rubCnyWarn','fxEditBtn','fxRateInput','perCategoryLimit','saveTaskProfile','savedTaskList','continueBar','continueRemaining','continueNextRound']) {
   assert.ok(read('category.html').includes(`id="${id}"`), `standalone category.html retains #${id}`);
 }
 assert.match(read('standalone-nav.css'), /#3a5a40/);
