@@ -1,12 +1,13 @@
 # CHANGELOG.md - Ozon 项目续接记录
 
-## 2026-11-27 - V1.62 / 0.6.80 修复卢布预筛确认卡顿并支持 Ozon 卢布卡片直接扫描入池（待上线发布）
+## 2026-11-27 - V1.62 / 0.6.80 修复卢布预筛确认卡顿并支持 Ozon 卢布卡片直接扫描入池（已上线站点版本 91）
 
 - 卢布页面预筛确认修复：`category-scanner.js` 的 `confirmRubPrice` 支持左侧价格标题附带信息图标（`价格 ⓘ`），当左侧预设单选文字未渲染、无非卢布币种且两个卢布数值精准命中时，结合主商品列表明确的 `₽` 标价（排除 `毛子ERP` 内 `跟卖最低价` 换算文本）确认生效并开始滚动，解决 Ozon 卢布页卡住不滚动问题。
 - 卢布商品卡片扫描与复核支持：`store-scanner-core.js` 的 `parseCardText` 在无 `¥` 售价时提取商品卡 `₽` 主价格并保留 `₽` 后缀入池；`category-core.js`、`category-scanner.js`、`category-background.js`、`category.js` 支持人民币区间留空直接通过、或按任务 `fxRate`（自动每日汇率/手动设置）折算校验人民币复核区间，并同步共享核心到工作台（**无新增 D1 数据库迁移**）。
-- 打包与验证：回滚备份 `_备份_20261127_v162_rub_scan_support_before`（已轮换清理 `_备份_20261127_v158_device_batch_filter_before`，保留 `_备份_20261125_v151_pool_before` 及共 5 份常规备份）。Ozon `npm.cmd test`（含新增卢布卡解析、卢布换算复核与空白预设栏确认测试）、`verify-project.ps1`、双版发布构建（`ozon-erp-collector-extension.zip` SHA256 `ED2E2501E751DAA2402204A258D109BC8071A971718E7CC7E45DFBB452C5F7F2`；独立版 `ozon-standalone-extension.zip` SHA256 `9CD851A30C1A9279A25F0085B8ED8AC0E64C19AA00AE06282297542C557298D7`）、Workbench `sync-workbench-core --check`、`check-release-version.mjs`（`V1.61 → V1.62`）、`npm.cmd run build` 及 Workbench Ozon 测试全部通过；真实 Ozon 卢布模式长时扫描与独立版 `0.6.80` 升级待用户现场验收。
+- 打包与验证：回滚备份 `_备份_20261127_v162_rub_scan_support_before`（已轮换清理 `_备份_20261127_v158_device_batch_filter_before`，保留 `_备份_20261125_v151_pool_before` 及共 5 份常规备份）。Ozon `npm.cmd test`（含新增卢布卡解析、卢布换算复核与空白预设栏确认测试）、`verify-project.ps1`、双版发布构建（`ozon-erp-collector-extension.zip` SHA256 `ED2E2501E751DAA2402204A258D109BC8071A971718E7CC7E45DFBB452C5F7F2`；独立版 `ozon-standalone-extension.zip` SHA256 `9CD851A30C1A9279A25F0085B8ED8AC0E64C19AA00AE06282297542C557298D7`）、Workbench `sync-workbench-core --check`、`check-release-version.mjs`（`V1.61 → V1.62`）、`npm.cmd run build` 及 Workbench Ozon 测试全部通过。
+- 线上部署：Codex 已将工作台 V1.62 部署上线（站点版本 `91`，Workbench 提交 `570d239`，部署 ID `appgdep_6b090a124520819194f933b8593a0a82`，共享核心及扩展 `v0.6.80` SHA256 校验通过，生产构建与登录页 HTTP 200 通过，下载接口配置为 `ozon-erp-collector-extension-v0.6.80.zip`，无新增 D1 迁移；登录后实际下载尚未验证）。真实 Ozon 卢布模式长时扫描与独立版 `0.6.80` 升级待用户现场验收。
 
-## 2026-11-27 - V1.61 / 0.6.79 类目选品卢布预筛实时折算人民币金额与防冲突提示（已随 V1.62 合并待发布）
+## 2026-11-27 - V1.61 / 0.6.79 类目选品卢布预筛实时折算人民币金额与防冲突提示（已随 V1.62 上线站点版本 91）
 
 - 实时卢布折算人民币提示：`category.html`、`category.css`、`category.js` 在卢布预筛输入框下方新增动态换算行（两端均空自动隐藏），直接按用户输入实时显示具体人民币金额（如 `约合 ¥84.7 – ¥423.7` / `约合 ¥84.7 起` / `约合 ¥423.7 以内`）；当同时填写人民币复核区间且与卢布折算无重叠时自动显示红字防冲突提醒。
 - 汇率机制与独立版兼容：采用“12 小时本机缓存自动每日拉取免费公开汇率（`open.er-api.com` / `fawazahmed0/currency-api` 双兜底）+ 断网沿用缓存 + 点击「调整汇率」手动覆盖与恢复自动”，无需登录工作台且不改动原有筛选与核价逻辑；`build-standalone.mjs` 自动同步独立分享版（**无新增 D1 数据库迁移**）。
