@@ -35,7 +35,24 @@
         <div class="param-group"><div class="param-label"><span>人民币复核区间</span><span class="param-unit">CNY ¥ · 可选</span></div><div class="range-pair"><label class="input-wrap"><span class="input-prefix">¥</span><input id="minPrice" type="number" min="0" step="0.01" placeholder="不限制" aria-label="最低价格（可选，CNY ¥）"></label><span class="range-sep">–</span><label class="input-wrap"><span class="input-prefix">¥</span><input id="maxPrice" type="number" min="0" step="0.01" placeholder="不限制" aria-label="最高价格（可选，CNY ¥）"></label></div></div>
         <div class="param-group"><div class="param-label"><span>Ozon 页面预筛</span><span class="param-unit">RUB ₽ · 可选</span></div><div class="range-pair"><label class="input-wrap"><span class="input-prefix">₽</span><input id="pageMinRub" type="number" min="0" max="10000000" step="1" placeholder="不限制" aria-label="页面最低价（可选，RUB ₽）"></label><span class="range-sep">–</span><label class="input-wrap"><span class="input-prefix">₽</span><input id="pageMaxRub" type="number" min="0" max="10000000" step="1" placeholder="不限制" aria-label="页面最高价（可选，RUB ₽）"></label></div></div>
       </div>
-      <p class="notice rule-note">卢布区间用于 Ozon 网页预筛选，两端均填写或均留空；人民币区间仍用于采集后的复核，不自动换算汇率。</p>
+      <div id="rubCnyBar" class="rub-cny-bar" hidden>
+        <div class="rub-cny-main">
+          <span id="rubCnyAmount" class="rub-cny-amount"></span>
+          <span id="rubCnyWarn" class="rub-cny-warn" hidden></span>
+        </div>
+        <div class="rub-cny-actions">
+          <button id="fxEditBtn" class="fx-link" type="button">调整汇率</button>
+          <span id="fxEditor" class="fx-editor" hidden>
+            <label class="fx-label" for="fxRateInput">1¥ =</label>
+            <input id="fxRateInput" type="number" min="0.1" max="1000" step="0.01" aria-label="每1元人民币折合卢布数">
+            <span class="fx-unit">₽</span>
+            <button id="fxSaveBtn" class="compact soft-primary" type="button">保存</button>
+            <button id="fxAutoBtn" class="compact" type="button" hidden>恢复自动</button>
+            <button id="fxCancelBtn" class="compact" type="button">取消</button>
+          </span>
+        </div>
+      </div>
+      <p class="notice rule-note">卢布区间用于 Ozon 网页预筛选，两端均填写或均留空；人民币区间用于采集后复核（上方折算仅作填写参考）。</p>
       <div class="setup-footer"><div class="actions"><button class="primary" id="start">开始类目选品</button><button id="pause">暂停</button><button id="resume">继续</button><button class="danger" id="stop">停止</button></div><p id="message" role="status" aria-live="polite"></p></div>
       <div class="experiment-note"><label for="backgroundExperiment"><input id="backgroundExperiment" type="checkbox" disabled>后台持续采集（试验，暂不可用）</label><p class="notice">当前 Chrome 扩展权限不支持按需申请调试连接，试验模式已停用。类目采集仍使用普通后台扫描；站点验证仍需人工处理。</p></div>
     </section>

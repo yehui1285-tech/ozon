@@ -1,11 +1,16 @@
 # Ozon 当前状态
 
-更新时间：2026-11-27（工作台 V1.60 本地已提交待 Codex 上线，扩展 `v0.6.78` 双版发布包已生成，无新增 D1 迁移；当前线上仍运行 V1.59 站点版本 `88`）。
+更新时间：2026-11-27（工作台 V1.61 本地已提交待 Codex 上线，扩展 `v0.6.79` 双版发布包已生成，无新增 D1 迁移；当前线上仍运行 V1.59 站点版本 `88`）。
 用途：新对话快速续接。详细过程按需查 [CHANGELOG](CHANGELOG.md) 和 [历史入口](docs/history/README.md)，不把历史待办当作当前任务。
 
 ## 当前版本与结论
 
-- V1.60 / 0.6.78（本机已构建与提交，待发布上线）：针对长时间类目扫描导致标签页 `Out of Memory` 崩溃及恢复卡在死标签页的问题，完成防崩溃减负、主动换页释内存与崩溃自动重建续扫改造（**无新增 D1 数据库迁移**）：
+- V1.61 / 0.6.79（本机已构建与提交，待发布上线）：在「类目选品」页面（`category.html` / `category.css` / `category.js`）及独立分享版卢布预筛输入框下方新增实时人民币金额折算提示与双向区间防冲突校验（**无新增 D1 数据库迁移**）：
+  - 实时金额提示：填写 Ozon 页面卢布预筛时，下方直接显示折合后的人民币具体金额（如 `约合 ¥84.7 – ¥423.7` / `约合 ¥84.7 起` / `约合 ¥423.7 以内`），两个卢布框留空时自动隐藏、零干扰；同时填有人民币复核区间且两边无重叠时自动红字提醒 `与人民币区间无重叠`。
+  - 汇率来源：打开页面时静默按 12 小时缓存拉取免费公开汇率并持久化至本机（离线自动沿用缓存，默认兜底 `11.8`），并支持点击「调整汇率」手动覆盖与「恢复自动」。
+  - 验证与双线构建：Ozon 全量 `npm.cmd test`（含 `test-standalone.mjs` 独立版 `#rubCnyBar`/`#fxRateInput` 留存与账号隔离检查）、`verify-project.ps1`、双版 ZIP 构建（`ozon-erp-collector-extension.zip` SHA256 `A71B93043EB2C6F32ACC71178EA32D51D59B968562BAC0B28F3A5183C85BC083`；独立版 `ozon-standalone-extension.zip` SHA256 `CB27905557E8F021BB3A79356B35FBAC93D4FB84F2E836F65F1B188F5919C669`）、Workbench `sync-workbench-core --check`、`check-release-version.mjs`（`V1.60 → V1.61`）、`npm.cmd run build` 与 `ozon-workbench-nav.test.mjs` 全部通过。真实浏览器汇率自动拉取、输入折算手感及独立版 `0.6.79` 升级待现场验收。回滚备份 `_备份_20261127_v161_rub_cny_hint_before`。
+
+- V1.60 / 0.6.78（本机已包含在 V1.61 中待一并上线）：针对长时间类目扫描导致标签页 `Out of Memory` 崩溃及恢复卡在死标签页的问题，完成防崩溃减负、主动换页释内存与崩溃自动重建续扫改造（**无新增 D1 数据库迁移**）：
   - 主动重建标签页释内存（`category-background.js`）：切换类目与翻到下一页（`?page=N`）时，通过 `replaceTaskTab` 在同一任务窗口内新建干净标签页并更新 `batch.tabId` 存盘后再关闭旧页，彻底释放图片与 ERP DOM 渲染内存，且避免旧页迟到关闭事件误触发暂停。
   - 扫描器瘦身与提前翻页（`category-scanner.js`）：`readCards` 支持跳过已判定 SKU（`skipSkus`）及同卡多锚点去重，并向后台发送增量 `categorySample`（`compactAck: true` 省略冗余大体积 `batch` 回传）；单页扫描累计超过 `45` 次滚动或 `120` 件新发现且无待复查项、页面底部可见下一页链接时，主动触发翻页换页。
   - 崩溃自动识别与断点续扫（`category-background.js`、`category.js`）：看门狗连续 2 次无响应或连续 2 次注入失败（排除退出类目范围、登录/验证、`frozen`/`discarded` 状态），以及暂停后人工点「继续」发现页面脚本无响应时，自动触发 `recoverCrashedTab` 新建干净标签页从当前保存的 `pageUrl`、`observedSkus` 和候选结果断点续扫（同类目连续崩溃自动恢复上限 `3` 次，新发现 SKU 自动清零计数，达上限安全暂停提示）。

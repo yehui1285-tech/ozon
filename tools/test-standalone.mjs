@@ -40,6 +40,9 @@ assert.ok(fs.existsSync(path.join(dir,'category-background.js')));
 assert.ok(fs.existsSync(path.join(dir,'category-catalog.js')));
 assert.ok(fs.existsSync(path.join(dir,'category-catalog.json')));
 assert.doesNotMatch(read('category.html'),/id="syncWorkbench"/);
+for (const id of ['rubCnyBar','rubCnyAmount','rubCnyWarn','fxEditBtn','fxRateInput']) {
+  assert.ok(read('category.html').includes(`id="${id}"`), `standalone category.html retains #${id}`);
+}
 assert.doesNotMatch(read('background.js'),/wbSyncCategory/);
 assert.equal(read("product-pool-core.js"),fs.readFileSync("ozon-erp-collector-extension/product-pool-core.js","utf8"));
 // Run the generated pricing-page bridge with an in-memory local draft and real row patch core.

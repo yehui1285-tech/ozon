@@ -1,5 +1,11 @@
 # CHANGELOG.md - Ozon 项目续接记录
 
+## 2026-11-27 - V1.61 / 0.6.79 类目选品卢布预筛实时折算人民币金额与防冲突提示（待上线发布）
+
+- 实时卢布折算人民币提示：`category.html`、`category.css`、`category.js` 在卢布预筛输入框下方新增动态换算行（两端均空自动隐藏），直接按用户输入实时显示具体人民币金额（如 `约合 ¥84.7 – ¥423.7` / `约合 ¥84.7 起` / `约合 ¥423.7 以内`）；当同时填写人民币复核区间且与卢布折算无重叠时自动显示红字防冲突提醒。
+- 汇率机制与独立版兼容：采用“12 小时本机缓存自动每日拉取免费公开汇率（`open.er-api.com` / `fawazahmed0/currency-api` 双兜底）+ 断网沿用缓存 + 点击「调整汇率」手动覆盖与恢复自动”，无需登录工作台且不改动原有筛选与核价逻辑；`build-standalone.mjs` 自动同步独立分享版（**无新增 D1 数据库迁移**）。
+- 打包与验证：回滚备份 `_备份_20261127_v161_rub_cny_hint_before`（已轮换清理 `_备份_20261126_v157_saved_sort_before`，保留 `_备份_20261125_v151_pool_before` 及共 5 份常规备份）。Ozon `npm.cmd test`（含 `test-standalone.mjs` 新增断言）、`verify-project.ps1`、双版发布构建（`ozon-erp-collector-extension.zip` SHA256 `A71B93043EB2C6F32ACC71178EA32D51D59B968562BAC0B28F3A5183C85BC083`；独立版 `ozon-standalone-extension.zip` SHA256 `CB27905557E8F021BB3A79356B35FBAC93D4FB84F2E836F65F1B188F5919C669`）、Workbench `sync-workbench-core --check`、`check-release-version.mjs`（`V1.60 → V1.61`）、`npm.cmd run build` 与 `ozon-workbench-nav.test.mjs` 全部通过；真实浏览器实时汇率拉取、换算提示及独立版 `0.6.79` 升级待现场验收。
+
 ## 2026-11-27 - V1.60 / 0.6.78 类目扫描防 OOM 崩溃、主动换页释内存与崩溃自动续扫（待上线发布）
 
 - 主动换页释放内存与提前翻页：`category-background.js` 新增 `replaceTaskTab`，在切换类目与翻到下一页（`?page=N`）时在同一任务窗口内新建干净标签页并保存新 `tabId` 后销毁旧页，彻底释放 Ozon 列表大图与 ERP 面板 DOM 内存并免疫旧页延迟关闭事件；`category-scanner.js` 支持单页累计滚动满 45 次或新发现满 120 件且无待复查 SKU、页底可见下一页链接时主动提前翻页换血。

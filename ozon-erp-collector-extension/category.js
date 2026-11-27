@@ -198,7 +198,7 @@ $("exportDiagnostic").onclick=()=>{const batchId=$('diagnosticHistory').value||s
 $("diagnosticHistory").onchange=()=>{$("exportDiagnostic").disabled=busy||!state&&!$("diagnosticHistory").value};
 $("exportBatch").onclick=()=>exportCsv(state?.id);$("exportHistoryBatch").onclick=()=>exportCsv($("historyBatch").value);
 $("openScanTab").onclick=async()=>{try{if(!Number.isInteger(state?.tabId))return;const tab=await chrome.tabs.get(state.tabId);if(!tab)throw Error('采集页面已关闭');await chrome.tabs.update(tab.id,{active:true});if(tab.windowId!=null)await chrome.windows.update(tab.windowId,{focused:true});}catch(e){$("message").textContent=e.message}};
-chrome.storage.onChanged.addListener((changes,area)=>{if(area==='local'&&(changes.ozonCategoryBatchV1||changes.ozonCategoryBatchHistoryV1))void refresh()});
+chrome.storage.onChanged.addListener((changes,area)=>{if(area==='local'&&(changes.ozonCategoryBatchV1||changes.ozonCategoryBatchHistoryV1))void refresh();if(area==='local'&&changes.ozonCategoryFxRateV1){const val=changes.ozonCategoryFxRateV1.newValue;if(val&&typeof val==='object'){fxState={autoRate:val.autoRate??null,autoFetchedAt:Number(val.autoFetchedAt)||0,manualRate:val.manualRate??null};renderRubCnyHint();}}});
 window.addEventListener('focus',()=>void refresh());
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')void refresh()});
 window.setInterval(()=>{if(['running','scanning'].includes(state?.status)&&document.visibilityState==='visible')void refresh()},2500);
@@ -214,5 +214,105 @@ for(const [id,depth] of [['catalogLeaves1',0],['catalogLeaves2',1]])$(id).onclic
 $('saveFavorite').onclick=async()=>{const name=$('favoriteName').value.trim();if(!name){feedback.textContent='请先填写组合名称。';return}if(!selectedCount(draftSelection)){feedback.textContent='请选择至少一个目录类目。';return}const item={id:crypto.randomUUID(),name,source:sourceValue(),ids:[...draftSelection.selected.keys()]};try{favorites=await catalog.readFavorites();favorites=[...favorites.filter(f=>f.name!==name||f.source!==item.source),item].slice(-30);await catalog.writeFavorites(favorites);await refreshFavorites();feedback.textContent=`已保存“${name}”到本机。`}catch(e){feedback.textContent=e.message}};
 $('loadFavorite').onclick=()=>{const f=favorites.find(x=>x.id===$('favoriteSelect').value);if(!f||!catalogData)return;try{const missing=setDraft(f.source,f.ids);renderPicker(1);feedback.textContent=`已载入“${f.name}”${missing?`，${missing} 项已不在目录中需复核`:''}。`}catch(e){feedback.textContent=`组合未载入：${e.message}`}};
 $('deleteFavorite').onclick=async()=>{const id=$('favoriteSelect').value;if(!id)return;try{await catalog.writeFavorites(favorites.filter(f=>f.id!==id));await refreshFavorites();feedback.textContent='已删除本机组合。'}catch(e){feedback.textContent=e.message}};
+
+const FX_STORAGE_KEY='ozonCategoryFxRateV1',FX_DEFAULT_RATE=11.8,FX_TTL_MS=12*60*60*1000;
+const FX_ENDPOINTS=[
+  {url:'https://open.er-api.com/v6/latest/CNY',pick:d=>Number(d?.rates?.RUB)},
+  {url:'https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/cny.json',pick:d=>Number(d?.cny?.rub)}
+];
+let fxState={autoRate:null,autoFetchedAt:0,manualRate:null};
+function validFx(v){const n=Number(v);return Number.isFinite(n)&&n>=0.1&&n<=1000?n:null}
+function activeFxRate(){return validFx(fxState.manualRate)||validFx(fxState.autoRate)||FX_DEFAULT_RATE}
+function parseOptionalNum(el){
+  const raw=String(el?.value??'').trim();
+  if(!raw)return null;
+  if(!/^\d+(?:\.\d{1,2})?$/.test(raw))return Number.NaN;
+  const n=Number(raw);
+  return Number.isFinite(n)&&n>=0?n:Number.NaN;
+}
+function formatCny(val){
+  const rounded=Math.round(Math.max(0,val)*10)/10;
+  return '¥'+(Number.isInteger(rounded)?String(rounded):rounded.toFixed(1));
+}
+async function saveFxState(){
+  if(typeof chrome!=='undefined'&&chrome.storage?.local?.set){
+    await chrome.storage.local.set({[FX_STORAGE_KEY]:fxState}).catch(()=>null);
+  }
+}
+function renderRubCnyHint(){
+  const bar=$('rubCnyBar'),amountEl=$('rubCnyAmount'),warnEl=$('rubCnyWarn');
+  if(!bar||!amountEl||!warnEl)return;
+  const minRub=parseOptionalNum($('pageMinRub')),maxRub=parseOptionalNum($('pageMaxRub'));
+  if(minRub===null&&maxRub===null){bar.hidden=true;return;}
+  bar.hidden=false;
+  if($('fxAutoBtn'))$('fxAutoBtn').hidden=!validFx(fxState.manualRate);
+  if(Number.isNaN(minRub)||Number.isNaN(maxRub)){
+    amountEl.textContent='请输入有效卢布金额';warnEl.hidden=true;return;
+  }
+  if(minRub!==null&&maxRub!==null&&minRub>maxRub){
+    amountEl.textContent='卢布最低价不能高于最高价';warnEl.hidden=true;return;
+  }
+  const rate=activeFxRate();
+  const minCnyVal=minRub!==null?minRub/rate:null;
+  const maxCnyVal=maxRub!==null?maxRub/rate:null;
+  if(minCnyVal!==null&&maxCnyVal!==null)amountEl.textContent=`约合 ${formatCny(minCnyVal)} – ${formatCny(maxCnyVal)}`;
+  else if(minCnyVal!==null)amountEl.textContent=`约合 ${formatCny(minCnyVal)} 起`;
+  else amountEl.textContent=`约合 ${formatCny(maxCnyVal)} 以内`;
+  const cnyFloor=parseOptionalNum($('minPrice')),cnyCeil=parseOptionalNum($('maxPrice'));
+  const conflict=(cnyFloor!==null&&!Number.isNaN(cnyFloor)&&maxCnyVal!==null&&maxCnyVal<cnyFloor)||(cnyCeil!==null&&!Number.isNaN(cnyCeil)&&minCnyVal!==null&&minCnyVal>cnyCeil);
+  if(conflict){warnEl.textContent='· 与人民币区间无重叠';warnEl.hidden=false;}
+  else{warnEl.textContent='';warnEl.hidden=true;}
+}
+async function fetchAutoFx(){
+  for(const ep of FX_ENDPOINTS){
+    const ctrl=typeof AbortController!=='undefined'?new AbortController():null;
+    const timer=ctrl?setTimeout(()=>ctrl.abort(),5000):null;
+    try{
+      const res=await fetch(ep.url,ctrl?{signal:ctrl.signal}:undefined);
+      if(!res.ok)continue;
+      const data=await res.json();
+      const rate=validFx(ep.pick(data));
+      if(rate){fxState={...fxState,autoRate:rate,autoFetchedAt:Date.now()};await saveFxState();renderRubCnyHint();return;}
+    }catch{}finally{if(timer)clearTimeout(timer);}
+  }
+}
+async function initFxRate(){
+  if(typeof chrome!=='undefined'&&chrome.storage?.local?.get){
+    try{
+      const stored=(await chrome.storage.local.get(FX_STORAGE_KEY))[FX_STORAGE_KEY];
+      if(stored&&typeof stored==='object'){
+        fxState={autoRate:validFx(stored.autoRate),autoFetchedAt:Number(stored.autoFetchedAt)||0,manualRate:validFx(stored.manualRate)};
+      }
+    }catch{}
+  }
+  renderRubCnyHint();
+  if(!validFx(fxState.autoRate)||Date.now()-(fxState.autoFetchedAt||0)>=FX_TTL_MS)void fetchAutoFx();
+}
+function closeFxEditor(){if($('fxEditor'))$('fxEditor').hidden=true;if($('fxEditBtn'))$('fxEditBtn').hidden=false;}
+if($('fxEditBtn'))$('fxEditBtn').onclick=()=>{
+  if(!$('fxEditor')||!$('fxRateInput'))return;
+  $('fxRateInput').value=activeFxRate().toFixed(2);
+  $('fxEditBtn').hidden=true;$('fxEditor').hidden=false;
+  $('fxRateInput').focus();$('fxRateInput').select();
+};
+if($('fxCancelBtn'))$('fxCancelBtn').onclick=()=>closeFxEditor();
+if($('fxSaveBtn'))$('fxSaveBtn').onclick=async()=>{
+  const next=validFx($('fxRateInput')?.value);
+  if(!next){$('fxRateInput')?.focus();return;}
+  fxState={...fxState,manualRate:next};await saveFxState();closeFxEditor();renderRubCnyHint();
+};
+if($('fxAutoBtn'))$('fxAutoBtn').onclick=async()=>{
+  fxState={...fxState,manualRate:null};await saveFxState();closeFxEditor();renderRubCnyHint();
+  if(!validFx(fxState.autoRate)||Date.now()-(fxState.autoFetchedAt||0)>=FX_TTL_MS)void fetchAutoFx();
+};
+if($('fxRateInput'))$('fxRateInput').addEventListener('keydown',e=>{
+  if(e.key==='Enter'){e.preventDefault();$('fxSaveBtn')?.click();}
+  else if(e.key==='Escape'){e.preventDefault();closeFxEditor();}
+});
+for(const id of ['pageMinRub','pageMaxRub','minPrice','maxPrice']){
+  const el=$(id);if(el){el.addEventListener('input',renderRubCnyHint);el.addEventListener('change',renderRubCnyHint);}
+}
+
+void initFxRate();
 void refreshFavorites();void loadCatalog();
 void refresh();
