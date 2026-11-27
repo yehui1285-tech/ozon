@@ -305,4 +305,53 @@ const forcedDone = reported.find(m => m.type === 'categoryPageDone');
 assert.equal(forcedDone?.reason, 'next_page_available', 'force pagination still opens next page when pending.size > 0');
 assert.equal(forcedDone?.nextUrl, nextPage2.href);
 
+// V1.69: Chinese pagination ('下一页'), exact numeric page link ('2'), no blind Page-1 memory_recycle on scroll count, and fastSkip.
+const cnNext = makeEl({ tag: 'A', href: 'https://www.ozon.ru/category/demo-123/?page=2', text: '下一页' });
+const numNext2 = makeEl({ tag: 'A', href: 'https://www.ozon.ru/category/demo-123/?page=2', text: '2' });
+const numWrong3 = makeEl({ tag: 'A', href: 'https://www.ozon.ru/category/demo-123/?page=3', text: '3' });
+context.document.querySelectorAll = s => s.includes('tileGridDesktop') ? [mainList] : s.includes('rel="next"') ? [cnNext] : [];
+assert.equal(reader.next('https://www.ozon.ru/category/demo-123/'), cnNext.href, 'recognizes Chinese 下一页');
+context.document.querySelectorAll = s => s.includes('tileGridDesktop') ? [mainList] : s.includes('rel="next"') ? [numWrong3, numNext2] : [];
+assert.equal(reader.next('https://www.ozon.ru/category/demo-123/'), numNext2.href, 'recognizes exact numeric page+1 link');
+
+// High scroll count without next-page link and normal memory must NOT fire memory_recycle.
+reported.length = 0;
+bg.scrollY = 0;
+bg.document.hidden = true;
+bg.document.documentElement.scrollHeight = 500000;
+bg.location.href = 'https://www.ozon.ru/category/demo-123/';
+bg.document.querySelectorAll = s => s.includes('tileGridDesktop') ? [forceList] : [];
+bg.chrome.runtime.sendMessage = (m, cb) => { reported.push(m); cb({ ok: true }); };
+backgroundListener({ type: 'categoryScanStart', batchId: 'hidden-b', attemptId: 'no-blind-recycle', categoryUrl: bg.location.href }, {}, () => {});
+await new Promise(setImmediate);
+for (let i = 0; i < 175 && !reported.some(m => m.type === 'categoryPageDone'); i++) {
+  fakeNow += 2000;
+  wake('no-blind-recycle');
+  await new Promise(setImmediate);
+}
+assert.equal(reported.some(m => m.type === 'categoryPageDone' && m.reason === 'memory_recycle'), false, 'must not trigger memory_recycle merely on scroll count');
+backgroundListener({ type: 'categoryScanStop', batchId: 'hidden-b', attemptId: 'no-blind-recycle' }, {}, () => {});
+
+// Foreground fast-skip on already-observed cards uses 1.25x viewport step and 350ms settle.
+reported.length = 0;
+timers.clear();
+let scrollSteps = [];
+bg.scrollBy = (_x, y) => { scrollSteps.push(y); bg.scrollY += y; };
+bg.scrollY = 0;
+bg.document.hidden = false;
+bg.innerHeight = 800;
+bg.document.documentElement.scrollHeight = 100000;
+const fastCard = makeEl({
+  text: '选品标签： 符合要求\n100,00 ¥\n毛子ERP\nrFBS佣金：10%\nSKU：88001\n月销量：20\n发货模式：FBS\n长宽高：10×10×10\n重量：500g',
+  children: [makeEl({ tag: 'A', href: 'https://www.ozon.ru/product/p-88001/', text: 'fast-item' })],
+});
+const fastList = makeEl({ widget: 'tileGridDesktop', children: [fastCard] });
+bg.document.querySelectorAll = s => s.includes('tileGridDesktop') ? [fastList] : [];
+backgroundListener({ type: 'categoryScanStart', batchId: 'hidden-b', attemptId: 'fast-skip-1', categoryUrl: bg.location.href, observedSkus: ['88001'] }, {}, () => {});
+await new Promise(setImmediate);
+assert.equal(scrollSteps[0], 1000, 'fastSkip scrolls 1.25x innerHeight (1000px for 800px height)');
+const lastTimer = [...timers.values()].at(-1);
+assert.equal(lastTimer?.ms, context.OzonCategoryScanner.FAST_SKIP_SETTLE_MS, 'fastSkip waits 350ms');
+backgroundListener({ type: 'categoryScanStop', batchId: 'hidden-b', attemptId: 'fast-skip-1' }, {}, () => {});
+
 console.log('category scanner real-core synthetic DOM tests passed');

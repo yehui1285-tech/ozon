@@ -7,7 +7,7 @@ let created = [], reloads=0, sentMessages=[], debuggerCommands=[], debuggerAttac
 const storage = { async get(k) { return k ? { ...(data[k] ? { [k]: data[k] } : {}) } : { ...data }; }, async set(v) { Object.assign(data, v); }, async remove(k) { for (const key of Array.isArray(k) ? k : [k]) delete data[key]; } };
 let declaredDebugger=true;
 const chrome = {
-  runtime:{getManifest:()=>({version:'0.6.86',permissions:declaredDebugger?['debugger']:[]})},
+  runtime:{getManifest:()=>({version:'0.6.87',permissions:declaredDebugger?['debugger']:[]})},
   storage: { local: storage,session:{async get(k){return {[k]:sessionData[k]}},async set(v){Object.assign(sessionData,v)},async remove(k){delete sessionData[k]}} },
   alarms:{async get(n){return alarms.get(n)},async create(n,o){alarms.set(n,o)},async clear(n){alarms.delete(n)}},
   tabs: {
@@ -808,6 +808,17 @@ batch = (await runner.handle({ type: 'categoryGet' })).batch;
 assert.equal(batch.status, 'running', 'memory_recycle rebuilds a fresh tab and keeps scanning');
 assert.notEqual(batch.tabId, tabBeforeRecycle);
 assert.equal(batch.stores[0].memoryRecycleCount, 1);
+await runner.handle({
+  type: 'categorySample',
+  batchId: batch.id,
+  attemptId: batch.attemptId,
+  categoryUrl: batch.stores[0].pageUrl,
+  observedSkus: ['97001'],
+  pagePriceConfirmed: true,
+  products: []
+}, { tab: { id: batch.tabId, url: batch.stores[0].pageUrl } });
+batch = (await runner.handle({ type: 'categoryGet' })).batch;
+assert.equal(batch.stores[0].memoryRecycleCount, 1, 'new observed SKU must not reset memoryRecycleCount');
 for (let i = 0; i < 4; i++) {
   await runner.handle({
     type: 'categoryPageDone',

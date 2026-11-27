@@ -839,7 +839,7 @@
           if (!effectiveHidden || observed.size > beforeObserved) {delete task.waitSince;delete task.waitReason;}
           task.pendingCount = Math.max(0, Number(m.pendingCount) || 0);
           if(Array.isArray(m.pendingSkus))task.pendingSkus=[...new Set(m.pendingSkus.map(String).filter(s=>/^\d+$/.test(s)&&!observed.has(s)))];
-          batch.lastProgressAt=now();if(observed.size>beforeObserved){batch.lastNewSkuAt=batch.lastProgressAt;task.crashRecoveryCount=0;task.memoryRecycleCount=0;}batch.recoveryAttempts=0;batch.noResponseCount=0;
+          batch.lastProgressAt=now();if(observed.size>beforeObserved){batch.lastNewSkuAt=batch.lastProgressAt;task.crashRecoveryCount=0;}batch.recoveryAttempts=0;batch.noResponseCount=0;
           task.activityStatus=batch.activityStatus||'native-background-only';
           phase(batch,effectiveHidden?'background':'foreground',effectiveHidden?'后台扫描类目商品（页面加载可能较慢）':'正在扫描类目商品');
           const skuList = (m.products || []).map(raw => raw?.sku);

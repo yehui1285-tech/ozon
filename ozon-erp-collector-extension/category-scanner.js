@@ -1,13 +1,13 @@
 (function installOzonCategoryScanner(globalScope) {
-  const MAX_SAMPLES = 400;
-  const MAX_SCROLLS = 400;
+  const MAX_SAMPLES = 1200;
+  const MAX_SCROLLS = 1200;
   const PROACTIVE_NEXT_PAGE_SCROLLS = 45;
   const PROACTIVE_NEXT_PAGE_SKUS = 120;
   const FORCE_NEXT_PAGE_SCROLLS = 65;
   const FORCE_NEXT_PAGE_SKUS = 180;
-  const MEMORY_RECYCLE_RATIO = 0.72;
-  const MEMORY_RECYCLE_BYTES = 900 * 1024 * 1024;
-  const MAX_SCROLLS_BEFORE_RECYCLE = 160;
+  const MEMORY_RECYCLE_RATIO = 0.85;
+  const MEMORY_RECYCLE_BYTES = 1800 * 1024 * 1024;
+  const FAST_SKIP_SETTLE_MS = 350;
   const BLANK_IMAGE_DATA_URL = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
   const LIST_WAIT_POLLS = 30;
   const LIST_WAIT_MS = 1000;
@@ -348,14 +348,25 @@
     return { products, observedSkus: [...observed], discoverSkus:[...discovered], erpReadySkus:[...erpReady], labelHitSkus:[...labelHit], pendingSkus:[...pending],pendingCount:pending.size, skuDecisions, available: anchors.length > 0 };
   }
   function pagination(doc, core, categoryUrl) {
-    const links = [...doc.querySelectorAll('a[rel="next"], a[data-testid*="pagination-next"], a[href*="page="]')]
-      .filter((a) => visible(a) && !isForbidden(a) && a.getAttribute?.('aria-disabled')!=='true' && (a.getAttribute?.('rel')==='next'||/next|след|далее|вперед|›|→/i.test(`${a.getAttribute?.('aria-label') || ''} ${textOf(a)}`)));
     const page=Number(new URL(categoryUrl).searchParams.get('page')||1);
+    const nextNum=String(page+1);
+    const links = [...doc.querySelectorAll('a[rel="next"], a[data-testid*="pagination-next"], a[href*="page="]')]
+      .filter((a) => {
+        if (!visible(a) || isForbidden(a) || a.getAttribute?.('aria-disabled')==='true') return false;
+        const rel=a.getAttribute?.('rel')||'';
+        const testId=a.getAttribute?.('data-testid')||'';
+        const text=textOf(a).trim();
+        const label=`${a.getAttribute?.('aria-label') || ''} ${text}`;
+        return rel==='next'
+          || /pagination-next/i.test(testId)
+          || /下一页|下页|next|след|далее|дальше|вперед|›|→/i.test(label)
+          || text===nextNum;
+      });
     const href = links.map((a) => core.paginationUrl?.(a.href, categoryUrl)).find(url=>url&&Number(new URL(url).searchParams.get('page'))===page+1);
     return href || '';
   }
   function createReader(doc, core) { return { read: (url, options, list=pickList(doc), skipSkus=null) => readCards(list, core, url, options, skipSkus), next: (url) => pagination(doc, core, url), pickList: () => pickList(doc) }; }
-  globalScope.OzonCategoryScanner = Object.freeze({ createReader, readCards, pickList, confirmPagePrice, confirmRubPrice, detectCurrencyMismatch, detectNonRubCurrency, pruneScrolledCards, MAX_SAMPLES, MAX_SCROLLS, PROACTIVE_NEXT_PAGE_SCROLLS, PROACTIVE_NEXT_PAGE_SKUS, FORCE_NEXT_PAGE_SCROLLS, FORCE_NEXT_PAGE_SKUS });
+  globalScope.OzonCategoryScanner = Object.freeze({ createReader, readCards, pickList, confirmPagePrice, confirmRubPrice, detectCurrencyMismatch, detectNonRubCurrency, pruneScrolledCards, MAX_SAMPLES, MAX_SCROLLS, PROACTIVE_NEXT_PAGE_SCROLLS, PROACTIVE_NEXT_PAGE_SKUS, FORCE_NEXT_PAGE_SCROLLS, FORCE_NEXT_PAGE_SKUS, FAST_SKIP_SETTLE_MS });
 
   const core = globalScope.OzonCategoryCore;
   if (!core || !globalScope.chrome?.runtime?.onMessage || !core.exactPageUrl(globalScope.location?.href || '') || globalScope.__ozonCategoryListenerInstalled) return;
@@ -484,18 +495,20 @@
       if(softPaginate || forcePaginate){
         const earlyNextUrl=reader.next(url);
         if(earlyNextUrl)return done(msg,false,'next_page_available',earlyNextUrl);
-        if(highMemory || scrolls>=MAX_SCROLLS_BEFORE_RECYCLE)return done(msg,false,'memory_recycle');
+        if(highMemory)return done(msg,false,'memory_recycle');
       }
       // Hidden lazy-loaded lists can stop briefly at the current document end.
       // Wait for layout/explicit pagination evidence instead of exhausting
       // the scan budget on repeated scrolls against the same bottom.
       if(pageHidden&&atBottom){if(confirmedBottom){const waiting=await reportWait('hidden_bottom');if(waitStopped(waiting))return;}await wait(confirmedBottom?BACKGROUND_RETRY_MS:BACKGROUND_SETTLE_MS);sample--;continue;}
       if (sample === MAX_SAMPLES - 1 || scrolls >= MAX_SCROLLS) break;
-      const beforeScroll=globalScope.scrollY;globalScope.scrollBy(0, Math.max(200, Math.floor(globalScope.innerHeight * 0.65)));
+      const fastSkip = !pageHidden && result.available && result.discoverSkus.length > 0 && deltaObserved.length === 0 && products.length === 0 && pending.size === 0 && !confirmedBottom && !atBottom;
+      const scrollStep = fastSkip ? Math.max(400, Math.floor(globalScope.innerHeight * 1.25)) : Math.max(200, Math.floor(globalScope.innerHeight * 0.65));
+      const beforeScroll=globalScope.scrollY;globalScope.scrollBy(0, scrollStep);
       if(pageHidden&&Math.abs(globalScope.scrollY-beforeScroll)<5){const waiting=await reportWait('scroll_stalled');if(waitStopped(waiting))return;await wait(BACKGROUND_RETRY_MS);sample--;continue;}
       scrolls++;
       if(pageHidden&&zeroNewObserved>=8){zeroNewObserved=0;const waiting=await reportWait('no_new_sku');if(waitStopped(waiting))return;await wait(BACKGROUND_RETRY_MS);sample--;continue;}
-      await wait(settle());
+      await wait(fastSkip ? FAST_SKIP_SETTLE_MS : settle());
     }
     return done(msg, false, 'scan_bound_reached');
   }

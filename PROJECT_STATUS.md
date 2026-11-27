@@ -1,10 +1,13 @@
 # Ozon 当前状态
 
-更新时间：2026-11-27（用户确认工作台 V1.68 已成功部署上线，源码 `4044a18`，内嵌扩展 `v0.6.86`；双版独立包 `0.6.86` 已构建；**无新增 D1 迁移**；Ozon 仓库同步推送 `origin/main`）。
+更新时间：2026-11-27（V1.69 / 0.6.87 已构建并同步工作台本地提交 `a4041bd` 与独立分享版 `0.6.87`，**无新增 D1 迁移**；Ozon 仓库同步推送 `origin/main`，个人工作台 V1.69 待由 Codex 部署上线）。
 用途：新对话快速续接。详细过程按需查 [CHANGELOG](CHANGELOG.md) 和 [历史入口](docs/history/README.md)，不把历史待办当作当前任务。
 
 ## 当前版本与结论
 
+- V1.69 / 0.6.87（双版代码、构建、单测与工作台本地提交 `a4041bd` 已完成，**无新增 D1 数据库迁移**；工作台待由 Codex 部署上线）：彻底修复类目扫描几分钟后刷回第 1 页重头再滚的问题：
+  - 修复中文翻页识别与杜绝盲目第 1 页刷新（`category-scanner.js`、`category-background.js`）：① `pagination` 补齐中文 `下一页 / 下页`、`дальше`、`pagination-next` 及精确 `page = 当前页 + 1` 数字页码链接识别；② 删除导致约 4 分钟必触发第 1 页重开标签页的 `MAX_SCROLLS_BEFORE_RECYCLE = 160` 强制阈值，将兜底 `memory_recycle` 内存门槛提高至 `0.85` / `1800MB`，并将 `MAX_SAMPLES` / `MAX_SCROLLS` 提至 `1200`；③ `category-background.js` 在 `categorySample` 有新 SKU 时不再清零 `memoryRecycleCount`（仅 `next_page_available` 翻至真下一页才清零），断绝死循环；④ 新增前台 `fastSkip` 快进跳过（当当前屏全为已检查过的旧 SKU 时，步长提至 `1.25×` 视口高、等待缩至 `350ms`）。
+  - 验证状态：Ozon `node --check`、全量 `npm.cmd test`（含 `test-category-scanner.mjs` 中文 `下一页`/纯数字页码/高滚动不误触发 `memory_recycle`/前台快进，与 `test-category-background.mjs` 单次新 SKU 不重置重建计数用例）、`verify-project.ps1`、双版构建（`ozon-erp-collector-extension.zip` SHA256 `5AB438C2E986CBB6E9992C241EF9BF3B3C07ADD3546C503DF7EB949854BF01EB`；独立版 `ozon-standalone-extension.zip` SHA256 `156F7D01E36E77BA2E41CF4934102401336C4589F53954343FFF4651B57E37AB`），以及 Workbench `sync-workbench-core --check`、`check-ozon-shared-core.mjs`、`check-release-version.mjs`（`V1.68 → V1.69`）、12/12 单测与 `npm.cmd run build` 全部通过。工作台 V1.69 线上部署与真实 Ozon 浏览器现场验收待完成。回滚备份 `_备份_20261127_v169_stop_p1_refresh_and_cn_pagination_before`。
 - V1.68 / 0.6.86（用户确认工作台 V1.68 已上线，源码 `4044a18`，**无新增 D1 数据库迁移**；双版独立包已构建）：类目选品页「价格筛选区间」方案 A 二合一 + 页面信息做减法：
   - 方案 A 统一价格筛选区间（`category-core.js`、`category-background.js`、`category.html`、`category.js`、`lib/ozon-collector-model.ts`）：将原「人民币复核区间」与「Ozon 页面预筛」合并为单一「价格筛选区间」（默认 `¥ 人民币`，支持切换 `₽ 卢布`）；`category-core.js` 新增 `minPriceRub`/`maxPriceRub` 校验及人民币/卢布双向采集后复核。填满两端自动同时启用 Ozon 网页预筛（`?currency_price=...`）+ 采集后复核；仅填一端则自动仅做采集后复核；仅选 `₽ 卢布` 时展示人民币折算与汇率调节入口。
   - 「类目选品」页面做减法（`category.html`、`category.css`、`category.js`、`build-standalone.mjs`）：保持「上新建 / 下当前批次」排布；移除废置「后台持续采集（试验）」说明条、冗余提示文字、重复标题摘要与弹窗内旧「保存/载入组合」；新建区压缩为单行 3 格参数、行内弹出「存为常用任务」与按需展开「+ 粘贴自定义链接」；`暂停/继续/停止/查看采集页面` 仅在运行/暂停时出现于当前批次头部；云端去重状态缩为页头右上角小徽章，0 个常用任务自动整卡隐藏；每张类目卡片默认只保留核心进度与提示，长链接/技术计数/SKU 诊断收进「详情与诊断」折叠，底部「原因诊断与浏览器状态」「历史批次与诊断工具」默认收起；同步更新 `build-standalone.mjs` 与 `test-standalone.mjs` 维持独立分享版零泄漏隔离。
@@ -40,7 +43,7 @@
 
 ## 当前待验收与已知边界
 
-- 待现场真实验收：工作台 V1.68（`4044a18`）已上线，待在真实浏览器覆盖更新 `v0.6.86` / 独立分享版 `0.6.86` 后验收瘦身后的「类目选品」页面排版、方案 A 统一价格区间（单端复核 / 双端预筛+复核、人民币/卢布切换）、长时防 OOM 滚图与云端去重效果。
+- 待现场真实验收：工作台 V1.69（`a4041bd`）待由 Codex 部署上线；上线并加载 `v0.6.87` / 独立分享版 `0.6.87` 后，待在真实 Ozon 页面验收中文翻页接续、无 4 分钟回第 1 页重载、快进跳过已查区域及瘦身后的「类目选品」与方案 A 价格筛选区间。
 - 本机测试环境未配置 Playwright 模块，隔离浏览器脚本（`test-category-browser.mjs`、`test-product-pool-browser.mjs`、`ozon-pool-browser.mjs` 等）未在本机运行；所有版本均未执行外部站点绕过或自动下单。
 - 工作边界：登录、CAPTCHA 和平台验证由用户处理；1688 自动搜款主线继续暂停（恢复需用户明确指示）；`AGENTS.md` 双线同步交付规则持续生效；常规 `_备份_*` 目录保留最新 5 份（保留 `_备份_20261125_v151_pool_before`）。
 
