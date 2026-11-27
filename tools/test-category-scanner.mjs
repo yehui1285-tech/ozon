@@ -160,4 +160,46 @@ bg.document.querySelectorAll=s=>s.includes('input[type="text"]')?[lo,hi]:s.inclu
 bg.chrome.runtime.sendMessage=(m,cb)=>{reported.push(m);cb({ok:true,stop:m.type==='categorySample'})};
 backgroundListener({type:'categoryScanStart',batchId:'hidden-b',attemptId:'price-confirmed',categoryUrl:bg.location.href,options:range},{},()=>{});
 await new Promise(setImmediate);assert.equal(reported[0].type,'categorySample');assert.equal(reported[0].pagePriceConfirmed,true);
+
+// V1.60: skipSkus skips already-observed cards, delta reporting avoids duplicate payloads,
+// and long pages proactively paginate once scrolls reach PROACTIVE_NEXT_PAGE_SCROLLS.
+context.document.querySelectorAll = (selector) => selector.includes('tileGridDesktop') ? [mainList] : [];
+const skippedResult = reader.read(context.location.href, {}, undefined, new Set(['10001', '10002']));
+assert.equal(skippedResult.available, true, 'skipped page still marks catalog available');
+assert.ok(!skippedResult.products.some(p => p.sku === '10001'), 'skipped observed SKU must not be re-parsed into products');
+assert.ok(skippedResult.observedSkus.includes('10001') && skippedResult.observedSkus.includes('10002'), 'skipped SKUs stay observed');
+assert.deepEqual(Array.from(skippedResult.products, p => p.sku).sort(), ['10005', '20001'], 'unskipped cards still parse normally');
+
+reported.length = 0;
+const cleanList = makeEl({ widget: 'tileGridDesktop', children: [card('30001', 'clean-a'), card('30002', 'clean-b')] });
+const nextPage2 = makeEl({ tag: 'A', href: 'https://www.ozon.ru/category/demo-123/?page=2', text: '›', attrs: { 'aria-label': 'Next page' } });
+bg.location.href = 'https://www.ozon.ru/category/demo-123/';
+bg.document.hidden = false;
+bg.document.documentElement.scrollHeight = 200000;
+bg.scrollY = 0;
+bg.scrollBy = function (_x, y) { this.scrollY += y; };
+bg.document.querySelectorAll = (s) => s.includes('tileGridDesktop') ? [cleanList] : s.includes('rel="next"') ? [nextPage2] : [];
+bg.chrome.runtime.sendMessage = (m, cb) => { reported.push(m); cb({ ok: true }); };
+backgroundListener({ type: 'categoryScanStart', batchId: 'hidden-b', attemptId: 'delta-a', categoryUrl: bg.location.href }, {}, () => {});
+await new Promise(setImmediate);
+const firstSample = reported.find(m => m.type === 'categorySample');
+assert.equal(firstSample.compactAck, true, 'scanner requests compact ack to avoid megabyte batch clones');
+assert.deepEqual(Array.from(firstSample.observedSkus).sort(), ['30001', '30002']);
+assert.equal(firstSample.skuDecisions['30001'], 'eligible');
+fakeNow += 2000;
+wake('delta-a');
+await new Promise(setImmediate);
+const samplesAfterTick2 = reported.filter(m => m.type === 'categorySample');
+assert.equal(samplesAfterTick2.length, 2);
+assert.deepEqual(Array.from(samplesAfterTick2[1].observedSkus), [], 'second tick must send delta-only observedSkus');
+assert.deepEqual(Array.from(samplesAfterTick2[1].discoverSkus), [], 'second tick must send delta-only discoverSkus');
+assert.deepEqual({ ...samplesAfterTick2[1].skuDecisions }, {}, 'second tick must send delta-only skuDecisions');
+for (let i = 0; i < context.OzonCategoryScanner.PROACTIVE_NEXT_PAGE_SCROLLS + 5 && !reported.some(m => m.type === 'categoryPageDone'); i++) {
+  fakeNow += 2000;
+  wake('delta-a');
+  await new Promise(setImmediate);
+}
+const proactiveDone = reported.find(m => m.type === 'categoryPageDone');
+assert.equal(proactiveDone?.reason, 'next_page_available', 'proactive pagination triggers before exhausting 400 scrolls');
+assert.equal(proactiveDone?.nextUrl, nextPage2.href);
 console.log('category scanner real-core synthetic DOM tests passed');

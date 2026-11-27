@@ -45,6 +45,7 @@ function renderTaskCard(task,batch){
     ${diagnostic}
     ${status==='deferred'?'<p class="store-reason">先扫待开始类目，再回查此项</p>':''}
     ${revisitCount>0?`<p class="store-reason">自动回查 ${revisitCount}/1</p>`:''}
+    ${Number(task.crashRecoveryCount)>0?`<p class="store-reason">已自动防崩溃重建标签页 ${Number(task.crashRecoveryCount)}/3 次</p>`:''}
     ${reason?`<p class="store-reason">${esc(reason)}</p>`:''}
     ${actions}
   </article>`;

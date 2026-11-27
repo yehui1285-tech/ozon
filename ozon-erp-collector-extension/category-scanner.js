@@ -1,6 +1,8 @@
 (function installOzonCategoryScanner(globalScope) {
   const MAX_SAMPLES = 400;
   const MAX_SCROLLS = 400;
+  const PROACTIVE_NEXT_PAGE_SCROLLS = 45;
+  const PROACTIVE_NEXT_PAGE_SKUS = 120;
   const LIST_WAIT_POLLS = 30;
   const LIST_WAIT_MS = 1000;
   const BACKGROUND_SETTLE_MS=4000, FOREGROUND_SETTLE_MS=1600, BACKGROUND_BOUNDARY_MS=20000, BACKGROUND_BOUNDARY_POLLS=5, BACKGROUND_RETRY_MS=10000;
@@ -106,9 +108,10 @@
     }
     return null;
   }
-  function readCards(list, core, categoryUrl, options = {}) {
+  function readCards(list, core, categoryUrl, options = {}, skipSkus = null) {
     if (!list) return { products: [], observedSkus: [], discoverSkus:[], erpReadySkus:[], labelHitSkus:[], pendingSkus: [], pendingCount: 0, skuDecisions:{}, available: false };
     const products = [], observed = new Set(), discovered = new Set(), erpReady = new Set(), labelHit = new Set(),pending=new Set(),skuDecisions={},decisionRank={erp_pending:0,no_label:1,data_pending:2,price_outside:3,transport_blocked:3,eligible:4};
+    const seenCardSkus = new Set();
     const decide=(sku,reason)=>{if(!(sku in skuDecisions)||(decisionRank[reason]??0)>(decisionRank[skuDecisions[sku]]??0))skuDecisions[sku]=reason};
     const boundary=[...(list.querySelectorAll?.(headingSelector)||[])].find(el=>recommendationHeading.test(textOf(el))&&visible(el));
     const productSku=href=>{try{const u=new URL(href);return u.origin==='https://www.ozon.ru'&&!u.username&&!u.password?u.pathname.match(/^\/product\/(?:[^/]+-)?(\d+)\/?$/)?.[1]||'':''}catch{return ''}};
@@ -179,6 +182,8 @@
       const link = globalScope.OzonStoreScannerCore?.canonicalProductLink(anchor.href) || '',sku=productSku(link);
       if(!sku)continue;
       discovered.add(sku);
+      if(skipSkus&&skipSkus.has(sku)){observed.add(sku);continue;}
+      if(seenCardSkus.has(sku))continue;
       decide(sku,'erp_pending');
       const scoped=findCard(anchor,sku);if(!scoped){if(!observed.has(sku))pending.add(sku);continue;}
       const {card,raw,panelReady,qualified}=scoped;
@@ -197,6 +202,7 @@
       if(!parsed.commissions?.length)parsed.commissions=commissions;
       const linkSku = new URL(link, globalScope.location?.href).pathname.match(/^\/product\/(?:[^/]+-)?(\d+)\/?$/)?.[1];
       if(linkSku!==sku||(parsed.sku&&linkSku!==String(parsed.sku)))continue;
+      seenCardSkus.add(sku);
       if(parsed.qualified)labelHit.add(sku);
       if(!panelReady){if(!observed.has(sku))pending.add(sku);continue;}
       erpReady.add(sku);
@@ -230,8 +236,8 @@
     const href = links.map((a) => core.paginationUrl?.(a.href, categoryUrl)).find(url=>url&&Number(new URL(url).searchParams.get('page'))===page+1);
     return href || '';
   }
-  function createReader(doc, core) { return { read: (url, options, list=pickList(doc)) => readCards(list, core, url, options), next: (url) => pagination(doc, core, url), pickList: () => pickList(doc) }; }
-  globalScope.OzonCategoryScanner = Object.freeze({ createReader, readCards, pickList, confirmRubPrice, MAX_SAMPLES, MAX_SCROLLS });
+  function createReader(doc, core) { return { read: (url, options, list=pickList(doc), skipSkus=null) => readCards(list, core, url, options, skipSkus), next: (url) => pagination(doc, core, url), pickList: () => pickList(doc) }; }
+  globalScope.OzonCategoryScanner = Object.freeze({ createReader, readCards, pickList, confirmRubPrice, MAX_SAMPLES, MAX_SCROLLS, PROACTIVE_NEXT_PAGE_SCROLLS, PROACTIVE_NEXT_PAGE_SKUS });
 
   const core = globalScope.OzonCategoryCore;
   if (!core || !globalScope.chrome?.runtime?.onMessage || !core.exactPageUrl(globalScope.location?.href || '') || globalScope.__ozonCategoryListenerInstalled) return;
@@ -269,7 +275,8 @@
     const url = core.exactPageUrl(globalScope.location.href);
     if (!core.samePage(globalScope.location.href, baseUrl) || !url || url!==msg.categoryUrl) return done(msg, false, 'wrong_category_page');
     const reader = createReader(globalScope.document, core), sent=new Set(),observed = new Set(msg.observedSkus||[]),pending=new Set(msg.pendingSkus||[]);
-    let scrolls = 0, stable = 0, bottomStable = 0, lastHeight = -1, noListPolls = 0,ambiguousPolls=0,reviewPasses=0,bottomSince=0,previousHidden=hidden(),zeroNewObserved=0;
+    const sentObserved = new Set(msg.observedSkus||[]), sentDiscovered = new Set(), sentErpReady = new Set(), sentLabelHit = new Set(), sentDecisions = new Map();
+    let scrolls = 0, stable = 0, bottomStable = 0, lastHeight = -1, noListPolls = 0,ambiguousPolls=0,reviewPasses=0,bottomSince=0,previousHidden=hidden(),zeroNewObserved=0,pageNewObserved=0;
     let recheckFromTop=!!msg.recheckFromTop;
     const rubRange=core.rubRange(msg.options);let pagePriceConfirmed=!rubRange,pricePolls=0;
     const wait=ms=>waitForRun(run,ms);
@@ -300,7 +307,7 @@
         await wait(pageHidden?BACKGROUND_RETRY_MS:LIST_WAIT_MS);sample--;continue;
       }
       ambiguousPolls=0;
-      const result=reader.read(url,msg.options||{},list);
+      const result=reader.read(url,msg.options||{},list,observed);
       const endMarker = list?.querySelector?.('[data-testid*="no-more"], [data-testid="end-of-list"], [data-testid="catalog-list-end"]');
       if(!list||(!result.available&&!visible(endMarker))){
         if(noListPolls>=LIST_WAIT_POLLS&&!pageHidden)return done(msg,false,'catalog_list_unavailable');
@@ -314,13 +321,25 @@
       for(const sku of result.pendingSkus)if(!observed.has(sku))pending.add(sku);
       for(const sku of result.observedSkus){observed.add(sku);pending.delete(sku)}
       const products=result.products.filter(p=>!sent.has(p.sku));
+      const deltaObserved=result.observedSkus.filter(sku=>!sentObserved.has(sku));
+      const deltaDiscover=result.discoverSkus.filter(sku=>!sentDiscovered.has(sku));
+      const deltaErpReady=result.erpReadySkus.filter(sku=>!sentErpReady.has(sku));
+      const deltaLabelHit=result.labelHitSkus.filter(sku=>!sentLabelHit.has(sku));
+      const deltaDecisions={};
+      for(const [sku,outcome] of Object.entries(result.skuDecisions||{}))if(sentDecisions.get(sku)!==outcome)deltaDecisions[sku]=outcome;
       const categoryName=textOf(globalScope.document.querySelector?.('h1')).slice(0,120);
-      const ack = await new Promise((resolve) => globalScope.chrome.runtime.sendMessage({ type: 'categorySample', batchId: msg.batchId, attemptId: msg.attemptId, categoryUrl: url,categoryName,products,observedSkus: result.observedSkus,discoverSkus:result.discoverSkus,erpReadySkus:result.erpReadySkus,labelHitSkus:result.labelHitSkus,pendingSkus:[...pending],pendingCount:pending.size,skuDecisions:result.skuDecisions,...(rubRange?{pagePriceConfirmed}:{}),...pageState() }, (response) => resolve(response || {})));
+      const ack = await new Promise((resolve) => globalScope.chrome.runtime.sendMessage({ type: 'categorySample', batchId: msg.batchId, attemptId: msg.attemptId, categoryUrl: url,categoryName,products,observedSkus: deltaObserved,discoverSkus:deltaDiscover,erpReadySkus:deltaErpReady,labelHitSkus:deltaLabelHit,pendingSkus:[...pending],pendingCount:pending.size,skuDecisions:deltaDecisions,compactAck:true,...(rubRange?{pagePriceConfirmed}:{}),...pageState() }, (response) => resolve(response || {})));
       if(activeRun!==run)return;
       if (ack.ok !== true) return done(msg, false, 'sample_not_persisted');
       if(ack.stop===true||ack.stopped===true||activeRun!==run)return;
       if(typeof ack.pageNativeHidden==='boolean')nativeHidden=ack.pageNativeHidden;
       for(const p of products)sent.add(p.sku);
+      for(const s of deltaObserved)sentObserved.add(s);
+      for(const s of deltaDiscover)sentDiscovered.add(s);
+      for(const s of deltaErpReady)sentErpReady.add(s);
+      for(const s of deltaLabelHit)sentLabelHit.add(s);
+      for(const [s,o] of Object.entries(deltaDecisions))sentDecisions.set(s,o);
+      pageNewObserved+=deltaObserved.length;
       if(pageHidden&&result.available){if(newObserved)zeroNewObserved=0;else zeroNewObserved++;}
       const height = globalScope.document.documentElement?.scrollHeight || 0;
       const atBottom = globalScope.innerHeight + globalScope.scrollY >= height - 8;
@@ -338,6 +357,10 @@
         if(pending.size&&pageHidden){const waiting=await reportWait('review_pending');if(waitStopped(waiting))return;await wait(BACKGROUND_RETRY_MS);sample--;continue;}
         if(pending.size)return done(msg,false,'pending_cards');
         return nextUrl?done(msg,false,'next_page_available',nextUrl):done(msg,true,'visible_catalog_end');
+      }
+      if(pending.size===0 && (scrolls>=PROACTIVE_NEXT_PAGE_SCROLLS || pageNewObserved>=PROACTIVE_NEXT_PAGE_SKUS)){
+        const earlyNextUrl=reader.next(url);
+        if(earlyNextUrl)return done(msg,false,'next_page_available',earlyNextUrl);
       }
       // Hidden lazy-loaded lists can stop briefly at the current document end.
       // Wait for layout/explicit pagination evidence instead of exhausting

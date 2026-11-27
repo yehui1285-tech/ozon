@@ -7,6 +7,7 @@
   const PROTECTION_KEY = 'ozonCategoryScanProtectionV1';
   const STALE_MS = 15000, MESSAGE_TIMEOUT_MS = 4000, RECOVERY_LIMIT = 2;
   const STALL_MS = 90000;
+  const CRASH_RECOVER_LIMIT = 3;
   let experimentDebuggerTabId = null;
   const waitLabels = {
     catalog_loading: '主商品列表尚未加载',
@@ -164,12 +165,59 @@
   async function stopScanner(batch) {
     if (batch?.tabId) await bounded(chrome.tabs.sendMessage(batch.tabId, { type: "categoryScanStop", batchId: batch.id, attemptId: batch.attemptId })).catch(() => null);
   }
+  async function replaceTaskTab(batch, targetUrl, oldTab = null) {
+    const oldTabId = oldTab?.id ?? batch.tabId;
+    let fresh = null;
+    if (oldTab && Number.isInteger(oldTab.windowId)) {
+      fresh = await chrome.tabs.create({ windowId: oldTab.windowId, url: targetUrl, active: oldTab.active === true }).catch(() => null);
+    }
+    if (!fresh) fresh = await createTaskWindow(targetUrl);
+    batch.tabId = fresh.id;
+    await protectTab(fresh.id);
+    await save(batch);
+    if (Number.isInteger(oldTabId) && oldTabId !== fresh.id) {
+      await releaseFocusExperiment(oldTabId);
+      await releaseTab(oldTabId);
+      await chrome.tabs.remove(oldTabId).catch(() => null);
+    }
+    return fresh;
+  }
+  async function recoverCrashedTab(batch, task, tab, reasonLabel) {
+    if (!task || !tab || !pageMatches(tab.url, task) || tab.pendingUrl || tab.frozen || tab.discarded) return false;
+    if ((Number(task.crashRecoveryCount) || 0) >= CRASH_RECOVER_LIMIT) {
+      batch.status = 'paused';
+      task.status = task.observedCount || task.pendingCount ? 'partial' : 'pending';
+      task.note = '采集页连续崩溃或无响应，已保存进度';
+      batch.message = '采集页连续崩溃达到自动恢复上限，已保存进度并暂停；可关闭原页面后点击继续。';
+      diagnosticEvent(batch, 'tab_crash_limit');
+      await save(batch);
+      return true;
+    }
+    task.crashRecoveryCount = (Number(task.crashRecoveryCount) || 0) + 1;
+    batch.recoveryAttempts = 0;
+    batch.noResponseCount = 0;
+    batch.attemptId = uuid();
+    batch.watchdogSince = now();
+    delete task.waitSince;
+    delete task.waitReason;
+    diagnosticEvent(batch, 'tab_crash_recover', `${reasonLabel} (${task.crashRecoveryCount}/${CRASH_RECOVER_LIMIT})`);
+    phase(batch, 'recovering', `采集页无响应或内存崩溃，正在新标签页自动续扫（${task.crashRecoveryCount}/${CRASH_RECOVER_LIMIT}）`);
+    const fresh = await replaceTaskTab(batch, pageUrl(task), tab);
+    await enableFocusExperiment(batch);
+    await save(batch);
+    const liveTab = await chrome.tabs.get(fresh.id).catch(() => null);
+    if (liveTab?.status === 'complete' && pageMatches(liveTab.url, task) && !liveTab.pendingUrl && !liveTab.frozen && !liveTab.discarded) {
+      try { await startScanner(batch, task); }
+      catch { await waitStatus(batch, '新采集页等待读取器响应，正在自动检查。'); }
+    }
+    return true;
+  }
   // Store the checkpoint and intended destination before sending a navigation.
   // A restart or failed navigation can then resume without losing either task.
   async function switchTask(batch, index, allowFreshWindow = false) {
     const previous = currentStore(batch), next = batch.stores[index];
     diagnosticEvent(batch,'switch',`${previous?.sellerKey||'none'} -> ${next?.sellerKey||'unknown'}`);
-    batch.diagnosticBrowser=null;delete batch.recentWaitReason;
+    batch.diagnosticBrowser=null;batch.noResponseCount=0;delete batch.recentWaitReason;
     const resumingSwitch = batch.resumeIndex === index;
     batch.resumeIndex = index;
     await save(batch);
@@ -181,7 +229,10 @@
       // create a fresh task window for the explicitly selected category.
       if (tab && (pageMatches(actual, previous) || ((resumingSwitch || allowFreshWindow) && pageMatches(actual, next)))) {
         await stopScanner(batch);
-        if (!pageMatches(actual, next)) { await releaseFocusExperiment(batch.tabId); await chrome.tabs.update(batch.tabId, {url:pageUrl(next)}); }
+        if (!pageMatches(actual, next)) {
+          await replaceTaskTab(batch, pageUrl(next), tab);
+          diagnosticEvent(batch, 'tab_recycled', `切换类目重建标签页释放内存: ${next.sellerKey}`);
+        }
       } else if (allowFreshWindow) {
         if (batch.tabId != null) { await releaseFocusExperiment(batch.tabId); await releaseTab(batch.tabId); }
         const fresh = await createTaskWindow(pageUrl(next));
@@ -243,7 +294,7 @@
   async function openCurrent(batch, create = false) {
     const task = currentStore(batch);
     if (!task) return;
-    batch.watchdogSince=now();batch.recoveryAttempts=0;
+    batch.watchdogSince=now();batch.recoveryAttempts=0;batch.noResponseCount=0;
     if (batch.tabId && !create) {
       try {
         const existing = await chrome.tabs.get(batch.tabId);
@@ -251,7 +302,11 @@
           await protectTab(batch.tabId);batch.attemptId = uuid();phase(batch,'recovering','正在恢复类目扫描');await save(batch);
           await enableFocusExperiment(batch);
           if(existing.status!=='loading'&&!existing.frozen&&!existing.discarded){
-            try{await startScanner(batch,task)}catch{await waitStatus(batch,'页面读取器暂未响应，正在等待自动恢复。')}
+            try{await startScanner(batch,task)}
+            catch{
+              if(!existing.pendingUrl && await recoverCrashedTab(batch,task,existing,'继续任务时重建无响应标签页'))return;
+              await waitStatus(batch,'页面读取器暂未响应，正在等待自动恢复。');
+            }
           }
           return;
         }
@@ -396,7 +451,7 @@
           if (!effectiveHidden || observed.size > beforeObserved) {delete task.waitSince;delete task.waitReason;}
           task.pendingCount = Math.max(0, Number(m.pendingCount) || 0);
           if(Array.isArray(m.pendingSkus))task.pendingSkus=[...new Set(m.pendingSkus.map(String).filter(s=>/^\d+$/.test(s)&&!observed.has(s)))];
-          batch.lastProgressAt=now();if(observed.size>beforeObserved)batch.lastNewSkuAt=batch.lastProgressAt;batch.recoveryAttempts=0;
+          batch.lastProgressAt=now();if(observed.size>beforeObserved){batch.lastNewSkuAt=batch.lastProgressAt;task.crashRecoveryCount=0;}batch.recoveryAttempts=0;batch.noResponseCount=0;
           task.activityStatus=batch.activityStatus||'native-background-only';
           phase(batch,effectiveHidden?'background':'foreground',effectiveHidden?'后台扫描类目商品（页面加载可能较慢）':'正在扫描类目商品');
           const pool = await scope.OzonProductPoolDB.lookup((m.products || []).map(raw => raw?.sku));
@@ -437,7 +492,7 @@
           task.observedSkus = [...new Set([...task.observedSkus, ...Object.keys(output.products)])];
           const stop = finishAtTarget(batch);
           if (stop) {diagnosticEvent(batch,'target_reached');await stopScanner(batch);}
-          await save(batch); return { ok: true, stop, pageNativeHidden: batch.backgroundExperiment?await nativePageHidden(batch.tabId):false, batch: clone(batch) };
+          await save(batch); return { ok: true, stop, pageNativeHidden: batch.backgroundExperiment?await nativePageHidden(batch.tabId):false, ...(m.compactAck?{}:{batch:clone(batch)}) };
         }
         case "categoryWait": {
           const task = assertActive(batch,m,sender);
@@ -448,7 +503,7 @@
           task.waitReason = m.reason;batch.recentWaitReason=known?m.reason:'unknown';
           batch.diagnosticBrowser=await browserSnapshot(batch,m.pageReportedHidden,m.pageFocused);
           phase(batch,'waiting',(known ? waitLabels[m.reason] : '正在等待类目页')+'，正在复查…');
-          batch.lastProgressAt=now();batch.recoveryAttempts=0;
+          batch.lastProgressAt=now();batch.recoveryAttempts=0;batch.noResponseCount=0;
           if (await effectivePageHidden(batch,m.pageHidden) && known && !['list_ambiguous','price_filter_loading'].includes(m.reason)) {
             task.waitSince ??= Date.now();
             if (Date.now()-task.waitSince >= STALL_MS) {
@@ -468,7 +523,13 @@
           if (batch.status !== "running") throw Error("类目批次当前未运行");
           const nextUrl = m.reason === "next_page_available" && m.nextUrl && core.paginationUrl?.(m.nextUrl, pageUrl(task));
           if (nextUrl && Number(new URL(nextUrl).searchParams.get('page'))===Number(new URL(pageUrl(task)).searchParams.get('page')||1)+1 && nextUrl!==pageUrl(task)&&!task.visitedPages.includes(nextUrl)) {
-            task.visitedPages.push(pageUrl(task)); task.pageUrl = nextUrl;if(core.rubRange(batch.options))task.pagePriceStatus='pending';task.pendingCount=0;task.pendingSkus=[];delete task.waitSince;delete task.waitReason; phase(batch,'waiting','继续扫描下一页'); await stopScanner(batch); await releaseFocusExperiment(batch.tabId); batch.attemptId=uuid();batch.watchdogSince=now();batch.recoveryAttempts=0;await save(batch);await chrome.tabs.update(batch.tabId,{url:nextUrl});return { ok: true, batch: clone(batch) };
+            const oldTab=batch.tabId==null?null:await chrome.tabs.get(batch.tabId).catch(()=>null);
+            task.visitedPages.push(pageUrl(task)); task.pageUrl = nextUrl;if(core.rubRange(batch.options))task.pagePriceStatus='pending';task.pendingCount=0;task.pendingSkus=[];task.crashRecoveryCount=0;batch.noResponseCount=0;delete task.waitSince;delete task.waitReason; phase(batch,'waiting','继续扫描下一页'); await stopScanner(batch); diagnosticEvent(batch,'tab_recycled','翻页重建标签页释放内存'); batch.attemptId=uuid();batch.watchdogSince=now();batch.recoveryAttempts=0;const fresh=await replaceTaskTab(batch,nextUrl,oldTab);await enableFocusExperiment(batch);await save(batch);
+            const liveTab=await chrome.tabs.get(fresh.id).catch(()=>null);
+            if(liveTab?.status==='complete'&&pageMatches(liveTab.url,task)&&!liveTab.pendingUrl&&!liveTab.frozen&&!liveTab.discarded){
+              try{await startScanner(batch,task);}catch{await waitStatus(batch,'新采集页等待读取器响应，正在自动检查。');}
+            }
+            return { ok: true, batch: clone(batch) };
           }
           const effectivelyHidden=batch.backgroundExperiment && (m.pageHidden===true || await nativePageHidden(batch.tabId));
           if (m.complete === true && m.reason === "visible_catalog_end" && effectivelyHidden) {
@@ -584,12 +645,24 @@
       await protectTab(b.tabId);
       let ack;
       try{ack=await bounded(chrome.tabs.sendMessage(b.tabId,{type:'categoryScanTick',batchId:b.id,attemptId:b.attemptId,pageNativeHidden:b.backgroundExperiment?await nativePageHidden(b.tabId):false}))}catch{ack={missing:true}}
-      if(ack===null){if(b.diagnosticEvents?.at(-1)?.type!=='watchdog_no_response')diagnosticEvent(b,'watchdog_no_response');await save(b);await waitStatus(b,'后台页面暂未响应，已保留进度并等待恢复。');return}
+      if(ack===null){
+        b.noResponseCount=(Number(b.noResponseCount)||0)+1;
+        if(b.diagnosticEvents?.at(-1)?.type!=='watchdog_no_response')diagnosticEvent(b,'watchdog_no_response');
+        if(b.noResponseCount>=RECOVERY_LIMIT){
+          if(await recoverCrashedTab(b,task,tab,'后台持续无响应自动重建'))return;
+        }
+        await save(b);await waitStatus(b,'后台页面暂未响应，已保留进度并等待恢复。');return;
+      }
+      b.noResponseCount=0;
       if(ack?.ok&&ack.running===true){b.diagnosticBrowser=await browserSnapshot(b,ack.pageReportedHidden,ack.pageFocused);await save(b);await waitStatus(b,ack.pageHidden?'后台页面加载较慢，正在等待并检查采集进度。':'等待采集页面上报进度。');return}
       if((Number(b.recoveryAttempts)||0)>=RECOVERY_LIMIT){if(b.diagnosticEvents?.at(-1)?.type!=='watchdog_reader_unavailable')diagnosticEvent(b,'watchdog_reader_unavailable');await save(b);await waitStatus(b,'页面读取器暂未恢复，已保留进度；请检查采集页面。');return}
       delete task.waitSince;
       b.recoveryAttempts=(Number(b.recoveryAttempts)||0)+1;b.attemptId=uuid();b.watchdogSince=now();diagnosticEvent(b,'watchdog_recover',`尝试 ${b.recoveryAttempts}`);phase(b,'recovering','正在从已保存进度恢复同一类目页面。');await save(b);
-      try{await startScanner(b,task)}catch{await waitStatus(b,'页面读取器暂未响应，正在等待自动恢复。')}
+      try{await startScanner(b,task)}
+      catch{
+        if((Number(b.recoveryAttempts)||0)>=RECOVERY_LIMIT && await recoverCrashedTab(b,task,tab,'注入失败自动重建'))return;
+        await waitStatus(b,'页面读取器暂未响应，正在等待自动恢复。');
+      }
     });
   }
   scope.OzonCategoryBackground = Object.freeze({ handle, onUpdated, onRemoved, onAlarm, onRestart, snapshot, snapshotHistory });

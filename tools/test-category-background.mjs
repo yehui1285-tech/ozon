@@ -3,11 +3,11 @@ import fs from "node:fs";
 import vm from "node:vm";
 
 const data = {}, sessionData={}, alarms=new Map();
-let created = [], reloads=0, sentMessages=[], debuggerCommands=[], debuggerAttached=new Set(), debuggerDetachListener=null, nextTabId=71, nextWindowId=9, windowFocused=false, tickMode='running';
+let created = [], reloads=0, sentMessages=[], debuggerCommands=[], debuggerAttached=new Set(), debuggerDetachListener=null, nextTabId=71, nextWindowId=9, windowFocused=false, tickMode='running', scriptFail=false;
 const storage = { async get(k) { return k ? { ...(data[k] ? { [k]: data[k] } : {}) } : { ...data }; }, async set(v) { Object.assign(data, v); }, async remove(k) { for (const key of Array.isArray(k) ? k : [k]) delete data[key]; } };
 let declaredDebugger=true;
 const chrome = {
-  runtime:{getManifest:()=>({version:'0.6.77',permissions:declaredDebugger?['debugger']:[]})},
+  runtime:{getManifest:()=>({version:'0.6.78',permissions:declaredDebugger?['debugger']:[]})},
   storage: { local: storage,session:{async get(k){return {[k]:sessionData[k]}},async set(v){Object.assign(sessionData,v)},async remove(k){delete sessionData[k]}} },
   alarms:{async get(n){return alarms.get(n)},async create(n,o){alarms.set(n,o)},async clear(n){alarms.delete(n)}},
   tabs: {
@@ -28,7 +28,7 @@ const chrome = {
     async sendCommand(target,method,args){debuggerCommands.push({tabId:target.tabId,method,args});},
     async detach(target){debuggerAttached.delete(target.tabId);},
   },
-  scripting: { async executeScript() {} },
+  scripting: { async executeScript() { if (scriptFail) throw Error('tab crashed'); } },
 };
 const context = vm.createContext({ chrome, URL, console, setTimeout, clearTimeout, crypto:globalThis.crypto });
 context.globalThis = context;
@@ -436,4 +436,100 @@ await runner.handle({type:'categoryPause'});data.ozonCategoryBatchV1.backgroundE
 await runner.handle({type:'categoryResume'});batch=(await runner.handle({type:'categoryGet'})).batch;
 assert.equal(batch.backgroundExperiment,false,'legacy persisted experiment setting downgrades on resume');
 await runner.handle({type:'categoryStop'});
+
+// V1.60: Proactive tab recycling on category switch & pagination, compactAck,
+// OOM crash auto-recovery via fresh tab, limit guard, and safety boundaries.
+scriptFail = false; tickMode = 'running';
+batch = (await runner.handle({ type: 'categoryStart', urls: [rch, rn], targetCount: 10, pageMinRub: 500, pageMaxRub: 2500, confirmArchiveOverflow: true })).batch;
+const firstPageTab = created.find(t => t.id === batch.tabId);
+const firstPageTabId = firstPageTab.id, firstPageWindowId = firstPageTab.windowId;
+const compactRes = await runner.handle({ type: 'categorySample', batchId: batch.id, attemptId: batch.attemptId, categoryUrl: filtered, observedSkus: ['5001'], products: [], pagePriceConfirmed: true, compactAck: true }, { tab: { id: firstPageTabId, url: filtered } });
+assert.equal(compactRes.ok, true);
+assert.equal('batch' in compactRes, false, 'compactAck must omit batch object');
+
+// Pagination recycles into a fresh tab in the same window and removes the old tab safely.
+const recycledPage2 = filtered + '&page=2';
+await runner.handle({ type: 'categoryPageDone', batchId: batch.id, attemptId: batch.attemptId, categoryUrl: filtered, nextUrl: recycledPage2, reason: 'next_page_available', complete: false }, { tab: { id: firstPageTabId, url: filtered } });
+batch = (await runner.handle({ type: 'categoryGet' })).batch;
+const page2TabId = batch.tabId;
+assert.notEqual(page2TabId, firstPageTabId, 'pagination creates a fresh tab to release memory');
+assert.equal(created.some(t => t.id === firstPageTabId), false, 'old pagination tab is removed');
+assert.equal(created.find(t => t.id === page2TabId).windowId, firstPageWindowId, 'recycled tab stays in the same task window');
+assert.equal(created.find(t => t.id === page2TabId).autoDiscardable, false);
+await runner.onRemoved(firstPageTabId);
+assert.equal((await runner.handle({ type: 'categoryGet' })).batch.status, 'running', 'late close event of recycled tab must not pause batch');
+
+// Switching categories also recycles into a fresh tab cleanly.
+const activeTabBeforeSwitch = created.find(t => t.id === page2TabId);
+activeTabBeforeSwitch.active = true; windowFocused = true;
+await runner.handle({ type: 'categoryPageDone', batchId: batch.id, attemptId: batch.attemptId, categoryUrl: recycledPage2, pageHidden: false, complete: true, reason: 'visible_catalog_end' }, { tab: { id: page2TabId, url: recycledPage2 } });
+batch = (await runner.handle({ type: 'categoryGet' })).batch;
+assert.equal(batch.currentIndex, 1);
+assert.notEqual(batch.tabId, page2TabId, 'category switch creates a fresh tab');
+assert.equal(created.some(t => t.id === page2TabId), false, 'previous category tab is closed');
+windowFocused = false;
+
+// OOM crash auto-recovery: twice-failed executeScript triggers fresh replacement tab and preserves progress.
+const cat2TabId = batch.tabId;
+const cat2Product = { sku: '88001', name: 'P', link: 'https://www.ozon.ru/product/p-88001/', price: '50', qualified: true, shippingRisk: { type: 'clear' } };
+await runner.handle({ type: 'categorySample', batchId: batch.id, attemptId: batch.attemptId, categoryUrl: filteredNormal, observedSkus: ['88001'], products: [cat2Product], pagePriceConfirmed: true }, { tab: { id: cat2TabId, url: filteredNormal } });
+tickMode = 'missing'; scriptFail = true;
+const makeStale = () => {
+  data.ozonCategoryBatchV1.lastProgressAt = new Date(clock - 181000).toISOString();
+  data.ozonCategoryBatchV1.watchdogSince = data.ozonCategoryBatchV1.lastProgressAt;
+};
+makeStale();
+await runner.onAlarm({ name: 'ozon-category-runner' });
+batch = (await runner.handle({ type: 'categoryGet' })).batch;
+assert.equal(batch.tabId, cat2TabId, 'first injection failure keeps tab before replacement');
+assert.equal(batch.recoveryAttempts, 1);
+makeStale();
+await runner.onAlarm({ name: 'ozon-category-runner' });
+batch = (await runner.handle({ type: 'categoryGet' })).batch;
+assert.equal(batch.status, 'running');
+assert.notEqual(batch.tabId, cat2TabId, 'second injection failure triggers crashed-tab replacement');
+assert.equal(created.some(t => t.id === cat2TabId), false, 'crashed tab is removed');
+assert.equal(batch.stores[1].crashRecoveryCount, 1);
+assert.deepEqual(Array.from(batch.stores[1].observedSkus), ['88001']);
+assert.equal(batch.results['category:333'].products['88001'].sku, '88001');
+
+// New SKU progress resets crashRecoveryCount; frozen/login tabs are never replaced.
+scriptFail = false; tickMode = 'running';
+const recoveredTab = created.find(t => t.id === batch.tabId);
+recoveredTab.frozen = true;
+makeStale();
+scriptFail = true;
+await runner.onAlarm({ name: 'ozon-category-runner' });
+batch = (await runner.handle({ type: 'categoryGet' })).batch;
+assert.equal(batch.tabId, recoveredTab.id, 'frozen tab must never be treated as crashed');
+recoveredTab.frozen = false; scriptFail = false;
+await runner.handle({ type: 'categorySample', batchId: batch.id, attemptId: batch.attemptId, categoryUrl: filteredNormal, observedSkus: ['88002'], products: [], pagePriceConfirmed: true }, { tab: { id: batch.tabId, url: filteredNormal } });
+batch = (await runner.handle({ type: 'categoryGet' })).batch;
+assert.equal(batch.stores[1].crashRecoveryCount, 0, 'new SKU progress resets crash recovery counter');
+
+// Manual resume on a crashed tab immediately replaces it; hitting CRASH_RECOVER_LIMIT pauses cleanly.
+await runner.handle({ type: 'categoryPause' });
+const deadTabId = batch.tabId;
+scriptFail = true;
+batch = (await runner.handle({ type: 'categoryResume' })).batch;
+assert.equal(batch.status, 'running');
+assert.notEqual(batch.tabId, deadTabId, 'manual resume replaces crashed tab');
+assert.equal(batch.stores[1].crashRecoveryCount, 1);
+
+for (let round = 2; round <= 3; round++) {
+  tickMode = 'missing';
+  makeStale(); await runner.onAlarm({ name: 'ozon-category-runner' });
+  makeStale(); await runner.onAlarm({ name: 'ozon-category-runner' });
+  batch = (await runner.handle({ type: 'categoryGet' })).batch;
+  assert.equal(batch.stores[1].crashRecoveryCount, round);
+}
+makeStale(); await runner.onAlarm({ name: 'ozon-category-runner' });
+makeStale(); await runner.onAlarm({ name: 'ozon-category-runner' });
+batch = (await runner.handle({ type: 'categoryGet' })).batch;
+assert.equal(batch.status, 'paused', 'exceeding crash recovery limit pauses safely');
+assert.match(batch.message, /自动恢复上限/);
+assert.ok(batch.diagnosticEvents.some(e => e.type === 'tab_crash_limit'));
+assert.equal(batch.results['category:333'].products['88001'].sku, '88001');
+scriptFail = false; tickMode = 'running';
+await runner.handle({ type: 'categoryStop' });
 console.log("category background runner tests passed");

@@ -1,5 +1,12 @@
 # CHANGELOG.md - Ozon 项目续接记录
 
+## 2026-11-27 - V1.60 / 0.6.78 类目扫描防 OOM 崩溃、主动换页释内存与崩溃自动续扫（待上线发布）
+
+- 主动换页释放内存与提前翻页：`category-background.js` 新增 `replaceTaskTab`，在切换类目与翻到下一页（`?page=N`）时在同一任务窗口内新建干净标签页并保存新 `tabId` 后销毁旧页，彻底释放 Ozon 列表大图与 ERP 面板 DOM 内存并免疫旧页延迟关闭事件；`category-scanner.js` 支持单页累计滚动满 45 次或新发现满 120 件且无待复查 SKU、页底可见下一页链接时主动提前翻页换血。
+- 扫描器增量瘦身：`category-scanner.js` 的 `readCards` 支持跳过已判定 SKU（`skipSkus`）及单卡多锚点去重，并发送增量 `categorySample` 与 `compactAck: true`（后台不回传整份 `batch` JSON，大幅减少后台存储拷贝与序列化压力）。
+- 崩溃自动识别与断点续扫：`category-background.js` 新增 `recoverCrashedTab`，当后台看门狗连续 2 次无响应或连续 2 次脚本注入失败（严格排除登录/验证、`frozen`/`discarded` 或离页状态），或暂停后人工点「继续」遇死标签页注入失败时，自动新建标签页从原 `pageUrl`、`observedSkus` 与已采候选断点续扫；同类目连续崩溃自动恢复上限 3 次（有新 SKU 进展清零），并在 `category.js` 任务卡片展示重建次数提示；扩展更新至 `v0.6.78`。
+- 打包与验证：回滚备份 `_备份_20261127_v160_category_oom_recovery_before`（已轮换清理 `_备份_20261126_v156_float_bar_before`，保留 `_备份_20261125_v151_pool_before` 及共 5 份常规备份）。Ozon `npm.cmd test`（含新增 `test-category-scanner.mjs` 与 `test-category-background.mjs` 断言）、`verify-project.ps1`、双版发布构建（`ozon-erp-collector-extension.zip` SHA256 `08D92EF855B1A969D15D9E132405963681E9C6A93BEF127328D87EB0A98B8E8E`，独立分享版 `ozon-standalone-extension.zip` SHA256 `63CFD59A0EDFFB75A1C4AF66A469A05674C9CA31D5D944528D163542696463DC`）、Workbench `sync-workbench-core --check`、`release:check`（`V1.59 → V1.60`）与 `npm.cmd run build` 全部通过；真实 Ozon 长时扫描稳定性、折叠崩溃恢复及独立分享版 `0.6.78` 升级待用户实机验收。
+
 ## 2026-11-27 - V1.59 / 0.6.77 扩展与独立版「类目选品」页面视觉重构（已上线站点版本 88）
 
 - 排版与视觉重构：按确认后的效果图重构 `category.html`、`category.css`、`category.js`（**无新增 D1 数据库迁移**）：统一工作台深森绿 `#3a5a40` 与暖灰纸底 `#f7f7f5` 规范；将参数筛选重构为 3 组等高对齐输入栏（消除标签折行与错位）；固定「当前批次」单行标题与状态徽章，新增 4 格 KPI 概览条与可折叠原因诊断框；批内操作与「运行诊断 / 历史批次」对齐排布；三级联动类目选择弹窗同步换肤；严格保留全部 DOM ID、`build-standalone.mjs` 独立版生成锚点与原有业务逻辑不变。
