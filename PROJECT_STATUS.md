@@ -1,143 +1,28 @@
 # Ozon 当前状态
 
-更新时间：2026-11-27（工作台 V1.62 已上线站点版本 `91`，源码 `570d239`，部署 `appgdep_6b090a124520819194f933b8593a0a82`，内嵌扩展 `v0.6.80`；双版独立包 `0.6.80` 已构建；无新增 D1 迁移；Ozon 仓库同步推送 `origin/main`）。
+更新时间：2026-11-27（工作台 V1.63 本地已构建提交待 Codex 上线，扩展 `v0.6.81` 双版发布包已生成，无新增 D1 迁移；当前线上运行 V1.62 站点版本 `91`，已实测 `v0.6.80` 卢布页正常滚动）。
 用途：新对话快速续接。详细过程按需查 [CHANGELOG](CHANGELOG.md) 和 [历史入口](docs/history/README.md)，不把历史待办当作当前任务。
 
 ## 当前版本与结论
 
-- V1.62 / 0.6.80（已上线站点版本 `91`，含 V1.61 全部改动）：修复 Ozon 网页开启卢布（`₽`）且左侧「价格」预设单选文字为空时卡在“未确认 Ozon 页面卢布价格区间”不滚动的问题，并支持 Ozon 卢布商品卡片直接采集入池（**无新增 D1 数据库迁移**）：
-  - 卢布页面预筛确认兼容（`category-scanner.js`）：允许左侧价格标题附带提示图标（`价格 ⓘ`），当左侧单选框无文字标签且无非卢布货币符号时，自动结合主商品区明确 `₽` 售价（排除 `毛子ERP` 内 `跟卖最低价` 换算值）完成页面预筛确认，立即解锁滚动。
-  - 卢布商品卡片解析与人民币区间复核（`store-scanner-core.js`、`category-core.js`、`category-scanner.js`、`category-background.js`、`category.js`）：`parseCardText` 在无 `¥` 主价格时从 ERP 面板前提取首位 `₽` 售价（如 `1 480 ₽`）保留币种入池；人民币区间留空时直接放行，填有人民币复核区间时按开始任务携带的汇率（`fxRate`，自动每日更新/手动可调）折算校验，未带合法汇率仍拒绝将 `₽` 误当人民币放行。
-  - 验证与部署：同步工作台共享核心（`sync-workbench-core.mjs` 更新 `store-scanner-core.js`、`category-core.js` 与锁定清单），Ozon 全量 `npm.cmd test`（含新增 `test-store-scanner.mjs`、`test-category-core.mjs`、`test-category-scanner.mjs` 卢布卡与空白预设栏确认断言）、`verify-project.ps1`、双版 ZIP（`ozon-erp-collector-extension.zip` SHA256 `ED2E2501E751DAA2402204A258D109BC8071A971718E7CC7E45DFBB452C5F7F2`；独立版 `ozon-standalone-extension.zip` SHA256 `9CD851A30C1A9279A25F0085B8ED8AC0E64C19AA00AE06282297542C557298D7`）、Workbench `release:check`（`V1.61 → V1.62`）、`npm.cmd run build`、`ozon-collector.test.mjs`、`ozon-product-pool.test.mjs` 与 `ozon-workbench-nav.test.mjs` 全部通过。Codex 已将工作台 V1.62 部署上线（站点版本 `91`，Workbench 提交 `570d239`，部署 ID `appgdep_6b090a124520819194f933b8593a0a82`，共享核心与 `v0.6.80` SHA256 校验通过，生产构建与登录页 HTTP 200 通过，下载接口配置为 `ozon-erp-collector-extension-v0.6.80.zip`，无新增 D1 迁移；登录后实际下载尚未验证）。真实 Ozon 卢布模式滚动/采集、防崩溃长扫、实时人民币换算及独立版 `0.6.80` 升级待用户现场验收。回滚备份 `_备份_20261127_v162_rub_scan_support_before`。
+- V1.63 / 0.6.81（路线 A 视觉与交互收口，本机已构建提交待上线）：保留工具栏弹窗原蓝紫配色，其余页面统一深森绿并补齐入池交互闭环（**无新增 D1 数据库迁移**）：
+  - 视觉收口（`batch.html`、`build-standalone.mjs`）：「批量店铺扫描」页面及独立分享版顶部导航条（`standalone-nav.css`）统一切换至工作台深森绿 `#3a5a40` 与暖灰纸底 `#f7f7f5` 规范，规整操作按钮主次层级；`popup.html` 保持蓝紫风格不变。
+  - 商品池「本批加入商品池」反馈闭环（工作台 `pool-desk.tsx` / `pool.css`；扩展 `category.js` / `product-pool.js`）：工作台入池后右下角弹出清晰 Toast，有新增时提供「仅看刚入池这批」一键筛选按钮，全重复时提示并支持一键「切换全部状态查看」，扫描批次下拉框为已入池批次标注 `· 已入池`；扩展「类目选品」入池后更新右上「打开本机商品池」直跳对应批次。
+  - 验证与双线构建：Ozon 全量 `npm.cmd test`（含 `test-standalone.mjs` 对深森绿导航 `#3a5a40` 断言）、`verify-project.ps1`、双版 ZIP（`ozon-erp-collector-extension.zip` SHA256 `526B9C97AC4242B3938F49541B1295BEF78572F16DE8A9AE42F71030C54CF507`；独立版 `ozon-standalone-extension.zip` SHA256 `7873BB2A826434CD010359D9EAEEBE3E506C82E3F3083FB2CAEAF1A103F29271`）、Workbench `sync-workbench-core --check`、`release:check`（`V1.62 → V1.63`）、`npm.cmd run build`、`ozon-product-pool.test.mjs` 与 `ozon-workbench-nav.test.mjs` 全部通过。真实浏览器下独立导航样式、工作台入池 Toast 跳批及独立版 `0.6.81` 升级待用户现场验收。回滚备份 `_备份_20261127_v163_route_a_polish_before`。
+- V1.62 / 0.6.80（当前线上站点版本 `91`，`570d239`，`appgdep_6b090a124520819194f933b8593a0a82`，内嵌扩展 `v0.6.80`）：修复 Ozon 卢布页预设单选文字为空时卡在“未确认价格区间”不滚动问题，兼容 Ozon 卢布（`₽`）商品卡直接采集并支持 `fxRate` 换算复核。**用户已实测 `v0.6.80` 可正常自动滚动**；卢布卡片入池全链路及独立版 `0.6.80` 升级待进一步确认。回滚备份 `_备份_20261127_v162_rub_scan_support_before`。
+- V1.61 / 0.6.79（已随 V1.62 上线站点版本 `91`）：「类目选品」卢布预筛下方实时显示折算人民币具体金额与区间防冲突提示（12h 本机缓存自动每日拉取免费公开汇率 + 手动修改/恢复自动）。回滚备份 `_备份_20261127_v161_rub_cny_hint_before`。
+- V1.60 / 0.6.78（已上线站点版本 `89`，`bd93c3d`）：类目长时扫描防 `Out of Memory` 崩溃——切类目/翻页与滚动超 45 次或 120 件新发现时主动重建干净标签页释内存、`readCards` 跳过已查 SKU + 增量上报、看门狗与继续时自动新建标签页断点续扫（上限 3 次）。回滚备份 `_备份_20261127_v160_category_oom_recovery_before`。
+- V1.59 / 0.6.77（已上线站点版本 `88`，`43a4e0d`）：重构「类目选品」页面与三级类目选择弹窗排版与深森绿视觉。
+- 更早版本归档（`0.6.40–0.6.69` 与 `V1.51–V1.58` 详情、长期双线交付规则及历史测试/边界证据）已整理迁入 [阶段状态归档](docs/history/PROJECT_STATUS-2026-11-27-v0640-v0669.md) 与 [CHANGELOG](CHANGELOG.md)。
 
-- V1.61 / 0.6.79（已随 V1.62 上线站点版本 `91`）：在「类目选品」页面（`category.html` / `category.css` / `category.js`）及独立分享版卢布预筛输入框下方新增实时人民币金额折算提示与双向区间防冲突校验（**无新增 D1 数据库迁移**）：
-  - 实时金额提示：填写 Ozon 页面卢布预筛时，下方直接显示折合后的人民币具体金额（如 `约合 ¥84.7 – ¥423.7` / `约合 ¥84.7 起` / `约合 ¥423.7 以内`），两个卢布框留空时自动隐藏、零干扰；同时填有人民币复核区间且两边无重叠时自动红字提醒 `与人民币区间无重叠`。
-  - 汇率来源：打开页面时静默按 12 小时缓存拉取免费公开汇率并持久化至本机（离线自动沿用缓存，默认兜底 `11.8`），并支持点击「调整汇率」手动覆盖与「恢复自动」。
-  - 验证与双线构建：Ozon 全量 `npm.cmd test`（含 `test-standalone.mjs` 独立版 `#rubCnyBar`/`#fxRateInput` 留存与账号隔离检查）、`verify-project.ps1`、双版 ZIP 构建（`ozon-erp-collector-extension.zip` SHA256 `A71B93043EB2C6F32ACC71178EA32D51D59B968562BAC0B28F3A5183C85BC083`；独立版 `ozon-standalone-extension.zip` SHA256 `CB27905557E8F021BB3A79356B35FBAC93D4FB84F2E836F65F1B188F5919C669`）、Workbench `sync-workbench-core --check`、`check-release-version.mjs`（`V1.60 → V1.61`）、`npm.cmd run build` 与 `ozon-workbench-nav.test.mjs` 全部通过。真实浏览器汇率自动拉取、输入折算手感及独立版 `0.6.79` 升级待现场验收。回滚备份 `_备份_20261127_v161_rub_cny_hint_before`。
+## 当前待验收与已知边界
 
-- V1.60 / 0.6.78（已上线站点版本 `89`）：针对长时间类目扫描导致标签页 `Out of Memory` 崩溃及恢复卡在死标签页的问题，完成防崩溃减负、主动换页释内存与崩溃自动重建续扫改造（**无新增 D1 数据库迁移**）：
-  - 主动重建标签页释内存（`category-background.js`）：切换类目与翻到下一页（`?page=N`）时，通过 `replaceTaskTab` 在同一任务窗口内新建干净标签页并更新 `batch.tabId` 存盘后再关闭旧页，彻底释放图片与 ERP DOM 渲染内存，且避免旧页迟到关闭事件误触发暂停。
-  - 扫描器瘦身与提前翻页（`category-scanner.js`）：`readCards` 支持跳过已判定 SKU（`skipSkus`）及同卡多锚点去重，并向后台发送增量 `categorySample`（`compactAck: true` 省略冗余大体积 `batch` 回传）；单页扫描累计超过 `45` 次滚动或 `120` 件新发现且无待复查项、页面底部可见下一页链接时，主动触发翻页换页。
-  - 崩溃自动识别与断点续扫（`category-background.js`、`category.js`）：看门狗连续 2 次无响应或连续 2 次注入失败（排除退出类目范围、登录/验证、`frozen`/`discarded` 状态），以及暂停后人工点「继续」发现页面脚本无响应时，自动触发 `recoverCrashedTab` 新建干净标签页从当前保存的 `pageUrl`、`observedSkus` 和候选结果断点续扫（同类目连续崩溃自动恢复上限 `3` 次，新发现 SKU 自动清零计数，达上限安全暂停提示）。
-  - 验证与部署：扩展 `v0.6.78`（`ozon-erp-collector-extension.zip` SHA256 `08D92EF855B1A969D15D9E132405963681E9C6A93BEF127328D87EB0A98B8E8E`）与独立分享版 `0.6.78`（`ozon-standalone-extension.zip` SHA256 `63CFD59A0EDFFB75A1C4AF66A469A05674C9CA31D5D944528D163542696463DC`）全部通过。Codex 已将工作台 V1.60 部署上线（站点版本 `89`，Workbench 提交 `bd93c3d`，部署 ID `appgdep_6b090032510081919d8f8dd1a5d5355b`，共享核心与 `v0.6.78` SHA256 校验通过，生产构建与登录页健康检查 HTTP 200 通过，下载接口配置为 `ozon-erp-collector-extension-v0.6.78.zip`，无新增 D1 迁移；因 Chrome 连接超时未完成登录后实际下载校验）。**真实 Ozon 长时挂机扫描防崩溃、翻页换页及崩溃自动续扫效果（以及独立分享版升级）待用户在真实浏览器实机验收。** 回滚备份 `_备份_20261127_v160_category_oom_recovery_before`。
+- 待现场真实验收：工作台与独立版 `v0.6.81` 视觉与 Toast 跳转、V1.60 长时扫品防崩溃与断点续扫、V1.61/V1.62 实时汇率与卢布卡入池、以及多电脑设备/批次筛选（V1.58）与推送瞬时回显（V1.57）。
+- 本机测试环境未配置 Playwright 模块，隔离浏览器脚本（`test-category-browser.mjs`、`test-product-pool-browser.mjs`、`ozon-pool-browser.mjs` 等）未在本机运行；所有版本均未执行外部站点绕过或自动下单。
+- 工作边界：登录、CAPTCHA 和平台验证由用户处理；1688 自动搜款主线继续暂停（恢复需用户明确指示）；`AGENTS.md` 双线同步交付规则持续生效；常规 `_备份_*` 目录保留最新 5 份（保留 `_备份_20261125_v151_pool_before`）。
 
-- V1.59 / 0.6.77（已上线站点版本 `88`）：围绕确认后的交互效果图完成扩展「类目选品」页面（`category.html` / `category.css` / `category.js`）及独立分享版（`build-standalone.mjs` 自动同步）的视觉与排版重构（**无新增 D1 数据库迁移**）：
-  - 新建类目任务卡片：重排为 3 组等高对齐参数列（本批目标新品数、人民币复核区间、Ozon 页面预筛），解决原版 5 栏标题折行与高低不齐；统一工作台深森绿 `#3a5a40` 与暖灰纸底 `#f7f7f5` 配色，轻量收纳停用试验模式说明。
-  - 当前批次与历史管理：固定「当前批次」单行标题与状态徽章（消除标题折行），新增 4 格 KPI 概览条（新候选/目标、已检查、待人工复查、页面卢布预筛）与可折叠诊断区；批内按钮主次左右分组，运行诊断与历史批次工具对齐为水平两行；三级联动类目选择弹窗同步切换深森绿视觉体系。
-  - 验证与部署：Ozon `npm.cmd test`（含 `test-standalone.mjs` 校验独立版导航与 `#syncWorkbench` 剥离）、双版发布构建（`ozon-erp-collector-extension.zip` 与工作台内嵌包 SHA256 `F5A6F26F209A7EA5A020EB804F1230C165A661AE7CE8207C353896E502B16E0A` 一致）、Workbench `npm.cmd run build`、272/272 测试与 `V1.58 → V1.59` 版本校验均通过；本机未配置 Playwright，隔离浏览器脚本未跑。Codex 已部署上线（站点版本 `88`，Workbench 本地提交 `43a4e0d`，部署 ID `appgdep_6b08ebe8bae081919bacfe835a56a08c`，共享核心及扩展 `v0.6.77` SHA256 校验通过，生产构建通过，无新增 D1 迁移）。线上重载 `v0.6.77` 扩展及独立分享版 `0.6.77` 真实浏览器排版待用户现场确认。回滚备份 `_备份_20261127_v159_category_ui_before`。
+## 按任务查阅与服务入口
 
-- V1.58 / 0.6.76（已上线站点版本 `87`）：支持多电脑共用同一工作台账号协作时按「扫描设备」或「扫描批次（电脑 + 时间）」筛选商品池，各自独立找品互不撞车，切换「全部设备 / 批次」即可汇总看全池（**无新增 D1 数据库迁移**）：
-  - 工作台端（`lib/ozon-pool/model.ts`、`store.ts`、`app/ozon/pool/pool-desk.tsx`）：`readPoolPage` 基于既有 `payload.batchIds` 关联 `ozon_scan_batches` 与 `ozon_collector_devices` 支持按 `deviceId` / `batchId` 精确筛选并返回批次分面（含历史全部已入池商品与已归档设备归属），右侧单品快速核价「下一件」及状态流转自动限定在所选设备或批次范围内。
-  - 扩展 / 独立分享版（`product-pool-core.js`、`product-pool-idb.js`、`product-pool.html`、`product-pool.js`）：`search` 分块补充 `batchIds` 并将 `searchVersion` 由 `3` 自动升级为 `4`（零数据丢失），新增 `#batchFilter` 按扫描批次筛选（全库去重与导出规则不变）。
-  - 验证与部署：Ozon `npm.cmd test`（含 `test-product-pool.mjs` `batchId`/`deviceId` 查询断言）、双版发布构建（`ozon-erp-collector-extension.zip` 与工作台内嵌包 SHA256 `FAFF78E2E9DEF78FF2ADA6428BC273E7559C9A19FA783F34FE7785B0E97A888F` 一致）、Workbench `npm.cmd run build`、272/272 测试（含 `ozon-pool-d1.test.mjs` 对多设备/多批次筛选及共享 SKU 归属断言）与 `V1.57 → V1.58` 版本校验均通过。Codex 已部署上线（站点版本 `87`，Workbench 本地提交 `d1537b8`，部署 ID `appgdep_6b08e231cc5c819197b13c786d9afb62`，共享核心及扩展 `v0.6.76` SHA256 校验通过，生产构建通过，无新增 D1 迁移）。线上多电脑实机设备/批次筛选及独立分享版 `0.6.76` 升级待用户现场确认。回滚备份 `_备份_20261127_v158_device_batch_filter_before`。
-
-- V1.57 / 0.6.75（已上线站点版本 `86`）：围绕商品池复查效率与推送体验完成三项协同调整（**无新增 D1 数据库迁移**）：
-  - 保存时间排序与精简排序选项（`product-pool-core.js`、`lib/ozon-pool/model.ts`、`lib/ozon-pool/store.ts`、`app/ozon/pool/pool-desk.tsx`、`product-pool.html`）：新增「最近保存优先」（`savedRecent`）与「最早保存优先」（`savedOldest`），有 `manualSavedAt` 的商品优先排在前面，同时间戳按 `lastSeenAt` 与 `sku` 兜底；同时剔除无用的 `skuAsc` / `skuDesc` 选项，历史非法/旧值自动回落为 `recent`。工作台直接基于既有 `payload` 中 `$.manualSavedAt` 排序，**无需 D1 schema 迁移**。
-  - 扩展 / 独立分享版索引自动回填（`product-pool-idb.js`）：`search` 索引行补充 `manualSavedAt` 字段并将 `searchVersion` 由 `2` 自动升级为 `3`（不改动 IndexedDB schema 版本、零数据丢失）；移除 `listing` SKU 排序分支，保留时间索引读取与紧凑投影排序。
-  - 详情页推送 → 商品池快速核价秒级回显提速（`app/api/ozon/route.ts`、`app/ozon/pool/pool-desk.tsx`、`workbench-bridge.js`、`quick-pricing-panel.js`）：① 新增 `GET /api/ozon?sku=<sku>` 精确单品查询，避免每次切页/刷新拉取全量核价表；② `wbSendDetail` 收到云端 `{ ok: true }` 确认后立即向已打开的 `/ozon/pool*`、`/ozon` 标签页派发 `ozon-pricing-pushed` 事件，后台自动预拉取最新核价数据；③ `quick-pricing-panel.js` 对紧邻触发的 `visibilitychange` + `focus` 做 800ms 同 SKU 去重，并将无核价等待轮询从 12 秒缩为 2 秒（已有核价降为 15 秒）。
-  - 验证与部署：Ozon `npm.cmd test`（含 `test-product-pool.mjs` 与 `test-quick-pricing.mjs` 推送信号/防抖/2s 轮询断言）、双版发布构建（`ozon-erp-collector-extension.zip` 与工作台内嵌包 SHA256 `DC1648C2A698C4641007036A47356F2ABD70EA4DDB99E258B023A01928569316` 一致）、Workbench `npm.cmd run build`、271/271 测试（含 `ozon-pool-d1.test.mjs`、`ozon-product-pool.test.mjs` 与 `ozon-sync.test.mjs` 单 SKU 接口校验）与 `V1.56 → V1.57` 版本校验均通过。Codex 已部署上线（站点版本 `86`，Workbench 本地提交 `b46d5c6`，部署 ID `appgdep_6b080434f40c8191b5d562cdd7230006`，共享核心及扩展 `v0.6.75` SHA256 校验通过，生产构建通过，无新增 D1 迁移）。线上真实浏览器排序/重载 `v0.6.75` 扩展后的瞬时推送回显与独立分享版 `0.6.75` 升级待用户现场确认。回滚备份 `_备份_20261126_v157_saved_sort_before`。
-
-- V1.56 / 0.6.74（已上线站点版本 `84`）：修复商品池底部悬浮批量操作栏中「取消选择」按钮在工作台因 `.ozscan button` 后加载覆盖背景导致的“白底白字”问题，并统一双版悬浮栏按钮配色与悬停反馈（**无新增 D1 数据库迁移**）：
-  - 工作台端（`app/ozon/pool/pool-desk.tsx`、`pool.css`）：为「取消选择」补充 `pool-float-ghost` 类，并将 `.pool-batch-float` 内按钮规则限定在 `.ozscan .pool-batch-float` 作用域下以稳定覆盖 `scan.css` 的通用白色按钮样式。
-  - 扩展 / 独立分享版（`ozon-erp-collector-extension/product-pool.html`、`product-pool.css`）：同步为 `#rejectSelected`、 `#clearSelectionBtn` 补齐 `danger` / `ghost` 类与高对比度配色及悬停状态，原有批量操作逻辑不变。
-  - 验证与部署：Ozon `npm.cmd test`、双版发布构建（`ozon-erp-collector-extension.zip` 与工作台内嵌包 SHA256 `FF66E776A5F7344D53E7D88C099222D0B17FC473366E8784137D796D89DD8D55` 一致）、Workbench `npm.cmd run build`、271/271 测试与 `V1.55 → V1.56` 版本校验均通过。Codex 已部署上线（站点版本 `84`，Workbench 本地提交 `b18194b`，部署 ID `appgdep_6b07fc021d608191ac513a33f5179f53`，共享核心及扩展 `v0.6.74` SHA256 校验通过，生产构建通过，无新增 D1 迁移）。线上真实浏览器「取消选择」按钮样式与独立分享版 `0.6.74` 升级待用户现场确认。回滚备份 `_备份_20261126_v156_float_bar_before`。
-
-- V1.55 / 0.6.73（已上线站点版本 `83`）：在 V1.54 基础上，按用户实机体验微调两处细节（**无新增 D1 数据库迁移**）：
-  - 共享快速核价面板精简（`quick-pricing-panel.js` / `quick-pricing-panel.css`）：将「货源链接 / 说明」更名为「货源链接 / 备注」并删除冗余的「核价备注」文本框，缩短右侧面板高度，常见桌面屏高无需垂直滚动即可直达利润率与操作按钮；原有 `/api/ozon` 推送与核价计算公式不变。
-  - 侧栏图标调整（`app/components/ozon-shell.tsx`）：将「任务工作台」「灵感图库」图标更新为紧凑网格与画框 SVG，风格更形象统一。
-  - 验证与部署：Ozon `npm.cmd test`、双版发布构建（`ozon-erp-collector-extension.zip` 与工作台内嵌包 SHA256 `9273A9912C0FE79A13C04B429FFC333959DF0B97FA0A66ED426AAD35CCD9CFDA` 一致）、Workbench `npm.cmd run build`、271/271 测试与 `V1.54 → V1.55` 版本校验均通过。Codex 已部署上线（站点版本 `83`，Workbench 提交 `4f43d4b`，部署 ID `appgdep_6b07f4c784f4819188ec61e78231e9df`，共享核心及扩展 `v0.6.73` 哈希校验通过，无新增 D1 迁移）。线上真实浏览器 UI/免滚动快速核价/悬停预览及独立分享版 `0.6.73` 升级待用户现场验收。回滚备份 `_备份_20261126_v155_qp_icons_before`。
-
-- V1.54 / 0.6.72（已随 V1.55 上线站点版本 `83`）：在保留任务工作台（`/`）、灵感图库（`/gallery`）、单品快速核价面板全部字段及推送逻辑、`/ozon` 原核价表的基础上，完成工具箱与 Ozon 交互及界面升级（**无 D1 数据库迁移**）：
-  - 统一左侧边栏与快捷跳转：工作台新增 `app/components/ozon-shell.tsx` 与 `quick-jump.tsx`（`Ctrl+K`），工具箱、Ozon 商品池/类目选品/批量店铺扫描共用主工作台 220px 左侧栏与顶部面包屑，保留 Ozon 二级入口常驻显示；`<ozon-workbench-nav>` 自动收起冗余导航条，保留设备连接状态与“插件管理”弹窗。
-  - 商品池 6/7 列紧凑排版与悬停预览：双版（工作台 `pool-desk.tsx` 与独立版 `product-pool.*`）将表格压缩为紧凑列（将售价、月销量、重量合并为结构化指标列，类目收进商品元信息标签），消除 1440px 下横向滚动；缩略图新增 168×168 悬停放大预览；批量操作改为勾选后底部浮出悬浮条，释放首屏视野。
-  - 验证：Ozon `npm.cmd test`、双版发布构建（`ozon-erp-collector-extension.zip` 与工作台内嵌包 SHA256 `2B5EA6F318AAE949B229AC9429C42D5D8E6DB860AC9C56DFED2503E3E00E25EB` 一致）、Workbench `npm.cmd run build`、271/271 测试与 `V1.53 → V1.54` 版本校验均通过；隔离 Playwright 浏览器脚本因本机未配置 Playwright 模块未运行。回滚备份 `_备份_20261126_v154_workbench_ui_before`。
-
-- V1.53 / 0.6.71（已上线站点版本 81）：工作台 V1.53 已部署上线为站点版本 81（`44feaa5`，`appgdep_6b07e37897508191847cb59fa84776d4`），扩展 `v0.6.71` 哈希与共享核心校验通过，无新增 D1 迁移；双版同步实现商品池缩略图与选品字段展示：
-  - 采集端（`category-scanner.js`、`store-scanner.js`、`store-scanner-core.js`）：新增 `normalizeImageUrl`（仅允许 `https:` 且 `ozone.ru`/`ozon.ru` 非 `.svg` 图片链接），提取卡片主图 URL；缺图不阻塞合格判定。`buildManualSourcingCsv` 与 `exportPoolCsv` 分别补充「商品图片链接」「图片链接」。
-  - 存储与筛选（`product-pool-core.js`、`product-pool-idb.js`、Workbench `lib/ozon-pool/store.ts`）：新增 `source`（`category`/`store`）来源筛选与历史图片链接回填；IndexedDB 轻量 `search` 分块按 `searchVersion=2` 自动升级；Workbench 复用 `json_extract` 过滤，**无需 D1 schema 迁移**。
-  - 界面（`product-pool.*`、Workbench `pool-desk.tsx`）：支持 56×56 懒加载缩略图（`referrerPolicy="no-referrer"`、无图/加载失败优雅降级）、“显示图片”开关（记忆偏好，关闭后不渲染 `<img>`）、新增「月销量」列与来源徽标（类目/店铺）。
-  - 验证：Ozon `npm.cmd test`、双版发布构建（内嵌 0.6.71 ZIP SHA256 一致）、Workbench `npm.cmd run build`、271/271 测试与 `V1.52 → V1.53` 版本校验均通过；本机未配置 Playwright 模块，隔离浏览器脚本未跑；真实账号下缩略图加载、来源筛选、新采集取图及独立分享版 `0.6.71` 覆盖升级仍待用户现场验收。回滚备份 `_备份_20261126_v153_pool_images_before`。
-
-- V1.52 / V1.51 / 0.6.70：工作台 V1.52 已部署上线为站点版本 80（`f198089`，`appgdep_6b07dae166b081919e7dec32e28a8ef39`），包含 V1.51 商品池 D1 分行存储（生产 D1 `0019`、`0020` 迁移通过，账号 `yehui` 262 件迁移完成且与备份一致、`ready=1`，旧 R2 快照保留；每页最多 50 件，支持全库搜索、状态筛选、四种稳定排序、单件/批量更新、完整导出、跨页草稿、查重、运输风险及原核价规则）与 V1.52 任务首屏日期格式化复用及设置页（`/gallery?settings=1`）轻量化优化；独立分享版 `0.6.70` 采用 IndexedDB 事务迁移并保留旧快照；线上采集插件 `0.6.70` 发布包哈希校验一致。本机交付与合成压测见 [交付报告](docs/2026-11-26-v151-product-pool-delivery.md) 及 [V1.52 性能修复记录](_备份_20261125_v151_pool_before/workbench-navigation-performance-v152.md)。真实页面切页体验、真实账号下载/采集、独立分享版覆盖升级及真实 Ozon 页面验收仍待用户现场确认。
-
-- 本机治理：Ozon 为共享核心真源；`tools/sync-workbench-core.mjs --workbench <路径> --check` 校验实际 Workbench，Workbench build/lint 前校验同步锁。默认调试器权限移除，Chrome 不支持可选 `debugger`，历史试验配置降为普通后台扫描。D1 两项组合索引迁移仅在本地生成；旧业务、价格筛选和当前线上数据不变。Ozon 全量测试与双版构建、Workbench 构建和 263 项测试通过；lint 72 错误 / 75 警告均为历史问题，用户确认另治理。[治理记录](docs/2026-11-25-ozon-workbench-governance.md)。
-
-- 0.6.69 / V1.50：新类目任务可设置独立 Ozon 页面卢布价格区间，两端均填或均空；已确认普通类目、中国专区真实页面均支持范围参数。翻页保留区间，未确认控件或条件变化则暂停；原 CNY、ERP、运输和查重标准不变。真实扩展完整采集和效率对照待验收；下一步 V1.51 商品池数据按需读取及分页。
-
-- 0.6.68：类目采集诊断按 SKU 统计筛选及查重原因，记录真实增长时间和浏览器状态，一键导出本机诊断。完全遮挡的实际采集效果仍需现场对照。后续迭代详见 [迭代计划](docs/迭代计划.md)，商品池先分页、后图片。
-
-- 0.6.67：暂停或停止的当前类目批次支持指定类目继续、跳过和删除（移出扫描队列）。已采记录保留，跳过或删除不自动回查；批次停止状态与卡片一致。
-
-- 0.6.66：类目识别按唯一 Ozon 商品链接和对应毛子 ERP 卡片绑定。适配同一行标签、隐藏 SKU 和跟卖最低价、三档小数佣金；标签独立统计，缺失必要字段待复查，价格、运输和查重规则保留。真实 Ozon 页面待验收。
-
-- 0.6.65：新批次独立窗口，不抢前台；后台试验默认关闭，开启后仅对当前采集页尝试焦点模拟。新增发现商品、ERP 就绪、标签命中三个诊断指标。实际完全遮挡下商品与毛子 ERP 加载待现场验收。
-
-- 0.6.64：后台普通等待持续约 90 秒且没有新增已检查 SKU，由采集页再次上报后保留本页、候选和待复查记录，先扫未开始类目，再回查一次。未解决的进度保留供人工继续。真实 Ozon 后台轮换待现场验收。
-
-- 0.6.63：类目弹窗默认中国专区，普通类目置于高级选项，保留原来源与历史组合。采集页后台自动延长等待，独立任务监控仅检查同一确认标签/页面、恢复失联读取器不导航或刷新；任务标签页可用的防自动丢弃设置在结束后恢复。冻结/节流显示等待，不伪造上报或 SKU 数；实际验证、关闭或离开页面仍暂停。管理页自动读取状态并区分最近真实上报及最近发现 SKU。实际 Ozon 后台运行待验收。
-
-- 0.6.62 类目选择：以独立弹窗替代长折叠树，三级并列联动、名称点击与勾选分开、完整已选路径和单项移除、中文/俄文/编号/路径搜索；保留现有目录、普通与中国专区、组合及“选末级”。完成才提交选择草稿，取消/Esc 不改已确认项；合计最多20个任务，勾选父节点仍为单任务。采集、运输、查重及批次管理逻辑不变。
-
-- 0.6.61 类目批次管理：本机可删除已结束当前/历史批次及清理已结束的零候选批次；工作台支持单删及清理空类目批次，云端删除使用账号和批次范围内软删除标记，再同步不会重现。运行及暂停批次保护，商品池与查重历史不变；本机/云端删除独立。真实账号删除未执行。
-
-- 0.6.60 修复：中国专区真实保存页主列表分页容器（16 个 SKU）和推荐岛（30 个 SKU）共用 tileGridDesktop。排除具有明确推荐标题的独立岛，读取唯一明确的分页容器（含未重复列表标识的虚拟行）；不明确的多个主列表仍暂停。真实保存 HTML 离线识别 14 件完整、2 件待复查，推荐 30 件未混入，真实运行滚动待验收。
-
-- 长期交付规则：今后 Ozon 功能更新默认同步交付个人工作台版与无需登录工作台的独立分享版，共享核心逻辑、隔离各自数据，分别验证并记录版本及发布结果。详见 [AGENTS.md](AGENTS.md)。
-- 0.6.59 类目树：基于用户提供的 2026-10 公开目录快照，普通 2,434 节点（872 个中文名）、中国专区 1,191 可选节点（均有中文名）；缺少翻译显示俄文。可搜索、多级勾选、选末级、保存本机组合，自定义链接继续保留，合计最多 20 个。普通与中国专区 ID 命名空间独立，精确来源及同类目顺序分页校验；结果保留源 URL，工作台入池同样按源和 SKU 校验。目录和中国专区真实页面仍需现场核验，合成页面不等于实际通过。
-- 0.6.58 类目验证误判修复：用户反馈商品页面正常但提示站点验证，隔离 Chromium 复现普通 SKU 和价格数字触发误暂停。修复正常商品数字判定，真实安全验证、访问拒绝仍立即暂停并显示具体原因类别；原批次、待复查 SKU 与数据归属保持。真实 Ozon 暂停的实际触发内容尚未取得，需用户验收。
-- 0.6.57 类目反复暂停修复：同一明确主类目容器内的多个网格可合并；临时无列表或无商品时自动等待最多约30秒，页末有未加载字段自动回查最多两轮，单页扫描上限扩大到400次采样；人工继续在匹配的标签页不主动刷新，保留已识别 SKU、候选与待复查 SKU。验证码/登录、持续歧义、不可确认字段或任务页面失配仍暂停。自动测试和隔离 Chromium 对动态列表及回查通过，真实 Ozon 页面待验收。
-- 导航：0.6.59 独立分享版与工作台 V1.40 保留四页统一顺序「商品池、批量店铺扫描、类目选品、核价表」，工具箱 Ozon 主入口进入商品池；原核价地址 `/ozon` 和插件推送不变。自动化测试通过，真实浏览器切换待验收。
-- 类目选品：扩展独立入口，1–20 个真实类目 URL、目标 1–500 件本机新候选、可选人民币价格范围、独立批次及最多五份历史；单采集标签页，与店铺扫描互斥。仅明确符合要求、运输允许、SKU 与链接一致且本批实际识别的记录通过，跨类目、本机池和历史去重；不明确分页、页面身份或验证时暂停/部分完成。支持 CSV、人工本地入池，工作台连接后同步并在 [类目选品](https://deep-breath-design-desk.yehui1285.chatgpt.site/ozon/categories) 人工入池，云端再次去重。原人工找品、核价和店铺历史保留。全量测试、隔离 Chromium 类目管理及合成主列表通过，真实 Ozon 类目与 ERP 待验收。
-- 快速核价：扩展 **0.6.55** 独立版与工作台 V1.36 共用面板及原核价计算，点击商品名称先绑定当前 SKU 并打开商品页，取消单独“快速核价”按钮；有未保存编辑且取消切换时阻止打开。按 SKU 查询插件已推送记录，多行需明确选择。手动定价下方实时显示实际定价、真实售价及比较结果，无需先填采购成本；填成本实时显示利润、利润率、18% 目标采购成本上限。视觉依用户确认：绿标浅绿输入框，定价浅红底、深红金额、其他文字纯黑，利润率独立大字号卡片。保存核价到原记录，明确人工已复核或淘汰后进入下一件。原核价表保留，未推送、输入缺失、运输待复核及冲突不自动确认。原核价记录、商品池备注和账号数据保持隔离。完整测试及构建通过，工作台云端发布成功，真实浏览器操作待验收。
-- 商品池：表格以采集重量（保留原单位，缺失显示 —）替换运输复核列；原运输门槛不变，历史异常商品仍提醒。支持本批入池、历史 SKU 导入去重、状态与备注保存、来源批次、搜索及 CSV/JSON 数据副本。0.6.55 / V1.36 两版支持当前页勾选/全选（最多 50 件）、批量保存已勾选且有草稿的商品、确认后批量淘汰（保留备注及历史），不批量新增已复核状态。提交原子化，持久化确认后清除对应勾选/草稿，冲突或失败保留，刷新后可放弃旧草稿或重新选择。固定表头、商品和操作列，保持列表滚动；分页、筛选清除选择但保留草稿。默认待处理隐藏已复核、淘汰条目，全部状态可查看。双版已以模拟商品在隔离 Chromium 验证，真实账号写入未验收。[线上商品池](https://deep-breath-design-desk.yehui1285.chatgpt.site/ozon/pool)。
-
-- 0.6.45 已增加核价发送目标与手动/自动批次同步；保留 0.6.44 暂停续扫、批次归属和运输风险过滤修复。原 GitHub 仓库仍有工作台连接代码同步阻断。
-- 批量店铺扫描页保留人工找品表 CSV、原始汇总 CSV、Markdown 和备用 Agent JSON。候选货源、规格实价、MOQ 和同款结论待人工填写；弹窗中的任务批量核价补全入口继续隐藏，未恢复 Agent 自动找品。
-- 0.6.41 的详情页小数佣金修复保留原档位规则。本轮浏览器控制内核在初始化时退出，未能进入真实 Ozon 页面；该项真实验收仍未执行，不标记通过。
-- **1688 自动搜款主线暂停**：按用户反馈暂不运行自动找货源、扩展重载后的搜款复跑或旧诊断任务。恢复前须有用户明确指示；恢复后再按当前扩展版本和[未来恢复验收清单](真实浏览器验收清单.md)重新安排单件、三件及完整验收。
-
-- 本地 Agent **MVP 6.0**；队列 schema v1 / sourcing schema `mvp6`。
-- 1688 是唯一自动批量找货源渠道；拼多多 MVP 5.3 保留为人工确认后的单件补搜。
-- 0.6.40 的主商品店铺、MOQ、配送与 industry-pro 规格表只读适配属于历史版本记录：排除新人预估价、推荐价和 AiPrice 注入价；未确认选中规格仍为 partial，不写入最终采购价。其历史测试与限制见 [CHANGELOG](CHANGELOG.md)，不构成当前重载或运行指令。
-
-## 当前待验收
-
-- 0.6.56 类目选品：先单真实类目目标 3 件，逐项核对 ERP 正向标签、价格、链接与运输，再验证真实分页、暂停恢复、跨类目去重、独立入池和工作台同步。不可把模拟页面视为真实验收。
-
-- 0.6.44 批量扫描：模拟两家店回归已通过。每家店本批首次扫描才可清理旧记录，人工交接仅收录本批实际识别并保存、运输复核允许的 SKU。旧版批次须重新扫描才能补齐归属证据；Chrome 可列出标签页，但控制工具 URL 策略限制扩展内部页，真实两店验收仍待执行。
-
-- 0.6.44 需在真实 Chrome/Edge 重新加载后确认弹窗入口保持隐藏、批量页人工 CSV 可下载且在表格软件中打开正常；人工填写栏必须为空、风险待复核或已排除商品不得进入交接表。此项尚未标记通过。
-- 0.6.41 详情页佣金小数修复的真实页面填入结果尚待实测。本轮浏览器控制内核启动失败；恢复可用后再进入真实商品页复验并将结果写入 [CHANGELOG](CHANGELOG.md)；自动测试、发布包检查与真实页面验收分别报告。
-- 1688 单件、三件及 20 件门槛继续保留为未来恢复路线的验收要求；暂停期间不运行这些步骤，也不把旧版本的失败或通过记录改写成本轮结果。
-
-## 已知问题与证据边界
-
-- 历史 0.6.39/0.6.40 记录过关键词候选和详情 partial、字段适配及图片轮不稳定等情况；这些是当时证据，不是当前运行步骤。详见 [CHANGELOG](CHANGELOG.md)。
-- AiPrice 人工图片搜索能返回商品卡并打开详情；保存的 HTML 缺少稳定详情链接或数字 imageId。尚未证明能直接自动集成，也未确认其候选与目标同款。
-- 登录、验证码、平台验证由用户处理；自动批量不启动拼多多，不自动执行交易或联系商家。
-- 同款一致性、规格实价、单件采购条件、MOQ/运费和最终人工确认继续生效；失败、旧图或不明来源候选不能解锁采购结果。
-- 设备授权/分发限制方案仍暂缓，未实现；需要用户重新提出该需求才推进。
-
-## 暂缓验收与历史兼容回归
-
-- Ozon 补全、类目复核、批量导出、单一价格/同源黑价、清空批次与刷新跳店：在改动相关模块时选择 [验收清单](真实浏览器验收清单.md) 对应章节；旧记录里的 0.6.8–0.6.29 是当时版本，不是重新安装指令。
-- 拼多多弱网、耗时埋点、AI 一致性、规格价和最终复价：保留待核验项；当前不恢复拼多多自动批量主线。扩充至少 50 件人工标注同款样本的评估待办仍保留。
-- 完整旧待办和已验证样本保存在 [2026-09-14 状态快照](docs/history/PROJECT_STATUS-2026-09-14.md) 的“当前待办”“当前交付状态”和“Agent找品流水线当前进度”中。整理不代表这些项目通过或取消。
-- 历史兼容性 Gate 曾失败，后于 2026-09-01 Round 4 通过并允许实施；早期“Task 2–7 禁用”不再作为当前阻断。真实 MOQ2 等边界仍需 20 件验收证据。
-
-## 按任务查阅
-
-- 改动模块、测试选择及发布要求：[开发与验收指引](docs/开发与验收指引.md)。
-- 1688 / 拼多多操作与业务规则：[Agent README](pinduoduo-agent/README.md)；MD 队列转换：[队列 README](sourcing-agent/README.md)。
-- 稳定使用阶段的问题观察与日常记录：[稳定使用观察记录](docs/稳定使用观察记录.md)。
-- 查历史设计、失败原因或升级过程：[历史入口](docs/history/README.md)。
-- 新电脑交接：[安装与验收说明](另一台电脑安装与验收说明.md)。该文档保留旧版操作背景，安装前以当前 manifest 和 Agent README 核对版本与渠道。
-
-## 服务入口
-
-- [GitHub 仓库](https://github.com/yehui1285-tech/ozon)
-- [核价网页](https://yehui1285-tech.github.io/ozon/feishu.html?v=20260720)
-- [飞书同步 Worker](https://ozon-feishu-sync.yehui1285.workers.dev/)
-- [Ozon 详情采集 Worker](https://ozon-erp-collector.yehui1285.workers.dev/)
-
-以上地址沿用项目记录，本次文档整理不作为线上可用性验证。
+- 改动模块、测试与发布要求：[开发与验收指引](docs/开发与验收指引.md)；迭代规划：[迭代计划](docs/迭代计划.md)；实机验收：[真实浏览器验收清单](真实浏览器验收清单.md)。
+- 1688 / 拼多多规则：[Agent README](pinduoduo-agent/README.md)；历史入口：[历史归档目录](docs/history/README.md)。
+- [GitHub 仓库](https://github.com/yehui1285-tech/ozon) · [个人工作台](https://deep-breath-design-desk.yehui1285.chatgpt.site/ozon/pool) · [核价网页](https://yehui1285-tech.github.io/ozon/feishu.html?v=20260720)

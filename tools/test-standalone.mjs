@@ -43,6 +43,8 @@ assert.doesNotMatch(read('category.html'),/id="syncWorkbench"/);
 for (const id of ['rubCnyBar','rubCnyAmount','rubCnyWarn','fxEditBtn','fxRateInput']) {
   assert.ok(read('category.html').includes(`id="${id}"`), `standalone category.html retains #${id}`);
 }
+assert.match(read('standalone-nav.css'), /#3a5a40/);
+assert.doesNotMatch(read('standalone-nav.css'), /#405ec5/);
 assert.doesNotMatch(read('background.js'),/wbSyncCategory/);
 assert.equal(read("product-pool-core.js"),fs.readFileSync("ozon-erp-collector-extension/product-pool-core.js","utf8"));
 // Run the generated pricing-page bridge with an in-memory local draft and real row patch core.

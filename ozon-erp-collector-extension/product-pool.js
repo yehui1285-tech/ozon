@@ -279,4 +279,8 @@ $("importHistory").addEventListener("click",async()=>{
   try {const r=await send({type:"importProductPoolHistory",text:$("history").value});$("history").value="";feedback(`新增历史 SKU ${r.added} 个，忽略无效项 ${r.invalid} 个`);await reloadAfterWrite();}
   catch(e){feedback(e.message,true);}finally{historyBusy=false;button.disabled=false;render();}
 });
+const urlParams=new URLSearchParams(location.search);
+const initialBatchId=String(urlParams.get("batchId")||"").trim();
+if(urlParams.get("filter")==="all"&&$("filter"))$("filter").value="";
+if(initialBatchId&&$("batchFilter")){option($("batchFilter"),initialBatchId,`刚入池批次（${initialBatchId.slice(0,18)}）`);$("batchFilter").value=initialBatchId;}
 refresh();

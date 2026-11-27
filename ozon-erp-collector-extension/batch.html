@@ -5,12 +5,72 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Ozon 批量店铺扫描</title>
   <style>
-    :root{font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif;color:#17233e;background:#f4f6fb}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 90% 0,rgba(115,111,218,.18),transparent 30%),#f4f6fb}.wrap{max-width:1280px;margin:0 auto;padding:28px 22px 60px}header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}.brand{display:flex;gap:12px;align-items:center}.mark{display:grid;width:44px;height:44px;place-items:center;border-radius:14px;color:#fff;background:linear-gradient(135deg,#225aeb,#8179dc);font-weight:900}h1{margin:0;font-size:22px}.sub{margin:4px 0 0;color:#6b7690;font-size:13px}.version{color:#6f78a1;font-size:12px}.grid{display:grid;grid-template-columns:minmax(300px,420px) 1fr;gap:16px}.card{padding:18px;border:1px solid #e4e7f1;border-radius:18px;background:rgba(255,255,255,.9);box-shadow:0 12px 30px rgba(40,52,96,.08)}.review-card{grid-column:1/-1}h2{margin:0 0 7px;font-size:16px}.copy{margin:0 0 12px;color:#6b7690;font-size:12px;line-height:1.55}textarea{width:100%;min-height:300px;padding:12px;border:1px solid #dbe0ef;border-radius:12px;resize:vertical;font:12px/1.6 Consolas,"Microsoft YaHei",sans-serif;outline:none}textarea:focus{border-color:#6678df;box-shadow:0 0 0 3px rgba(102,120,223,.12)}label{display:flex;gap:8px;align-items:center;margin:11px 0;color:#4d5974;font-size:12px}.buttons{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}button{min-height:36px;padding:0 14px;border:1px solid #dce2f4;border-radius:10px;background:#fff;color:#405071;font:inherit;font-size:12px;font-weight:800;cursor:pointer}button.primary{color:#fff;border:0;background:linear-gradient(135deg,#225aeb,#736fda)}button.danger{color:#a63b50;background:#fff1f3;border-color:#ffd8df}button:disabled{opacity:.45;cursor:not-allowed}.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin-bottom:12px}.risk-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin:12px 0}.metric{padding:12px;border-radius:12px;background:#f0f3fd;color:#5b6782;font-size:11px}.metric strong{display:block;margin-top:4px;color:#202e4b;font-size:22px}.message{min-height:42px;margin:0 0 12px;padding:10px 12px;border-radius:10px;background:#eef1f8;color:#566784;font-size:12px;line-height:1.5}.table-wrap{max-height:520px;overflow:auto;border:1px solid #e3e6f0;border-radius:12px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:9px 10px;border-bottom:1px solid #edf0f6;text-align:left;white-space:nowrap}th{position:sticky;top:0;background:#f7f8fc;color:#59657d;z-index:1}td.url{max-width:260px;overflow:hidden;text-overflow:ellipsis}td.health{min-width:170px;white-space:normal;line-height:1.45}.risk-rule{min-width:220px;white-space:normal;line-height:1.45}.health-stalled{color:#b54708;font-weight:800}tr.current{background:#eef3ff}.status-completed{color:#087a52}.status-failed,.status-partial{color:#b54708}.status-scanning,.status-loading{color:#245be9;font-weight:800}.risk-badge{display:inline-block;padding:4px 8px;border-radius:999px;font-weight:800}.risk-prohibited{color:#b42318;background:#fff0f1}.risk-land{color:#9a6700;background:#fff7d6}.review-actions{display:flex;gap:6px}.review-actions button{min-height:28px;padding:0 9px;font-size:11px}.allow-button{color:#087a52;background:#edfff8;border-color:#b7ead8}.exclude-button{color:#b42318;background:#fff3f4;border-color:#ffd5da}.decision{color:#667085;font-weight:800}.row-delete{min-height:28px;padding:0 9px;color:#b42318;background:#fff3f4;border-color:#ffd5da;font-size:11px}.empty{padding:40px;text-align:center;color:#8791a6}@media(max-width:820px){.grid{grid-template-columns:1fr}.summary,.risk-summary{grid-template-columns:repeat(2,1fr)}.review-card{grid-column:auto}}
+    :root{--bg:#f7f7f5;--surface:#ffffff;--surface-soft:#f6f8f5;--border:#e3e7e0;--border-strong:#cdd5ca;--ink:#1e2f26;--ink-secondary:#58685e;--ink-muted:#7a897f;--primary:#3a5a40;--primary-hover:#2f4a34;--primary-soft:#eaf2e9;--primary-border:#c5d7c4;--danger:#a93232;--danger-soft:#fdf3f2;--danger-border:#eccac7;--warn:#8c5a18;--shadow-card:0 1px 3px rgba(24,38,29,.04),0 8px 24px rgba(24,38,29,.03);font-family:"Microsoft YaHei","PingFang SC",system-ui,-apple-system,sans-serif;color:var(--ink);background:var(--bg)}
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--ink);font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased}
+    .wrap{max-width:1260px;margin:0 auto;padding:24px 24px 64px}
+    header{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:18px;flex-wrap:wrap}
+    .brand{display:flex;gap:12px;align-items:center}
+    .mark{display:grid;width:42px;height:42px;place-items:center;border-radius:12px;color:#fff;background:var(--primary);font-weight:800;font-size:15px;flex-shrink:0}
+    .eyebrow{margin:0 0 2px;color:var(--primary);font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+    h1{margin:0;font-size:24px;font-weight:700;color:var(--ink);line-height:1.25}
+    .sub{margin:3px 0 0;color:var(--ink-secondary);font-size:13px}
+    .version{display:inline-flex;align-items:center;padding:3px 10px;border-radius:999px;background:var(--primary-soft);border:1px solid var(--primary-border);color:var(--primary);font-size:12px;font-weight:700;white-space:nowrap}
+    .grid{display:grid;grid-template-columns:minmax(300px,400px) 1fr;gap:16px;align-items:start}
+    .card{padding:20px 22px;border:1px solid var(--border);border-radius:14px;background:var(--surface);box-shadow:var(--shadow-card)}
+    .review-card{grid-column:1/-1}
+    h2{margin:0 0 6px;font-size:17px;font-weight:700;color:var(--ink)}
+    .copy{margin:0 0 12px;color:var(--ink-secondary);font-size:12px;line-height:1.55}
+    textarea{width:100%;min-height:280px;padding:11px 12px;border:1px solid var(--border-strong);border-radius:10px;resize:vertical;font:12px/1.6 Consolas,"Microsoft YaHei",sans-serif;color:var(--ink);background:#fff;outline:none}
+    textarea:focus{border-color:var(--primary);box-shadow:0 0 0 2px rgba(58,90,64,.14)}
+    label{display:flex;gap:8px;align-items:center;margin:11px 0;color:var(--ink-secondary);font-size:12px}
+    label input[type=checkbox]{accent-color:var(--primary)}
+    .buttons{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;align-items:center}
+    button,.buttons a{min-height:36px;padding:0 14px;border:1px solid var(--border-strong);border-radius:8px;background:#fff;color:var(--ink);font:inherit;font-size:13px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;text-decoration:none;white-space:nowrap;transition:background .15s,border-color .15s,opacity .15s}
+    button:hover:not(:disabled),.buttons a:hover{background:var(--surface-soft);border-color:#b7c2b3}
+    button.primary{color:#fff;border-color:var(--primary);background:var(--primary)}
+    button.primary:hover:not(:disabled){background:var(--primary-hover);border-color:var(--primary-hover)}
+    #wbSyncNow,#exportManualCsv,.buttons a[href="product-pool.html"]{background:var(--primary-soft);border-color:var(--primary-border);color:var(--primary)}
+    #wbSyncNow:hover:not(:disabled),#exportManualCsv:hover:not(:disabled),.buttons a[href="product-pool.html"]:hover{background:#dcead9;border-color:var(--primary)}
+    button.danger{color:var(--danger);background:var(--danger-soft);border-color:var(--danger-border)}
+    button.danger:hover:not(:disabled){background:#f9e4e2;border-color:#dfa9a4}
+    button:disabled{opacity:.45;cursor:not-allowed}
+    .summary,.risk-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:12px}
+    .risk-summary{margin:12px 0}
+    .metric{padding:11px 14px;border:1px solid var(--border);border-radius:10px;background:var(--surface-soft);color:var(--ink-muted);font-size:12px}
+    .metric strong{display:block;margin-top:3px;color:var(--ink);font-size:20px;font-variant-numeric:tabular-nums;line-height:1.25}
+    .message{min-height:40px;margin:0 0 12px;padding:9px 12px;border:1px solid var(--border);border-radius:9px;background:var(--surface-soft);color:var(--ink-secondary);font-size:12px;line-height:1.5}
+    .table-wrap{max-height:520px;overflow:auto;border:1px solid var(--border);border-radius:10px;background:#fff}
+    table{width:100%;border-collapse:collapse;font-size:12px}
+    th,td{padding:9px 10px;border-bottom:1px solid #edf0eb;text-align:left;white-space:nowrap}
+    th{position:sticky;top:0;background:var(--surface-soft);color:var(--ink-secondary);font-weight:700;z-index:1}
+    td.url{max-width:260px;overflow:hidden;text-overflow:ellipsis}
+    td.url a,td a{color:var(--primary);text-decoration:none;font-weight:600}
+    td.url a:hover,td a:hover{text-decoration:underline}
+    td.health{min-width:170px;white-space:normal;line-height:1.45}
+    .risk-rule{min-width:220px;white-space:normal;line-height:1.45}
+    .health-stalled{color:var(--warn);font-weight:700}
+    tr.current{background:#f2f7f1}
+    .status-completed{color:#246744;font-weight:700}
+    .status-failed,.status-partial{color:var(--warn);font-weight:700}
+    .status-scanning,.status-loading{color:var(--primary);font-weight:700}
+    .risk-badge{display:inline-block;padding:3px 8px;border-radius:999px;font-size:11px;font-weight:700}
+    .risk-prohibited{color:var(--danger);background:var(--danger-soft);border:1px solid var(--danger-border)}
+    .risk-land{color:var(--warn);background:#fbf5ea;border:1px solid #ead7b7}
+    .review-actions{display:flex;gap:6px}
+    .review-actions button{min-height:28px;padding:0 9px;font-size:11px}
+    .allow-button{color:#246744;background:#eaf6ec;border-color:#bad7bf}
+    .exclude-button{color:var(--danger);background:var(--danger-soft);border-color:var(--danger-border)}
+    .decision{color:var(--ink-muted);font-weight:700}
+    .row-delete{min-height:28px;padding:0 9px;color:var(--danger);background:var(--danger-soft);border-color:var(--danger-border);font-size:11px}
+    .empty{padding:36px 20px;text-align:center;color:var(--ink-muted);font-size:13px}
+    @media(max-width:900px){.grid{grid-template-columns:1fr}.summary,.risk-summary{grid-template-columns:repeat(2,1fr)}.review-card{grid-column:auto}}
+    @media(max-width:640px){.wrap{padding:16px 14px 48px}.card{padding:16px}}
   </style>
 </head>
 <body>
   <div class="wrap">
-    <header><div class="brand"><div class="mark">OZ</div><div><h1>批量店铺扫描</h1><p class="sub">一个专用标签页依次扫描，任务中断后可继续</p></div></div><span class="version" id="version"></span></header>
+    <header><div class="brand"><div class="mark">OZ</div><div><p class="eyebrow">OZON · 批量采集</p><h1>批量店铺扫描</h1><p class="sub">一个专用标签页依次扫描，任务中断后可继续</p></div></div><span class="version" id="version"></span></header>
     <div class="grid">
       <section class="card">
         <h2>店铺列表</h2>
@@ -23,8 +83,8 @@
         <div class="summary"><div class="metric">任务状态<strong id="batchStatus">未创建</strong></div><div class="metric">店铺进度<strong id="storeProgress">0 / 0</strong></div><div class="metric">已查看商品<strong id="observedTotal">0</strong></div><div class="metric">符合要求<strong id="qualifiedTotal">0</strong></div></div>
         <p class="message" id="message">粘贴店铺地址后开始任务。</p>
         <p class="copy">当前由人工接手找品：可将本批已确认商品加入商品池，跨批次按 SKU 去重；疑似禁运且未允许的商品不会进入交接表。原始汇总和备用 Agent JSON 仍可导出。</p>
-        <div class="buttons" style="margin-bottom:12px"><button class="primary" id="addToProductPool">本批加入商品池</button><a href="product-pool.html" target="_blank">打开商品池</a></div>
-        <div class="buttons" style="margin:0 0 12px"><button class="primary" id="wbSyncNow">同步本批到工作台</button><button class="primary" id="exportManualCsv">导出人工找品表 CSV</button><button id="exportCsv">导出原始汇总 CSV</button><button id="exportMd">导出汇总 Markdown</button><button id="exportJson">导出 Agent 任务 JSON（备用）</button><button id="retryFailed">重试失败店铺</button></div>
+        <div class="buttons" style="margin-bottom:10px"><button class="primary" id="addToProductPool">本批加入商品池</button><button class="primary" id="wbSyncNow">同步本批到工作台</button><a href="product-pool.html" target="_blank">打开商品池</a></div>
+        <div class="buttons" style="margin:0 0 12px"><button class="primary" id="exportManualCsv">导出人工找品表 CSV</button><button id="exportCsv">导出原始汇总 CSV</button><button id="exportMd">导出汇总 Markdown</button><button id="exportJson">导出 Agent 任务 JSON（备用）</button><button id="retryFailed">重试失败店铺</button></div>
         <p class="copy" id="wbBatchStatus">工作台连接状态待检查</p><div class="table-wrap"><table><thead><tr><th>#</th><th>店铺</th><th>状态</th><th>尝试</th><th>已查看</th><th>符合</th><th>待复查</th><th>扫描动态</th><th>说明</th><th>操作</th></tr></thead><tbody id="tasks"><tr><td colspan="10" class="empty">尚未创建批量任务</td></tr></tbody></table></div>
       </section>
       <section class="card review-card">
