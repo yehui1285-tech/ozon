@@ -1,14 +1,14 @@
 # Ozon 当前状态
 
-更新时间：2026-11-27（V1.59 / 0.6.77 扩展「类目选品」与三级类目弹窗视觉重构本机完成并已本地提交，待 Codex 部署；线上当前为 V1.58 站点版本 `87` / 扩展 `v0.6.76`）。
+更新时间：2026-11-27（工作台 V1.59 已上线站点版本 `88`，源码 `43a4e0d`，部署 `appgdep_6b08ebe8bae081919bacfe835a56a08c`，扩展 `v0.6.77`，无新增 D1 迁移；Ozon 仓库同步推送 `origin/main`）。
 用途：新对话快速续接。详细过程按需查 [CHANGELOG](CHANGELOG.md) 和 [历史入口](docs/history/README.md)，不把历史待办当作当前任务。
 
 ## 当前版本与结论
 
-- V1.59 / 0.6.77（本机已提交，未推送/未部署）：围绕确认后的交互效果图完成扩展「类目选品」页面（`category.html` / `category.css` / `category.js`）及独立分享版（`build-standalone.mjs` 自动同步）的视觉与排版重构（**无新增 D1 数据库迁移**）：
+- V1.59 / 0.6.77（已上线站点版本 `88`）：围绕确认后的交互效果图完成扩展「类目选品」页面（`category.html` / `category.css` / `category.js`）及独立分享版（`build-standalone.mjs` 自动同步）的视觉与排版重构（**无新增 D1 数据库迁移**）：
   - 新建类目任务卡片：重排为 3 组等高对齐参数列（本批目标新品数、人民币复核区间、Ozon 页面预筛），解决原版 5 栏标题折行与高低不齐；统一工作台深森绿 `#3a5a40` 与暖灰纸底 `#f7f7f5` 配色，轻量收纳停用试验模式说明。
   - 当前批次与历史管理：固定「当前批次」单行标题与状态徽章（消除标题折行），新增 4 格 KPI 概览条（新候选/目标、已检查、待人工复查、页面卢布预筛）与可折叠诊断区；批内按钮主次左右分组，运行诊断与历史批次工具对齐为水平两行；三级联动类目选择弹窗同步切换深森绿视觉体系。
-  - 验证：Ozon `npm.cmd test`（含 `test-standalone.mjs` 校验独立版导航与 `#syncWorkbench` 剥离）、双版发布构建（`ozon-erp-collector-extension.zip` 与工作台内嵌包 SHA256 `F5A6F26F209A7EA5A020EB804F1230C165A661AE7CE8207C353896E502B16E0A` 一致）、Workbench `npm.cmd run build`、272/272 测试与 `V1.58 → V1.59` 版本校验均通过；本机未配置 Playwright，隔离浏览器脚本未跑。线上与独立分享版 `0.6.77` 真实浏览器排版待部署并重载扩展后现场确认。回滚备份 `_备份_20261127_v159_category_ui_before`。
+  - 验证与部署：Ozon `npm.cmd test`（含 `test-standalone.mjs` 校验独立版导航与 `#syncWorkbench` 剥离）、双版发布构建（`ozon-erp-collector-extension.zip` 与工作台内嵌包 SHA256 `F5A6F26F209A7EA5A020EB804F1230C165A661AE7CE8207C353896E502B16E0A` 一致）、Workbench `npm.cmd run build`、272/272 测试与 `V1.58 → V1.59` 版本校验均通过；本机未配置 Playwright，隔离浏览器脚本未跑。Codex 已部署上线（站点版本 `88`，Workbench 本地提交 `43a4e0d`，部署 ID `appgdep_6b08ebe8bae081919bacfe835a56a08c`，共享核心及扩展 `v0.6.77` SHA256 校验通过，生产构建通过，无新增 D1 迁移）。线上重载 `v0.6.77` 扩展及独立分享版 `0.6.77` 真实浏览器排版待用户现场确认。回滚备份 `_备份_20261127_v159_category_ui_before`。
 
 - V1.58 / 0.6.76（已上线站点版本 `87`）：支持多电脑共用同一工作台账号协作时按「扫描设备」或「扫描批次（电脑 + 时间）」筛选商品池，各自独立找品互不撞车，切换「全部设备 / 批次」即可汇总看全池（**无新增 D1 数据库迁移**）：
   - 工作台端（`lib/ozon-pool/model.ts`、`store.ts`、`app/ozon/pool/pool-desk.tsx`）：`readPoolPage` 基于既有 `payload.batchIds` 关联 `ozon_scan_batches` 与 `ozon_collector_devices` 支持按 `deviceId` / `batchId` 精确筛选并返回批次分面（含历史全部已入池商品与已归档设备归属），右侧单品快速核价「下一件」及状态流转自动限定在所选设备或批次范围内。
