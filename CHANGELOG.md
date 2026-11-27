@@ -1,10 +1,10 @@
 # CHANGELOG.md - Ozon 项目续接记录
 
-## 2026-11-27 - V1.65 / 0.6.83 修复类目续扫沿用旧卢布条件与非卢布货币冲突提示（工作台已构建提交，待部署）
+## 2026-11-27 - V1.65 / 0.6.83 修复类目续扫沿用旧卢布条件与非卢布货币冲突提示（工作台已上线）
 
 - 续扫条件同步与所见即所得回填：`category.js` 新增 `syncFormFromBatch`、`readFilterOptions` 与 `formDirty` 追踪——加载已结束/已有批次时自动将 `options` 回填至顶部表单（手工修改及载入常用任务后不再覆盖）；点击「仅扫剩余类目 / 继续扫下一轮」时显式传入全部表单筛选字段（包括清空的可选字段 `null`），彻底解决上方已清空卢布预筛但续扫后仍携带上一轮 `?currency_price=...` 与 `pageMinRub/pageMaxRub` 的问题，同时动态在 `#continueHint` 展示将生效条件摘要。
 - 非卢布货币冲突快速提示：`category-scanner.js` 新增 `detectNonRubCurrency` 仅在侧栏 2 输入框价格组已渲染且不含卢布符号时（组内含 `¥/$/€` 或主列表全为非卢布价格），于 3 次轮询内提前退出并上报 `price_currency_mismatch`，`category-background.js` 暂停当前类目并提示用户将 Ozon 切换为卢布或清空上方「Ozon 页面预筛」后再续扫，避免干等 30 秒不滚动。
-- 打包与验证：回滚备份 `_备份_20261127_v165_continue_options_and_currency_before`（已轮换清理 `_备份_20261127_v161_rub_cny_hint_before`，保留 `_备份_20261125_v151_pool_before` 及共 5 份常规备份）。Ozon `node --check`、全量 `npm.cmd test`（含 `test-category-scanner.mjs` 侧栏货币冲突检测与 `test-category-background.mjs` 续扫清空卢布区间用例）、`verify-project.ps1`、双版构建（`ozon-erp-collector-extension.zip` SHA256 `d15389c2598543276134f2dcd4faebcef722f33164d17941ea1db32d361b6cc8`；独立版 `ozon-standalone-extension.zip` SHA256 `72074e3ff23c9a5a3f4a5366669c0a9f655572ab73cf8e76fdc3489d51faa5b0`），以及 Workbench `sync-workbench-core --check`、`check-release-version.mjs`（`V1.64 → V1.65`）、`npm.cmd run build`、`ozon-collector.test.mjs`（8/8）、`ozon-workbench-nav.test.mjs`（2/2）全部通过，Workbench 提交 `64d3a84`。真实浏览器验证与工作台 V1.65 上线待完成后验收。
+- 打包与验证：回滚备份 `_备份_20261127_v165_continue_options_and_currency_before`（已轮换清理 `_备份_20261127_v161_rub_cny_hint_before`，保留 `_备份_20261125_v151_pool_before` 及共 5 份常规备份）。Ozon `node --check`、全量 `npm.cmd test`（含 `test-category-scanner.mjs` 侧栏货币冲突检测与 `test-category-background.mjs` 续扫清空卢布区间用例）、`verify-project.ps1`、双版构建（`ozon-erp-collector-extension.zip` SHA256 `d15389c2598543276134f2dcd4faebcef722f33164d17941ea1db32d361b6cc8`；独立版 `ozon-standalone-extension.zip` SHA256 `72074e3ff23c9a5a3f4a5366669c0a9f655572ab73cf8e76fdc3489d51faa5b0`），以及 Workbench `sync-workbench-core --check`、`check-release-version.mjs`（`V1.64 → V1.65`）、`npm.cmd run build`、`ozon-collector.test.mjs`（8/8）、`ozon-workbench-nav.test.mjs`（2/2）全部通过，Workbench 提交 `64d3a84`。用户确认工作台 V1.65 已成功部署上线（未附站点 Revision / Deployment ID）；双版 `v0.6.83` 真实浏览器验证待现场验收。
 
 ## 2026-11-27 - V1.64 / 0.6.82 类目选品多轮续扫、单类目上限与常用类目任务（工作台已上线）
 
