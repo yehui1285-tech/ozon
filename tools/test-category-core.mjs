@@ -57,4 +57,12 @@ assert.equal(c.paginationUrl(filtered.replace('2500.000','3000.000')+'&page=2',f
 assert.equal(c.paginationUrl(filtered+'&page=2',china),'','unfiltered tasks must not adopt another filter');
 assert.equal(c.paginationUrl(filtered+'&page=2&sort=price',filtered),'');
 assert.equal(c.priceAllowed({...base,price:'110'},rub),false,'RUB is not a substitute for CNY');
+assert.equal(c.capturedRubPrice('1 480 ₽'), 1480);
+assert.equal(c.capturedRubPrice('327,28 ¥'), null);
+assert.equal(c.capturedAnyPrice('1 480 ₽'), 1480);
+assert.equal(c.priceAllowed({ ...base, price: '1 480 ₽' }, { minPrice: 100, maxPrice: 200, fxRate: 12 }), true);
+assert.equal(c.priceAllowed({ ...base, price: '900 ₽' }, { minPrice: 100, maxPrice: 200, fxRate: 12 }), false);
+assert.equal(c.priceAllowed({ ...base, price: '1 480 ₽' }, { minPrice: null, maxPrice: null }), true);
+assert.equal(c.priceAllowed({ ...base, price: '88 ₽' }, opt), false);
+assert.equal(c.validateOptions({ targetCount: 10, minPrice: '100', pageMinRub: '1300', pageMaxRub: '30000', fxRate: 12.37 }).fxRate, 12.37);
 console.log('Category core URL, pagination, target, price, positive label, identity and risk tests passed.');

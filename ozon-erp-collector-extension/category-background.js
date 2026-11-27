@@ -344,7 +344,7 @@
           const parsed = core.parseUrls(m.urls, 20);
           const urls = Array.isArray(parsed) ? parsed : parsed.urls;
           if (!urls?.length||parsed.invalid?.length||parsed.overflowCount) throw Error("请提供 1–20 个有效的 Ozon 类目链接");
-          const options = core.validateOptions({ targetCount: m.targetCount, minPrice: m.minPrice, maxPrice: m.maxPrice, pageMinRub:m.pageMinRub, pageMaxRub:m.pageMaxRub });
+          const options = core.validateOptions({ targetCount: m.targetCount, minPrice: m.minPrice, maxPrice: m.maxPrice, pageMinRub:m.pageMinRub, pageMaxRub:m.pageMaxRub, fxRate:m.fxRate });
           if (batch) {
             const archived = await snapshotHistory();
             if (archived.length >= HISTORY_LIMIT && !m.confirmArchiveOverflow) throw Error("类目历史已满，请先导出或入池，再明确确认轮换最旧批次");

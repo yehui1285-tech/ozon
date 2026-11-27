@@ -179,7 +179,7 @@ function render(batch, archive=history) {
 async function refresh() { if(busy)return;if(refreshInFlight){refreshPending=true;return}refreshInFlight=true;const sequence=++refreshSequence,revision=actionRevision;try { const r=await send({type:"categoryGet"});if(!busy&&sequence===refreshSequence&&revision===actionRevision)render(r.batch||r.state||null,r.history); } catch(e) { if(!busy&&sequence===refreshSequence&&revision===actionRevision)$("message").textContent=e.message; } finally {refreshInFlight=false;if(refreshPending){refreshPending=false;if(!busy)void refresh()}} }
 $("start").onclick = async () => {
   try{const treeUrls=treeSelection?.urls()||[];const manual=$('urls').value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);const parsed=core.parseUrls([...manual,...treeUrls]);if(!parsed.urls.length||parsed.invalid.length||parsed.overflowCount)throw Error('请提供 1–20 个有效 Ozon 类目链接，修正无效或超限地址。');
-    const options=core.validateOptions({targetCount:$("targetCount").value,minPrice:$("minPrice").value,maxPrice:$("maxPrice").value,pageMinRub:$("pageMinRub").value,pageMaxRub:$("pageMaxRub").value});
+    const options=core.validateOptions({targetCount:$("targetCount").value,minPrice:$("minPrice").value,maxPrice:$("maxPrice").value,pageMinRub:$("pageMinRub").value,pageMaxRub:$("pageMaxRub").value,fxRate:activeFxRate()});
     const needsArchiveConfirmation=history.length>=5&&!!state;
     if(needsArchiveConfirmation&&!confirm('历史类目批次已达 5 份，新任务可能替换最早批次；请先将需要的历史商品入池或同步。是否继续？'))return;
     await perform({type:"categoryStart",urls:parsed.urls,categoryLabels:categoryLabels(),...options,backgroundExperiment:$("backgroundExperiment").checked,confirmArchiveOverflow:needsArchiveConfirmation});

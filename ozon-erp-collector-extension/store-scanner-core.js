@@ -168,11 +168,14 @@
     // values belonging to the commission row, never subsequent discounts.
     const commissionSection = text.match(/rFBS佣金\s*[:：]\s*(\d+(?:[.,]\d+)?[ \t]*%(?:\s*(?:\/\s*)?\d+(?:[.,]\d+)?[ \t]*%){0,2})/)?.[1] || "";
     const competitor = competitorState(text);
+    const cnyPrice = firstMatch(text, /(\d[\d\s\u00a0\u202f]*[,.]\d{2})\s*¥/);
+    const beforeErp = text.split(/毛子\s*ERP|跟卖最低价|rFBS佣金/i)[0] || "";
+    const rubRaw = cnyPrice ? "" : (firstMatch(beforeErp, /(\d[\d\s\u00a0\u202f]*(?:[,.]\d{1,2})?)\s*₽/) || firstMatch(beforeErp, /₽\s*(\d[\d\s\u00a0\u202f]*(?:[,.]\d{1,2})?)/));
     return {
       qualified: /(?:^|\n)[ \t]*(?:选品标签[ \t]*[:：][ \t]*)?符合要求[ \t]*(?:\n|$)/.test(text),
       category: firstMatch(text, /类目\s*[:：]\s*([^\n]+)/),
       sku: firstMatch(text, /SKU\s*[:：]\s*(\d+)/),
-      price: firstMatch(text, /(\d[\d\s\u00a0\u202f]*[,.]\d{2})\s*¥/),
+      price: cnyPrice || (rubRaw ? `${rubRaw} ₽` : ""),
       commissions: [...commissionSection.matchAll(/(\d+(?:[.,]\d+)?)\s*%/g)].map((match) => `${match[1]}%`).slice(0, 3),
       monthlySales: firstMatch(text, /月销量\s*[:：]\s*([^\n]+)/),
       fulfillment: firstMatch(text, /发货模式\s*[:：]\s*([^\n]+)/),

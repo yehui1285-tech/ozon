@@ -202,4 +202,26 @@ for (let i = 0; i < context.OzonCategoryScanner.PROACTIVE_NEXT_PAGE_SCROLLS + 5 
 const proactiveDone = reported.find(m => m.type === 'categoryPageDone');
 assert.equal(proactiveDone?.reason, 'next_page_available', 'proactive pagination triggers before exhausting 400 scrolls');
 assert.equal(proactiveDone?.nextUrl, nextPage2.href);
+
+// V1.62: Sidebar price filter with blank radio presets confirms via main RUB cards
+// (ignoring competitor lines inside 毛子ERP), and RUB cards scan into products cleanly.
+const loBlank = makeEl({ tag: 'INPUT' }), hiBlank = makeEl({ tag: 'INPUT' }), blankRadio = makeEl({ tag: 'INPUT' });
+loBlank.value = '1 300'; hiBlank.value = '30 000';
+const blankPriceGroup = makeEl({ text: '价格 ⓘ', children: [loBlank, hiBlank, blankRadio] });
+blankPriceGroup.querySelectorAll = s => s.includes('input[type="radio"]') ? [blankRadio] : s.includes('input[type="text"]') ? [loBlank, hiBlank] : [];
+const rubCard = makeEl({
+  text: '1 480 ₽ 7 492 ₽ -80%\n毛子ERP\n选品标签： 符合要求\nrFBS佣金：10% 10% 10%\nSKU：1979786266\n月销量：258\n发货模式：FBO,FBS\n长 宽 高：600 x 350 x 200mm\n重 量：1985g\n跟卖最低价：₽1508.00 ≈ ¥122.30',
+  children: [makeEl({ tag: 'A', href: 'https://www.ozon.ru/product/matras-1979786266/', text: 'bed-matras' }), makeEl({ text: '毛子ERP\n选品标签： 符合要求', children: [makeEl({ text: '选品标签： 符合要求' })] })],
+});
+const rubList = makeEl({ widget: 'tileGridDesktop', children: [rubCard] });
+const blankDoc = { querySelectorAll: s => s.includes('input[type="text"]') ? [loBlank, hiBlank] : s.includes('tileGridDesktop') ? [rubList] : [] };
+assert.equal(context.OzonCategoryScanner.confirmRubPrice(blankDoc, { pageMinRub: 1300, pageMaxRub: 30000 }), true, 'blank radio labels confirm via RUB list prices');
+const cnyCardInList = makeEl({ widget: 'tileGridDesktop', children: [card('44444', 'cny-only')] });
+const cnyMismatchDoc = { querySelectorAll: s => s.includes('input[type="text"]') ? [loBlank, hiBlank] : s.includes('tileGridDesktop') ? [cnyCardInList] : [] };
+assert.equal(context.OzonCategoryScanner.confirmRubPrice(cnyMismatchDoc, { pageMinRub: 1300, pageMaxRub: 30000 }), false, 'CNY card prices must reject RUB confirmation');
+const rubReadResult = reader.read('https://www.ozon.ru/category/demo-123/', { minPrice: 100, fxRate: 12 }, rubList);
+assert.equal(rubReadResult.products.length, 1);
+assert.equal(rubReadResult.products[0].sku, '1979786266');
+assert.equal(rubReadResult.products[0].price, '1 480 ₽');
+
 console.log('category scanner real-core synthetic DOM tests passed');

@@ -52,19 +52,41 @@
     return false;
   }
   // Confirm only the page's own visible price group: two editable numeric
-  // inputs, exact localized heading, and explicit ruble preset choices.
+  // inputs, exact localized heading, and explicit ruble evidence (in the filter
+  // group itself, or across main catalog cards when sidebar presets render blank).
+  function listRubEvidence(doc) {
+    const list = pickList(doc);
+    if (!list) return { rub: false, nonRub: false };
+    const collect = (node, depth = 0) => {
+      const own = textOf(node);
+      if (own || depth > 2 || !node?.children?.length) return own;
+      return [...node.children].slice(0, 12).map(c => collect(c, depth + 1)).join('\n');
+    };
+    const raw = collect(list).replace(/跟卖最低价[^\n]*/g, '');
+    return {
+      rub: /\d[\d\s\u00a0\u202f]*(?:[,.]\d{1,2})?\s*₽/.test(raw),
+      nonRub: /\d[\d\s\u00a0\u202f]*[,.]\d{2}\s*[¥￥$€]/.test(raw),
+    };
+  }
   function confirmRubPrice(doc, options={}) {
     const range=globalScope.OzonCategoryCore?.rubRange(options);if(!range)return true;
     const inputSelector='input[type="text"],input[type="number"]';
     const controls=Array.from(doc.querySelectorAll?.(inputSelector)||[]).filter(el=>visible(el)&&!el.disabled&&!el.readOnly&&!isForbidden(el));
     const groups=new Set();
+    let listEvidence=null;
     for(const input of controls){
       for(let group=input.parentElement,depth=0;group&&depth<9;group=group.parentElement,depth++){
         if(!visible(group)||isForbidden(group))continue;
         const fields=controls.filter(el=>group.contains?.(el));if(fields.length>2)break;
         const content=textOf(group),heading=content.split(/\r?\n/).map(s=>s.trim()).find(Boolean);
-        if(fields.length!==2||!/^(?:价格|Цена|Price)$/i.test(heading||'')||!/(?:₽|\bRUB\b|руб\.?)/i.test(content)||/[¥￥$€]/.test(content))continue;
-        if(!Array.from(group.querySelectorAll?.('input[type="radio"],[role="radio"]')||[]).some(visible))continue;
+        if(fields.length!==2||!/^(?:价格|Цена|Price)(?:\s*[ⓘi])?$/i.test(heading||'')||/[¥￥$€]/.test(content))continue;
+        const hasGroupRub=/(?:₽|\bRUB\b|руб\.?)/i.test(content);
+        const hasRadio=Array.from(group.querySelectorAll?.('input[type="radio"],[role="radio"]')||[]).some(r=>visible(r)||visible(r.closest?.('label')||r.parentElement));
+        if(hasGroupRub){if(!hasRadio)continue;}
+        else{
+          listEvidence ??= listRubEvidence(doc);
+          if(!listEvidence.rub||listEvidence.nonRub)continue;
+        }
         groups.add(group);break;
       }
     }
@@ -218,7 +240,8 @@
         competitorReady: Boolean(parsed.competitorReady), shippingRisk, category: parsed.category, rawRiskText };
       const dimensionCount=[...String(parsed.dimensions||'').matchAll(/\d+(?:[.,]\d+)?/g)].length;
       const weightValue=String(parsed.weight||'');
-      const complete=globalScope.OzonCategoryCore.capturedPrice(parsed.price)>0&&parsed.commissions?.length>0&&parsed.monthlySales&&parsed.fulfillment&&dimensionCount>=3&&/\d/.test(weightValue)&&!/(?:加载中|暂无|--|—|-)/i.test(`${parsed.dimensions} ${weightValue}`)&&name;
+      const priceVal=globalScope.OzonCategoryCore.capturedAnyPrice?.(parsed.price)??globalScope.OzonCategoryCore.capturedPrice(parsed.price);
+      const complete=priceVal>0&&parsed.commissions?.length>0&&parsed.monthlySales&&parsed.fulfillment&&dimensionCount>=3&&/\d/.test(weightValue)&&!/(?:加载中|暂无|--|—|-)/i.test(`${parsed.dimensions} ${weightValue}`)&&name;
       if(!complete){if(!observed.has(sku))pending.add(sku);continue;}
       observed.add(sku);pending.delete(sku);
       if(parsed.qualified){

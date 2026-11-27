@@ -378,7 +378,7 @@ assert.match(batchHtmlSource, /id="shippingRisks"/);
 assert.match(batchHtmlSource, /禁运与运输限制复核/);
 
 const manifest = JSON.parse(fs.readFileSync(new URL("../ozon-erp-collector-extension/manifest.json", import.meta.url), "utf8"));
-assert.equal(manifest.version, "0.6.79");
+assert.equal(manifest.version, "0.6.80");
 assert.equal(core.normalizeImageUrl("https://ir.ozone.ru/s3/multimedia-1-a/wc250/123.jpg"), "https://ir.ozone.ru/s3/multimedia-1-a/wc250/123.jpg");
 assert.equal(core.normalizeImageUrl("https://evil.example/a.jpg"), "");
 assert.equal(core.normalizeImageUrl("data:image/png;base64,AAA"), "");
@@ -394,5 +394,21 @@ const detailSource = fs.readFileSync(new URL("../ozon-erp-collector-extension/co
 assert.match(detailSource, /function enrichStoredStoreRecord\(product\)/);
 assert.match(detailSource, /enrichStoreProductBySku/);
 assert.doesNotMatch(detailSource, /ozonStoreQualifiedProductsV1/);
+
+const rubCard = core.parseCardText(`
+1 480 ₽ 7 492 ₽ -80%
+无弹簧床垫 150x200x10cm
+毛子ERP
+选品标签：符合要求
+rFBS佣金：10% 10% 10%
+SKU：1979786266
+月销量：258
+发货模式：FBO,FBS
+长宽高：600 x 350 x 200mm
+重量：1985g
+跟卖最低价：₽1508.00 ≈ ¥122.30
+`);
+assert.equal(rubCard.qualified, true);
+assert.equal(rubCard.price, "1 480 ₽");
 
 console.log("Store scanner tests passed.");

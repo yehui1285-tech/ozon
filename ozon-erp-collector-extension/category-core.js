@@ -69,18 +69,42 @@
     const limit=(value)=>{if(value===null||value===undefined||String(value).trim()==='')return null;if(!/^\d+(?:\.\d{1,2})?$/.test(String(value).trim()))throw Error('请输入有效人民币金额');const n=Number(value);if(!Number.isFinite(n)||n<0||n>1000000)throw Error('人民币价格区间无效');return n};
     const minPrice=limit(raw.minPrice),maxPrice=limit(raw.maxPrice);
     if(minPrice!==null&&maxPrice!==null&&minPrice>maxPrice)throw Error('最低价不能高于最高价');
-    return {targetCount,minPrice,maxPrice,...rubRange(raw)};
+    const fxRateRaw=raw.fxRate;
+    let fxExtra={};
+    if(fxRateRaw!==null&&fxRateRaw!==undefined&&String(fxRateRaw).trim()!==''){
+      const fx=Number(fxRateRaw);
+      if(!Number.isFinite(fx)||fx<0.1||fx>1000)throw Error('参考汇率无效');
+      fxExtra={fxRate:fx};
+    }
+    return {targetCount,minPrice,maxPrice,...rubRange(raw),...fxExtra};
   }
-  function capturedPrice(raw){
-    let t=String(raw??'').trim().replace(/^[¥￥]\s*|\s*[¥￥]$/g,'').replace(/[\s\u00a0\u202f]/g,'');
+  function parseAmountDigits(t){
     if(!/^\d+(?:[.,]\d+)*$/.test(t))return null;
     const last=Math.max(t.lastIndexOf(','),t.lastIndexOf('.'));
     if(last>=0){const decimal=t[last],fraction=t.slice(last+1),whole=t.slice(0,last);if(fraction.length>2){if(!/^\d{1,3}(?:[.,]\d{3})+$/.test(t))return null;t=t.replace(/[.,]/g,'')}else{const other=decimal===','?'.':',';if(whole.includes(decimal)||!(new RegExp('^\\d+(?:\\'+other+'\\d{3})*$')).test(whole))return null;t=whole.replace(/[.,]/g,'')+'.'+fraction;}}
     const n=Number(t);return Number.isFinite(n)&&n>=0?n:null;
   }
+  function capturedPrice(raw){
+    const t=String(raw??'').trim().replace(/^[¥￥]\s*|\s*[¥￥]$/g,'').replace(/[\s\u00a0\u202f]/g,'');
+    return parseAmountDigits(t);
+  }
+  function capturedRubPrice(raw){
+    const str=String(raw??'').trim();
+    if(!/(?:₽|\bRUB\b|руб\.?)/i.test(str)||/[¥￥$€]/.test(str))return null;
+    const t=str.replace(/^(?:₽|RUB|руб\.?)\s*|\s*(?:₽|RUB|руб\.?)$/gi,'').replace(/[\s\u00a0\u202f]/g,'');
+    return parseAmountDigits(t);
+  }
+  function capturedAnyPrice(raw){return capturedPrice(raw)??capturedRubPrice(raw);}
   function priceAllowed(product,options={}){
     if(options.minPrice==null&&options.maxPrice==null)return true;
-    const n=capturedPrice(product?.price);return n!==null&&(options.minPrice==null||n>=options.minPrice)&&(options.maxPrice==null||n<=options.maxPrice);
+    const cny=capturedPrice(product?.price);
+    if(cny!==null)return (options.minPrice==null||cny>=options.minPrice)&&(options.maxPrice==null||cny<=options.maxPrice);
+    const rub=capturedRubPrice(product?.price),fx=Number(options.fxRate);
+    if(rub!==null&&Number.isFinite(fx)&&fx>=0.1&&fx<=1000){
+      const equiv=rub/fx;
+      return (options.minPrice==null||equiv>=options.minPrice)&&(options.maxPrice==null||equiv<=options.maxPrice);
+    }
+    return false;
   }
   function qualifiedProduct(product,options={}){
     if(!product||product.qualified!==true||!/^\d{1,24}$/.test(product.sku||''))return false;
@@ -89,5 +113,5 @@
     if(scanner.classifyShippingRisk([product.name,product.category,product.rawRiskText].filter(Boolean).join('\n')).type==='suspected_prohibited')return false;
     return priceAllowed(product,options);
   }
-  scope.OzonCategoryCore=Object.freeze({keyFromUrl,normalizeUrl,samePage,paginationUrl,exactPageUrl,pricePageUrl,rubRange,parseUrls,validateOptions,priceAllowed,qualifiedProduct,capturedPrice});
+  scope.OzonCategoryCore=Object.freeze({keyFromUrl,normalizeUrl,samePage,paginationUrl,exactPageUrl,pricePageUrl,rubRange,parseUrls,validateOptions,priceAllowed,qualifiedProduct,capturedPrice,capturedRubPrice,capturedAnyPrice});
 })(globalThis);
