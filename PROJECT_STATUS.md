@@ -1,6 +1,6 @@
 # Ozon 当前状态
 
-更新时间：2026-11-27（工作台 V1.61 本地已提交待 Codex 上线，扩展 `v0.6.79` 双版发布包已生成，无新增 D1 迁移；当前线上仍运行 V1.59 站点版本 `88`）。
+更新时间：2026-11-27（工作台 V1.60 已上线站点版本 `89`，源码 `bd93c3d`，部署 `appgdep_6b090032510081919d8f8dd1a5d5355b`，内嵌扩展 `v0.6.78`；工作台 V1.61 `3365233` 与双版扩展 `v0.6.79` 已在本机构建提交待 Codex 上线，无新增 D1 迁移）。
 用途：新对话快速续接。详细过程按需查 [CHANGELOG](CHANGELOG.md) 和 [历史入口](docs/history/README.md)，不把历史待办当作当前任务。
 
 ## 当前版本与结论
@@ -10,13 +10,13 @@
   - 汇率来源：打开页面时静默按 12 小时缓存拉取免费公开汇率并持久化至本机（离线自动沿用缓存，默认兜底 `11.8`），并支持点击「调整汇率」手动覆盖与「恢复自动」。
   - 验证与双线构建：Ozon 全量 `npm.cmd test`（含 `test-standalone.mjs` 独立版 `#rubCnyBar`/`#fxRateInput` 留存与账号隔离检查）、`verify-project.ps1`、双版 ZIP 构建（`ozon-erp-collector-extension.zip` SHA256 `A71B93043EB2C6F32ACC71178EA32D51D59B968562BAC0B28F3A5183C85BC083`；独立版 `ozon-standalone-extension.zip` SHA256 `CB27905557E8F021BB3A79356B35FBAC93D4FB84F2E836F65F1B188F5919C669`）、Workbench `sync-workbench-core --check`、`check-release-version.mjs`（`V1.60 → V1.61`）、`npm.cmd run build` 与 `ozon-workbench-nav.test.mjs` 全部通过。真实浏览器汇率自动拉取、输入折算手感及独立版 `0.6.79` 升级待现场验收。回滚备份 `_备份_20261127_v161_rub_cny_hint_before`。
 
-- V1.60 / 0.6.78（本机已包含在 V1.61 中待一并上线）：针对长时间类目扫描导致标签页 `Out of Memory` 崩溃及恢复卡在死标签页的问题，完成防崩溃减负、主动换页释内存与崩溃自动重建续扫改造（**无新增 D1 数据库迁移**）：
+- V1.60 / 0.6.78（已上线站点版本 `89`）：针对长时间类目扫描导致标签页 `Out of Memory` 崩溃及恢复卡在死标签页的问题，完成防崩溃减负、主动换页释内存与崩溃自动重建续扫改造（**无新增 D1 数据库迁移**）：
   - 主动重建标签页释内存（`category-background.js`）：切换类目与翻到下一页（`?page=N`）时，通过 `replaceTaskTab` 在同一任务窗口内新建干净标签页并更新 `batch.tabId` 存盘后再关闭旧页，彻底释放图片与 ERP DOM 渲染内存，且避免旧页迟到关闭事件误触发暂停。
   - 扫描器瘦身与提前翻页（`category-scanner.js`）：`readCards` 支持跳过已判定 SKU（`skipSkus`）及同卡多锚点去重，并向后台发送增量 `categorySample`（`compactAck: true` 省略冗余大体积 `batch` 回传）；单页扫描累计超过 `45` 次滚动或 `120` 件新发现且无待复查项、页面底部可见下一页链接时，主动触发翻页换页。
   - 崩溃自动识别与断点续扫（`category-background.js`、`category.js`）：看门狗连续 2 次无响应或连续 2 次注入失败（排除退出类目范围、登录/验证、`frozen`/`discarded` 状态），以及暂停后人工点「继续」发现页面脚本无响应时，自动触发 `recoverCrashedTab` 新建干净标签页从当前保存的 `pageUrl`、`observedSkus` 和候选结果断点续扫（同类目连续崩溃自动恢复上限 `3` 次，新发现 SKU 自动清零计数，达上限安全暂停提示）。
-  - 验证与双线构建：扩展 `v0.6.78`（`ozon-erp-collector-extension.zip` SHA256 `08D92EF855B1A969D15D9E132405963681E9C6A93BEF127328D87EB0A98B8E8E`）与独立分享版 `0.6.78`（`ozon-standalone-extension.zip` SHA256 `63CFD59A0EDFFB75A1C4AF66A469A05674C9CA31D5D944528D163542696463DC`）全部生成，工作台内嵌包字节一致。Ozon 全量 `npm.cmd test`（含新增 `test-category-scanner.mjs` 跳过已查/增量上报/主动翻页断言与 `test-category-background.mjs` 换页/崩溃重建/恢复上限/安全边界断言）、`verify-project.ps1`、`test-standalone.mjs`、Workbench `sync-workbench-core --check`、`release:check`（`V1.59 → V1.60`）、`npm.cmd run build`、`ozon-collector.test.mjs` 与 `ozon-workbench-nav.test.mjs` 全部通过。**真实 Ozon 长时挂机扫描防崩溃、翻页换页及崩溃自动续扫效果（以及独立分享版 `0.6.78` 覆盖升级）待用户在真实浏览器实机验收。** 回滚备份 `_备份_20261127_v160_category_oom_recovery_before`。
+  - 验证与部署：扩展 `v0.6.78`（`ozon-erp-collector-extension.zip` SHA256 `08D92EF855B1A969D15D9E132405963681E9C6A93BEF127328D87EB0A98B8E8E`）与独立分享版 `0.6.78`（`ozon-standalone-extension.zip` SHA256 `63CFD59A0EDFFB75A1C4AF66A469A05674C9CA31D5D944528D163542696463DC`）全部通过。Codex 已将工作台 V1.60 部署上线（站点版本 `89`，Workbench 提交 `bd93c3d`，部署 ID `appgdep_6b090032510081919d8f8dd1a5d5355b`，共享核心与 `v0.6.78` SHA256 校验通过，生产构建与登录页健康检查 HTTP 200 通过，下载接口配置为 `ozon-erp-collector-extension-v0.6.78.zip`，无新增 D1 迁移；因 Chrome 连接超时未完成登录后实际下载校验）。**真实 Ozon 长时挂机扫描防崩溃、翻页换页及崩溃自动续扫效果（以及独立分享版升级）待用户在真实浏览器实机验收。** 回滚备份 `_备份_20261127_v160_category_oom_recovery_before`。
 
-- V1.59 / 0.6.77（当前线上站点版本 `88`）：围绕确认后的交互效果图完成扩展「类目选品」页面（`category.html` / `category.css` / `category.js`）及独立分享版（`build-standalone.mjs` 自动同步）的视觉与排版重构（**无新增 D1 数据库迁移**）：
+- V1.59 / 0.6.77（已上线站点版本 `88`）：围绕确认后的交互效果图完成扩展「类目选品」页面（`category.html` / `category.css` / `category.js`）及独立分享版（`build-standalone.mjs` 自动同步）的视觉与排版重构（**无新增 D1 数据库迁移**）：
   - 新建类目任务卡片：重排为 3 组等高对齐参数列（本批目标新品数、人民币复核区间、Ozon 页面预筛），解决原版 5 栏标题折行与高低不齐；统一工作台深森绿 `#3a5a40` 与暖灰纸底 `#f7f7f5` 配色，轻量收纳停用试验模式说明。
   - 当前批次与历史管理：固定「当前批次」单行标题与状态徽章（消除标题折行），新增 4 格 KPI 概览条（新候选/目标、已检查、待人工复查、页面卢布预筛）与可折叠诊断区；批内按钮主次左右分组，运行诊断与历史批次工具对齐为水平两行；三级联动类目选择弹窗同步切换深森绿视觉体系。
   - 验证与部署：Ozon `npm.cmd test`（含 `test-standalone.mjs` 校验独立版导航与 `#syncWorkbench` 剥离）、双版发布构建（`ozon-erp-collector-extension.zip` 与工作台内嵌包 SHA256 `F5A6F26F209A7EA5A020EB804F1230C165A661AE7CE8207C353896E502B16E0A` 一致）、Workbench `npm.cmd run build`、272/272 测试与 `V1.58 → V1.59` 版本校验均通过；本机未配置 Playwright，隔离浏览器脚本未跑。Codex 已部署上线（站点版本 `88`，Workbench 本地提交 `43a4e0d`，部署 ID `appgdep_6b08ebe8bae081919bacfe835a56a08c`，共享核心及扩展 `v0.6.77` SHA256 校验通过，生产构建通过，无新增 D1 迁移）。线上重载 `v0.6.77` 扩展及独立分享版 `0.6.77` 真实浏览器排版待用户现场确认。回滚备份 `_备份_20261127_v159_category_ui_before`。
