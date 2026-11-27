@@ -1,10 +1,11 @@
 # CHANGELOG.md - Ozon 项目续接记录
 
-## 2026-11-27 - V1.58 / 0.6.76 商品池新增按扫描设备与扫描批次筛选（本机，未发布）
+## 2026-11-27 - V1.58 / 0.6.76 商品池新增按扫描设备与扫描批次筛选（已上线站点版本 87）
 
 - 工作台设备/批次筛选：`product-pool-core.js` 新增 `batchId` / `deviceId` 查询规范化与 `batchIds` 匹配；`lib/ozon-pool/store.ts` 基于既有 `payload.batchIds` 与 `ozon_scan_batches`、`ozon_collector_devices` 实现单账号下按扫描设备汇总或按具体「电脑 + 时间」批次筛选，并返回批次分面列表（追溯历史全部已入池记录，**无新增 D1 数据库迁移**）；`app/ozon/pool/pool-desk.tsx` 新增「全部设备 / 批次」分组下拉框，快速核价「下一件」与批量操作严格保持在当前筛选范围内。
 - 独立分享版 / 扩展：`product-pool-idb.js` 在 `search` 投影行补充 `batchIds` 并将 `searchVersion` 由 `3` 自动升级为 `4`（不改 IndexedDB schema 版本、零数据丢失），`product-pool.html` / `product-pool.js` 同步新增 `#batchFilter` 批次筛选。
-- 打包与验证：回滚备份 `_备份_20261127_v158_device_batch_filter_before`（已轮换清理 `_备份_20261126_v154_workbench_ui_before`，保留 `_备份_20261125_v151_pool_before` 及共 5 份常规备份）。Ozon `npm.cmd test`、双版发布构建（`ozon-erp-collector-extension.zip` 与工作台内嵌包 SHA256 `FAFF78E2E9DEF78FF2ADA6428BC273E7559C9A19FA783F34FE7785B0E97A888F` 一致）、Workbench `npm.cmd run build`、272/272 测试（含 `ozon-pool-d1.test.mjs` 新增多设备多批次测试）与 `V1.57 → V1.58` 版本校验全部通过；尚未推送 Ozon GitHub 或部署线上，线上多电脑实机筛选及独立版 `0.6.76` 升级待验收。
+- 打包与验证：回滚备份 `_备份_20261127_v158_device_batch_filter_before`（已轮换清理 `_备份_20261126_v154_workbench_ui_before`，保留 `_备份_20261125_v151_pool_before` 及共 5 份常规备份）。Ozon `npm.cmd test`、双版发布构建（`ozon-erp-collector-extension.zip` 与工作台内嵌包 SHA256 `FAFF78E2E9DEF78FF2ADA6428BC273E7559C9A19FA783F34FE7785B0E97A888F` 一致）、Workbench `npm.cmd run build`、272/272 测试（含 `ozon-pool-d1.test.mjs` 新增多设备多批次测试）与 `V1.57 → V1.58` 版本校验全部通过。
+- 线上部署：Codex 已将工作台 V1.58 部署上线（站点版本 `87`，Workbench 本地提交 `d1537b8`，部署 ID `appgdep_6b08e231cc5c819197b13c786d9afb62`，共享核心及扩展 `v0.6.76` SHA256 校验通过，生产构建通过，无新增 D1 迁移）。线上多电脑实机设备/批次筛选及独立分享版 `0.6.76` 升级待用户验收。
 
 ## 2026-11-26 - V1.57 / 0.6.75 保存时间排序、精简 SKU 排序与快速核价推送提速（已上线站点版本 86）
 

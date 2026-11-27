@@ -1,14 +1,14 @@
 # Ozon 当前状态
 
-更新时间：2026-11-27（V1.58 / 0.6.76 商品池新增按扫描设备与扫描批次筛选本机完成并已本地提交，待 Codex 部署；线上当前为 V1.57 站点版本 `86` / 扩展 `v0.6.75`）。
+更新时间：2026-11-27（工作台 V1.58 已上线站点版本 `87`，源码 `d1537b8`，部署 `appgdep_6b08e231cc5c819197b13c786d9afb62`，扩展 `v0.6.76`，无新增 D1 迁移；Ozon 仓库同步推送 `origin/main`）。
 用途：新对话快速续接。详细过程按需查 [CHANGELOG](CHANGELOG.md) 和 [历史入口](docs/history/README.md)，不把历史待办当作当前任务。
 
 ## 当前版本与结论
 
-- V1.58 / 0.6.76（本机已提交，未推送/未部署）：支持多电脑共用同一工作台账号协作时按「扫描设备」或「扫描批次（电脑 + 时间）」筛选商品池，各自独立找品互不撞车，切换「全部设备 / 批次」即可汇总看全池（**无新增 D1 数据库迁移**）：
+- V1.58 / 0.6.76（已上线站点版本 `87`）：支持多电脑共用同一工作台账号协作时按「扫描设备」或「扫描批次（电脑 + 时间）」筛选商品池，各自独立找品互不撞车，切换「全部设备 / 批次」即可汇总看全池（**无新增 D1 数据库迁移**）：
   - 工作台端（`lib/ozon-pool/model.ts`、`store.ts`、`app/ozon/pool/pool-desk.tsx`）：`readPoolPage` 基于既有 `payload.batchIds` 关联 `ozon_scan_batches` 与 `ozon_collector_devices` 支持按 `deviceId` / `batchId` 精确筛选并返回批次分面（含历史全部已入池商品与已归档设备归属），右侧单品快速核价「下一件」及状态流转自动限定在所选设备或批次范围内。
   - 扩展 / 独立分享版（`product-pool-core.js`、`product-pool-idb.js`、`product-pool.html`、`product-pool.js`）：`search` 分块补充 `batchIds` 并将 `searchVersion` 由 `3` 自动升级为 `4`（零数据丢失），新增 `#batchFilter` 按扫描批次筛选（全库去重与导出规则不变）。
-  - 验证：Ozon `npm.cmd test`（含 `test-product-pool.mjs` `batchId`/`deviceId` 查询断言）、双版发布构建（`ozon-erp-collector-extension.zip` 与工作台内嵌包 SHA256 `FAFF78E2E9DEF78FF2ADA6428BC273E7559C9A19FA783F34FE7785B0E97A888F` 一致）、Workbench `npm.cmd run build`、272/272 测试（含 `ozon-pool-d1.test.mjs` 对多设备/多批次筛选及共享 SKU 归属断言）与 `V1.57 → V1.58` 版本校验均通过。线上多电脑实机设备/批次筛选及独立分享版 `0.6.76` 升级待部署后确认。回滚备份 `_备份_20261127_v158_device_batch_filter_before`。
+  - 验证与部署：Ozon `npm.cmd test`（含 `test-product-pool.mjs` `batchId`/`deviceId` 查询断言）、双版发布构建（`ozon-erp-collector-extension.zip` 与工作台内嵌包 SHA256 `FAFF78E2E9DEF78FF2ADA6428BC273E7559C9A19FA783F34FE7785B0E97A888F` 一致）、Workbench `npm.cmd run build`、272/272 测试（含 `ozon-pool-d1.test.mjs` 对多设备/多批次筛选及共享 SKU 归属断言）与 `V1.57 → V1.58` 版本校验均通过。Codex 已部署上线（站点版本 `87`，Workbench 本地提交 `d1537b8`，部署 ID `appgdep_6b08e231cc5c819197b13c786d9afb62`，共享核心及扩展 `v0.6.76` SHA256 校验通过，生产构建通过，无新增 D1 迁移）。线上多电脑实机设备/批次筛选及独立分享版 `0.6.76` 升级待用户现场确认。回滚备份 `_备份_20261127_v158_device_batch_filter_before`。
 
 - V1.57 / 0.6.75（已上线站点版本 `86`）：围绕商品池复查效率与推送体验完成三项协同调整（**无新增 D1 数据库迁移**）：
   - 保存时间排序与精简排序选项（`product-pool-core.js`、`lib/ozon-pool/model.ts`、`lib/ozon-pool/store.ts`、`app/ozon/pool/pool-desk.tsx`、`product-pool.html`）：新增「最近保存优先」（`savedRecent`）与「最早保存优先」（`savedOldest`），有 `manualSavedAt` 的商品优先排在前面，同时间戳按 `lastSeenAt` 与 `sku` 兜底；同时剔除无用的 `skuAsc` / `skuDesc` 选项，历史非法/旧值自动回落为 `recent`。工作台直接基于既有 `payload` 中 `$.manualSavedAt` 排序，**无需 D1 schema 迁移**。
