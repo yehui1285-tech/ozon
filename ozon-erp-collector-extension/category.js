@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 let state = null;
-let history = [], savedTasks = [], loadedTaskProfileId = '', loadedTaskProfileName = '', busy = false, refreshSequence = 0, actionRevision = 0, refreshInFlight = false, refreshPending = false;
+let history = [], savedTasks = [], loadedTaskProfileId = '', loadedTaskProfileName = '', formDirty = false, hydratedBatchId = '', busy = false, refreshSequence = 0, actionRevision = 0, refreshInFlight = false, refreshPending = false;
 const core=globalThis.OzonCategoryCore;
 const catalog=globalThis.OzonCategoryCatalog;
 let catalogData=null, treeSelection=null, confirmedSource='china', draftSelection=null, favorites=[], navPath=[];
@@ -87,13 +87,51 @@ function searchPicker(){const query=normalizeSearch($('catalogSearch').value);if
 async function loadCatalog(){try{const response=await fetch('category-catalog.json');if(!response.ok)throw Error('类目目录无法读取');catalogData=await response.json();$('catalogProvenance').textContent=catalogData.provenance?.note||'本机类目快照';treeSelection=newSelection(confirmedSource).selection;syncCatalogUrls();$('openCatalog').disabled=false;$('catalogLoadState').textContent='选择后可直接开始扫描'}catch(e){$('catalogLoadState').textContent='类目目录无法读取，请重载扩展后重试。';$('message').textContent=e.message}}
 async function refreshFavorites(){favorites=await catalog.readFavorites();const select=$('favoriteSelect');const keep=select.value;select.replaceChildren(new Option('选择本机组合',''),...favorites.map(f=>new Option(`${f.name} · ${f.source==='china'?'中国专区':'普通 Ozon'}`,f.id)));if(favorites.some(f=>f.id===keep))select.value=keep}
 function categoryLabels(){const labels={};for(const n of treeSelection?.selected.values()||[])labels[core.normalizeUrl(n.url)]=catalog.names(n).slice(0,120);return labels}
+function readFilterOptions(){
+  const opt=core.validateOptions({targetCount:$('targetCount').value,perCategoryLimit:$('perCategoryLimit')?.value,minPrice:$('minPrice').value,maxPrice:$('maxPrice').value,pageMinRub:$('pageMinRub').value,pageMaxRub:$('pageMaxRub').value,fxRate:activeFxRate()});
+  return {targetCount:opt.targetCount,perCategoryLimit:opt.perCategoryLimit??null,minPrice:opt.minPrice??null,maxPrice:opt.maxPrice??null,pageMinRub:opt.pageMinRub??null,pageMaxRub:opt.pageMaxRub??null,fxRate:opt.fxRate??activeFxRate()};
+}
 function readSetupForm(){
   const treeUrls=treeSelection?.urls()||[];
   const manual=$('urls').value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
   const parsed=core.parseUrls([...manual,...treeUrls]);
   if(!parsed.urls.length||parsed.invalid.length||parsed.overflowCount)throw Error('请提供 1–20 个有效 Ozon 类目链接，修正无效或超限地址。');
-  const options=core.validateOptions({targetCount:$('targetCount').value,perCategoryLimit:$('perCategoryLimit')?.value,minPrice:$('minPrice').value,maxPrice:$('maxPrice').value,pageMinRub:$('pageMinRub').value,pageMaxRub:$('pageMaxRub').value,fxRate:activeFxRate()});
-  return {urls:parsed.urls,categoryLabels:categoryLabels(),options};
+  return {urls:parsed.urls,categoryLabels:categoryLabels(),options:readFilterOptions()};
+}
+function syncFormFromBatch(batch){
+  if(formDirty||!batch?.id||batch.id===hydratedBatchId)return;
+  const opt=batch.options||{};
+  if($('targetCount')&&opt.targetCount!=null)$('targetCount').value=opt.targetCount;
+  if($('perCategoryLimit'))$('perCategoryLimit').value=opt.perCategoryLimit??'';
+  if($('minPrice'))$('minPrice').value=opt.minPrice??'';
+  if($('maxPrice'))$('maxPrice').value=opt.maxPrice??'';
+  if($('pageMinRub'))$('pageMinRub').value=opt.pageMinRub??'';
+  if($('pageMaxRub'))$('pageMaxRub').value=opt.pageMaxRub??'';
+  hydratedBatchId=batch.id;
+  renderRubCnyHint();
+}
+function formatFormFilterBrief(){
+  const target=String($('targetCount')?.value||'20').trim()||'20';
+  const perCat=String($('perCategoryLimit')?.value||'').trim();
+  const minCny=String($('minPrice')?.value||'').trim();
+  const maxCny=String($('maxPrice')?.value||'').trim();
+  const minRub=String($('pageMinRub')?.value||'').trim();
+  const maxRub=String($('pageMaxRub')?.value||'').trim();
+  const parts=[`目标 ${target} 件`];
+  if(perCat)parts.push(`单类目上限 ${perCat} 件`);
+  if(minCny||maxCny)parts.push(`人民币 ¥${minCny||'不限'}–¥${maxCny||'不限'}`);
+  if(minRub||maxRub)parts.push(`卢布 ${minRub||'不限'}–${maxRub||'不限'} ₽`);
+  else parts.push('无卢布预筛');
+  return parts.join(' · ');
+}
+function updateContinueHint(batch=state){
+  const continueHint=$('continueHint');
+  if(!continueHint||!batch)return;
+  const {remainingCount,resumableCount}=continuationCounts(batch);
+  const brief=formatFormFilterBrief();
+  continueHint.textContent=remainingCount>0
+    ? `将按上方当前条件续扫（${brief}）：还有 ${remainingCount} 个未完成类目，也可对全部 ${resumableCount} 个未耗尽类目续扫并跳过本轮已采 SKU`
+    : `将按上方当前条件续扫（${brief}）：本批还有 ${resumableCount} 个未耗尽类目，可从已保存断点续扫下一轮并跳过本轮已采 SKU`;
 }
 function confirmArchiveIfNeeded(){
   const needed=history.length>=5&&!!state;
@@ -152,7 +190,9 @@ function loadTaskProfileIntoForm(profile){
   if($('taskProfileName'))$('taskProfileName').value=profile.name||'';
   loadedTaskProfileId=profile.id||'';
   loadedTaskProfileName=profile.name||'';
+  formDirty=true;
   renderRubCnyHint();
+  updateContinueHint();
   $('message').textContent=`已载入常用任务「${profile.name}」（共 ${urls.length} 个类目），可直接修改或点击「开始类目选品」。`;
 }
 function renderSavedTasks(tasks,active){
@@ -213,6 +253,7 @@ function render(batch, archive=history, tasks=savedTasks) {
   state = batch || null;
   history=Array.isArray(archive)?archive:[];
   savedTasks=Array.isArray(tasks)?tasks:savedTasks;
+  syncFormFromBatch(batch);
   const stores = Array.isArray(batch?.stores) ? batch.stores : [];
   const selected = stores.reduce((a,s)=>a+Number(s.qualifiedCount||0),0);
   const checked = stores.reduce((a,s)=>a+Number(s.observedCount||0),0);
@@ -282,9 +323,7 @@ function render(batch, archive=history, tasks=savedTasks) {
     continueNextRound.hidden=resumableCount===0;
     continueNextRound.disabled=busy||active||resumableCount===0;
     continueNextRound.textContent=`继续扫下一轮 (${resumableCount})`;
-    if(continueHint)continueHint.textContent=remainingCount>0
-      ? `本批还有 ${remainingCount} 个未完成类目，也可对全部 ${resumableCount} 个未耗尽类目从断点续扫并跳过本轮已采 SKU`
-      : `本批已采集完成但还有 ${resumableCount} 个类目未扫到底，可从已保存断点续扫下一轮并跳过本轮已采 SKU`;
+    updateContinueHint(batch);
   }
   $("batch").querySelectorAll('[data-task-action]').forEach(button=>button.onclick=()=>{
     const action=button.dataset.taskAction,sellerKey=button.dataset.sellerKey;
@@ -336,9 +375,12 @@ if($("saveTaskProfile"))$("saveTaskProfile").onclick=async()=>{
 for(const [btnId,mode] of [['continueRemaining','remaining_only'],['continueNextRound','resume_all']]){
   if($(btnId))$(btnId).onclick=()=>{
     if(!state||!["completed","stopped","failed"].includes(state.status))return;
-    const confirmArchive=confirmArchiveIfNeeded();
-    if(confirmArchive===null)return;
-    void perform({type:'categoryContinueNextRound',batchId:state.id,mode,confirmArchiveOverflow:confirmArchive,backgroundExperiment:$("backgroundExperiment").checked});
+    try{
+      const filterOptions=readFilterOptions();
+      const confirmArchive=confirmArchiveIfNeeded();
+      if(confirmArchive===null)return;
+      void perform({type:'categoryContinueNextRound',batchId:state.id,mode,...filterOptions,confirmArchiveOverflow:confirmArchive,backgroundExperiment:$("backgroundExperiment").checked});
+    }catch(e){$("message").textContent=e.message;}
   };
 }
 async function perform(message){if(busy)return null;actionRevision++;refreshSequence++;busy=true;render(state);try{const r=await send(message);busy=false;render(Object.hasOwn(r,'batch')?r.batch:state,Array.isArray(r.history)?r.history:history,Array.isArray(r.tasks)?r.tasks:savedTasks);let note=r.message||r.batch?.message||'操作已完成。';if(message.type==='categoryAddPool'){note=r.added>0?`已新增 ${r.added} 件到本机商品池 · 重复 ${r.duplicates||0} · 历史排除 ${r.historySkipped||0}`:r.duplicates>0?`本批 ${r.duplicates} 件均已在商品池中（新增 0 件），可点右上角打开商品池切换「全部状态」查看。`:`未新增商品（历史排除 ${r.historySkipped||0} · 无效或待复核 ${r.riskSkipped||0}）`;const link=document.querySelector('a.pool-link'),targetId=message.batchId||state?.id||'';if(link&&targetId)link.href=`product-pool.html?batchId=${encodeURIComponent(targetId)}${r.added===0&&r.duplicates>0?'&filter=all':''}`;}$("message").textContent=note;return r;}catch(e){busy=false;render(state);$("message").textContent=e.message;return null;}}
@@ -465,8 +507,11 @@ if($('fxRateInput'))$('fxRateInput').addEventListener('keydown',e=>{
   if(e.key==='Enter'){e.preventDefault();$('fxSaveBtn')?.click();}
   else if(e.key==='Escape'){e.preventDefault();closeFxEditor();}
 });
-for(const id of ['pageMinRub','pageMaxRub','minPrice','maxPrice']){
-  const el=$(id);if(el){el.addEventListener('input',renderRubCnyHint);el.addEventListener('change',renderRubCnyHint);}
+for(const id of ['targetCount','perCategoryLimit','pageMinRub','pageMaxRub','minPrice','maxPrice']){
+  const el=$(id);if(el){
+    const onFormEdit=()=>{formDirty=true;renderRubCnyHint();updateContinueHint();};
+    el.addEventListener('input',onFormEdit);el.addEventListener('change',onFormEdit);
+  }
 }
 
 void initFxRate();

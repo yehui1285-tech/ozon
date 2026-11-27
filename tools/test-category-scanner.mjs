@@ -219,6 +219,14 @@ assert.equal(context.OzonCategoryScanner.confirmRubPrice(blankDoc, { pageMinRub:
 const cnyCardInList = makeEl({ widget: 'tileGridDesktop', children: [card('44444', 'cny-only')] });
 const cnyMismatchDoc = { querySelectorAll: s => s.includes('input[type="text"]') ? [loBlank, hiBlank] : s.includes('tileGridDesktop') ? [cnyCardInList] : [] };
 assert.equal(context.OzonCategoryScanner.confirmRubPrice(cnyMismatchDoc, { pageMinRub: 1300, pageMaxRub: 30000 }), false, 'CNY card prices must reject RUB confirmation');
+assert.equal(context.OzonCategoryScanner.detectNonRubCurrency(cnyMismatchDoc), true, 'CNY list prices indicate non-RUB currency mismatch');
+assert.equal(context.OzonCategoryScanner.detectNonRubCurrency(blankDoc), false, 'RUB list prices must not trigger non-RUB currency mismatch');
+const cnySideLo = makeEl({ tag: 'INPUT' }), cnySideHi = makeEl({ tag: 'INPUT' });
+cnySideLo.value = '100'; cnySideHi.value = '500';
+const cnySidebarGroup = makeEl({ text: '价格 ⓘ\n¥ 100 - ¥ 500', children: [cnySideLo, cnySideHi] });
+cnySidebarGroup.querySelectorAll = s => s.includes('input[type="text"]') ? [cnySideLo, cnySideHi] : [];
+const cnySidebarDoc = { querySelectorAll: s => s.includes('input[type="text"]') ? [cnySideLo, cnySideHi] : [] };
+assert.equal(context.OzonCategoryScanner.detectNonRubCurrency(cnySidebarDoc), true, 'sidebar CNY price group triggers non-RUB currency mismatch');
 const rubReadResult = reader.read('https://www.ozon.ru/category/demo-123/', { minPrice: 100, fxRate: 12 }, rubList);
 assert.equal(rubReadResult.products.length, 1);
 assert.equal(rubReadResult.products[0].sku, '1979786266');

@@ -95,6 +95,24 @@
     const value=el=>{const raw=String(el?.value??'').trim().replace(/[\s\u00a0\u202f]/g,'');return /^\d{1,8}$/.test(raw)?Number(raw):null;};
     return fields.length===2&&value(fields[0])===range.pageMinRub&&value(fields[1])===range.pageMaxRub;
   }
+  function detectNonRubCurrency(doc) {
+    const inputSelector = 'input[type="text"],input[type="number"]';
+    const controls = Array.from(doc.querySelectorAll?.(inputSelector) || []).filter(el => visible(el) && !el.disabled && !el.readOnly && !isForbidden(el));
+    let ev = null;
+    for (const input of controls) {
+      for (let group = input.parentElement, depth = 0; group && depth < 9; group = group.parentElement, depth++) {
+        if (!visible(group) || isForbidden(group)) continue;
+        const fields = controls.filter(el => group.contains?.(el)); if (fields.length > 2) break;
+        const content = textOf(group), heading = content.split(/\r?\n/).map(s => s.trim()).find(Boolean);
+        if (fields.length !== 2 || !/^(?:价格|Цена|Price)(?:\s*[ⓘi])?$/i.test(heading || '')) continue;
+        if (/(?:₽|\bRUB\b|руб\.?)/i.test(content)) continue;
+        if (/[¥￥$€]/.test(content)) return true;
+        ev ??= listRubEvidence(doc);
+        if (ev.nonRub && !ev.rub) return true;
+      }
+    }
+    return false;
+  }
   function mainCandidates(doc) {
     const candidates = new Set();
     for (const selector of SELECTORS) for (const el of doc.querySelectorAll(selector)) {
@@ -260,7 +278,7 @@
     return href || '';
   }
   function createReader(doc, core) { return { read: (url, options, list=pickList(doc), skipSkus=null) => readCards(list, core, url, options, skipSkus), next: (url) => pagination(doc, core, url), pickList: () => pickList(doc) }; }
-  globalScope.OzonCategoryScanner = Object.freeze({ createReader, readCards, pickList, confirmRubPrice, MAX_SAMPLES, MAX_SCROLLS, PROACTIVE_NEXT_PAGE_SCROLLS, PROACTIVE_NEXT_PAGE_SKUS });
+  globalScope.OzonCategoryScanner = Object.freeze({ createReader, readCards, pickList, confirmRubPrice, detectNonRubCurrency, MAX_SAMPLES, MAX_SCROLLS, PROACTIVE_NEXT_PAGE_SCROLLS, PROACTIVE_NEXT_PAGE_SKUS });
 
   const core = globalScope.OzonCategoryCore;
   if (!core || !globalScope.chrome?.runtime?.onMessage || !core.exactPageUrl(globalScope.location?.href || '') || globalScope.__ozonCategoryListenerInstalled) return;
@@ -315,7 +333,8 @@
       if(!pagePriceConfirmed){
         if(confirmRubPrice(globalScope.document,msg.options))pagePriceConfirmed=true;
         else {
-          if(++pricePolls>=LIST_WAIT_POLLS)return done(msg,false,'price_filter_unconfirmed');
+          if(++pricePolls>=3 && detectNonRubCurrency(globalScope.document))return done(msg,false,'price_currency_mismatch');
+          if(pricePolls>=LIST_WAIT_POLLS)return done(msg,false,'price_filter_unconfirmed');
           if(pricePolls===1||pricePolls%5===0){const ack=await reportWait('price_filter_loading');if(waitStopped(ack))return;}
           await wait(pageHidden?BACKGROUND_SETTLE_MS:LIST_WAIT_MS);sample--;continue;
         }

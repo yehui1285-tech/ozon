@@ -1,10 +1,14 @@
 # Ozon 当前状态
 
-更新时间：2026-11-27（用户确认工作台 V1.64 已成功部署上线，源码 `558b84b`，内嵌扩展 `v0.6.82`；双版独立包 `0.6.82` 已构建；无新增 D1 迁移；Ozon 仓库同步推送 `origin/main`）。
+更新时间：2026-11-27（工作台 V1.65 已完成本地构建、测试与提交 `64d3a84`，内嵌扩展 `v0.6.83` 待 Codex 部署；双版独立包 `0.6.83` 已构建；无新增 D1 迁移；Ozon 仓库即将同步推送 `origin/main`）。
 用途：新对话快速续接。详细过程按需查 [CHANGELOG](CHANGELOG.md) 和 [历史入口](docs/history/README.md)，不把历史待办当作当前任务。
 
 ## 当前版本与结论
 
+- V1.65 / 0.6.83（工作台本地提交 `64d3a84` 待 Codex 部署；双版独立包已构建，**无新增 D1 数据库迁移**）：修复类目续扫沿用旧卢布区间导致不滚动及货币冲突提示：
+  - 续扫条件同步与表单回填（`category.js`）：打开/刷新页面时自动将当前批次 `options` 回填至顶部表单（用户手工修改后保留用户编辑不覆盖）；点击「仅扫剩余类目 / 继续扫下一轮」时显式携带全部表单筛选字段（清空卢布预筛即显式传 `pageMinRub: null, pageMaxRub: null` 剥离 `?currency_price=...`，避免沿用旧批次卢布区间）。
+  - 非卢布货币冲突快速识别（`category-scanner.js`、`category-background.js`）：新增 `detectNonRubCurrency` 仅在侧栏 2 输入框价格组已渲染且含 `¥/$/€`（或无 `₽` 且列表为非卢布货币）时快速终止等待（3 次轮询内上报 `price_currency_mismatch`），暂停并给出清晰中文指引。
+  - 验证状态：Ozon `node --check`、全量 `npm.cmd test`（含 `test-category-scanner.mjs` 侧栏货币冲突检测与 `test-category-background.mjs` 续扫清空卢布区间用例）、`verify-project.ps1`、双版发布包（`ozon-erp-collector-extension.zip` SHA256 `d15389c2598543276134f2dcd4faebcef722f33164d17941ea1db32d361b6cc8`；独立版 `ozon-standalone-extension.zip` SHA256 `72074e3ff23c9a5a3f4a5366669c0a9f655572ab73cf8e76fdc3489d51faa5b0`），以及 Workbench `sync-workbench-core --check`、`check-release-version.mjs`（`V1.64 → V1.65`）、`npm.cmd run build`、`ozon-collector.test.mjs`（8/8）、`ozon-workbench-nav.test.mjs`（2/2）全部通过。真实浏览器下双版 `v0.6.83` 切回人民币续扫及货币冲突提醒待现场验收；工作台 V1.65 待 Codex 部署。回滚备份 `_备份_20261127_v165_continue_options_and_currency_before`。
 - V1.64 / 0.6.82（用户确认工作台 V1.64 已上线，源码 `558b84b`，**无新增 D1 数据库迁移**；双版独立包已构建）：类目选品多轮续扫、单类目采集上限与常用类目任务：
   - 单类目上限（`category-core.js`、`category-background.js`、`category.html`、`category.js`）：新增可选「单类目采集上限」（`perCategoryLimit`，1–500 整数），单个类目采满后自动标记该类目 `completed` 并切换下一个可扫类目，防止首类目吃满整批目标。
   - 一键续扫下一轮（`category-background.js`、`category.html`、`category.js`）：已结束批次新增「仅扫剩余类目」（`remaining_only`，仅扫尚未完成的类目）与「继续扫下一轮」（`resume_all`，含未扫到底的已停止/已完成类目断点），自动携带 `pageUrl`、`visitedPages`、`observedSkus` 及 `priorQualifiedSkuIds` 去重，过滤真正 `visible_catalog_end` 扫到底或手动跳过/移出的类目。
@@ -22,7 +26,7 @@
 
 ## 当前待验收与已知边界
 
-- 待现场真实验收：双版 `v0.6.82` 单类目上限轮扫、已结束批次「仅扫剩余类目 / 继续扫下一轮」断点续扫与常用类目任务、工作台与独立版 `v0.6.81` 视觉与 Toast 跳转、V1.60 长时扫品防崩溃与断点续扫、V1.61/V1.62 实时汇率与卢布卡入池；工作台 V1.64 用户确认已上线。
+- 待现场真实验收：双版 `v0.6.83` 清空卢布预筛续扫与人民币页面冲突提醒、`v0.6.82` 单类目上限轮扫与常用类目任务、工作台与独立版 `v0.6.81` 视觉与 Toast 跳转、V1.60 长时扫品防崩溃与断点续扫；工作台 V1.65 本地提交 `64d3a84` 待 Codex 部署。
 - 本机测试环境未配置 Playwright 模块，隔离浏览器脚本（`test-category-browser.mjs`、`test-product-pool-browser.mjs`、`ozon-pool-browser.mjs` 等）未在本机运行；所有版本均未执行外部站点绕过或自动下单。
 - 工作边界：登录、CAPTCHA 和平台验证由用户处理；1688 自动搜款主线继续暂停（恢复需用户明确指示）；`AGENTS.md` 双线同步交付规则持续生效；常规 `_备份_*` 目录保留最新 5 份（保留 `_备份_20261125_v151_pool_before`）。
 

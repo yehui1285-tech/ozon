@@ -7,7 +7,7 @@ let created = [], reloads=0, sentMessages=[], debuggerCommands=[], debuggerAttac
 const storage = { async get(k) { return k ? { ...(data[k] ? { [k]: data[k] } : {}) } : { ...data }; }, async set(v) { Object.assign(data, v); }, async remove(k) { for (const key of Array.isArray(k) ? k : [k]) delete data[key]; } };
 let declaredDebugger=true;
 const chrome = {
-  runtime:{getManifest:()=>({version:'0.6.82',permissions:declaredDebugger?['debugger']:[]})},
+  runtime:{getManifest:()=>({version:'0.6.83',permissions:declaredDebugger?['debugger']:[]})},
   storage: { local: storage,session:{async get(k){return {[k]:sessionData[k]}},async set(v){Object.assign(sessionData,v)},async remove(k){delete sessionData[k]}} },
   alarms:{async get(n){return alarms.get(n)},async create(n,o){alarms.set(n,o)},async clear(n){alarms.delete(n)}},
   tabs: {
@@ -650,4 +650,72 @@ assert.equal(tasksAfterRun[0].totalQualifiedCount, 0);
 assert.equal(tasksAfterRun[0].priorQualifiedSkuIds.length, 0);
 await runner.handle({ type: 'categoryTaskProfileDelete', taskId });
 assert.equal((await runner.handle({ type: 'categoryGet' })).tasks.length, 0);
+
+// V1.65: Continuing next round with cleared RUB options drops currency_price and preserves observed/prior SKUs;
+// price_currency_mismatch surfaces an explicit pause message.
+await runner.handle({
+  type: 'categoryStart',
+  urls: 'https://www.ozon.ru/category/rub1-951/\nhttps://www.ozon.ru/category/rub2-952/',
+  targetCount: 5,
+  minPrice: 50,
+  pageMinRub: 1200,
+  pageMaxRub: 30000,
+  confirmArchiveOverflow: true
+});
+batch = (await runner.handle({ type: 'categoryGet' })).batch;
+await runner.handle({
+  type: 'categoryPageDone',
+  batchId: batch.id,
+  attemptId: batch.attemptId,
+  categoryUrl: batch.stores[0].pageUrl,
+  complete: false,
+  reason: 'price_currency_mismatch'
+}, { tab: { id: batch.tabId, url: batch.stores[0].pageUrl } });
+batch = (await runner.handle({ type: 'categoryGet' })).batch;
+assert.equal(batch.status, 'paused');
+assert.equal(batch.stores[0].pagePriceStatus, 'unconfirmed');
+assert.match(batch.message, /不是卢布/);
+await runner.handle({
+  type: 'categorySample',
+  batchId: batch.id,
+  attemptId: batch.attemptId,
+  categoryUrl: batch.stores[0].pageUrl,
+  observedSkus: ['95101'],
+  pagePriceConfirmed: true,
+  products: [{ sku: '95101', name: 'RubOK', link: 'https://www.ozon.ru/product/p-95101', price: '120', qualified: true, shippingRisk: { type: 'clear' } }]
+}, { tab: { id: batch.tabId, url: batch.stores[0].pageUrl } }).catch(() => null);
+await runner.handle({ type: 'categoryResume' });
+batch = (await runner.handle({ type: 'categoryGet' })).batch;
+await runner.handle({
+  type: 'categorySample',
+  batchId: batch.id,
+  attemptId: batch.attemptId,
+  categoryUrl: batch.stores[0].pageUrl,
+  observedSkus: ['95101'],
+  pagePriceConfirmed: true,
+  products: [{ sku: '95101', name: 'RubOK', link: 'https://www.ozon.ru/product/p-95101', price: '120', qualified: true, shippingRisk: { type: 'clear' } }]
+}, { tab: { id: batch.tabId, url: batch.stores[0].pageUrl } });
+await runner.handle({ type: 'categoryStop' });
+const rubStoppedBatch = (await runner.handle({ type: 'categoryGet' })).batch;
+await runner.handle({
+  type: 'categoryContinueNextRound',
+  batchId: rubStoppedBatch.id,
+  mode: 'resume_all',
+  targetCount: 50,
+  perCategoryLimit: null,
+  minPrice: 100,
+  maxPrice: null,
+  pageMinRub: null,
+  pageMaxRub: null,
+  confirmArchiveOverflow: true
+});
+batch = (await runner.handle({ type: 'categoryGet' })).batch;
+assert.equal(batch.options.targetCount, 50);
+assert.equal(batch.options.minPrice, 100);
+assert.equal(batch.options.pageMinRub, undefined, 'cleared RUB filter must not inherit from prior batch');
+assert.equal(batch.options.pageMaxRub, undefined);
+assert.equal(batch.stores[0].pageUrl, 'https://www.ozon.ru/category/rub1-951/', 'cleared RUB filter strips currency_price cleanly');
+assert.ok(batch.stores[0].observedSkus.includes('95101'));
+assert.ok(batch.priorQualifiedSkuIds.includes('95101'));
+await runner.handle({ type: 'categoryStop' });
 console.log("category background runner tests passed");
