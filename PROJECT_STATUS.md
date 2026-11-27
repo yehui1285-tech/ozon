@@ -1,15 +1,15 @@
 # Ozon 当前状态
 
-更新时间：2026-11-27（工作台 V1.66 已完成本地构建、测试与提交 `72a0fa4`，内嵌扩展 `v0.6.84` 待 Codex 部署；双版独立包 `0.6.84` 已构建；无新增 D1 迁移；Ozon 仓库即将同步推送 `origin/main`）。
+更新时间：2026-11-27（用户确认工作台 V1.66 已成功部署上线，源码 `72a0fa4`，内嵌扩展 `v0.6.84`；双版独立包 `0.6.84` 已构建；无新增 D1 迁移；Ozon 仓库同步推送 `origin/main`）。
 用途：新对话快速续接。详细过程按需查 [CHANGELOG](CHANGELOG.md) 和 [历史入口](docs/history/README.md)，不把历史待办当作当前任务。
 
 ## 当前版本与结论
 
-- V1.66 / 0.6.84（工作台本地提交 `72a0fa4` 待 Codex 部署；双版独立包已构建，**无新增 D1 数据库迁移**）：优化 A 落地——打通工作台云端去重与常用类目任务跨电脑同步：
+- V1.66 / 0.6.84（用户确认工作台 V1.66 已上线，源码 `72a0fa4`，**无新增 D1 数据库迁移**；双版独立包已构建）：优化 A 落地——打通工作台云端去重与常用类目任务跨电脑同步：
   - 工作台云端查重与任务合并接口（`lib/ozon-pool/store.ts`、`lib/ozon-collector-model.ts`、`app/api/ozon/collector/route.ts`）：在设备 Bearer Token 鉴权接口新增 `poolSkus`（支持 `sinceRevision` 增量校验，按 `owner` 隔离返回商品池与历史 SKU 轻量列表，单表上限 `100000`）与 `categoryTasksSync`（读写 R2 `ozon/category-tasks/<ownerKey>/tasks-v1.json`，按任务配置更新时间、重置时间戳 `resetAt`、删除墓碑 `deletedTasks`、各电脑类目断点与 `priorQualifiedSkuIds` 并集智能合并，无变化跳过写入）。
   - 扩展端云端去重缓存与跨电脑任务同步（`workbench-bridge.js`、`category-background.js`、`background.js`、`category.html`、`category.js`）：连接工作台后在开扫前自动增量更新本机云端 SKU 缓存（15 秒节流 + 断网兜底沿用旧缓存），`categorySample` 同步校验本机与云端商品池/历史 SKU（命中分别标 `pool_duplicate` / `history_duplicate`）；常用任务保存/删除/重置及批次结束时双向同步合并断点，并在「常用类目任务」区提供 `#cloudSyncBar` 与「立即同步云端去重与任务」按钮。
   - 独立分享版零泄漏隔离（`build-standalone.mjs`）：独立版自动剥离 `workbench-bridge.js` 及全部 `wb*` 消息/定时器钩子，`category-background.js` 仅通过可选 `OzonWorkbenchCloud` 桥接，零工作台域名泄露、零外部账号依赖。
-  - 验证状态：Ozon `node --check`、全量 `npm.cmd test`（含 `test-category-background.mjs` 云端查重与任务状态导入导出测试、`test-standalone.mjs` 独立版剥离与保留断言）、`verify-project.ps1`、双版发布包（`ozon-erp-collector-extension.zip` SHA256 `dd7418d59d3a0f1e6906bf99c45b138d61a9813378f950d4c43862c9201d5e93`；独立版 `ozon-standalone-extension.zip` SHA256 `bcde58764a58680edcc8e0e13683a42cbb0628d14c0ede3bc4f134f739ced369`），以及 Workbench `sync-workbench-core --check`、`check-release-version.mjs`（`V1.65 → V1.66`）、`npm.cmd run build`、`ozon-collector.test.mjs`（9/9，含双电脑任务合并/重置/墓碑同步）、`ozon-product-pool.test.mjs`（含 `poolSkus` 增量与账号隔离）、`ozon-workbench-nav.test.mjs`（2/2）全部通过。真实浏览器下多电脑云端去重与常用任务同步待工作台 V1.66 上线后现场验收；验收完成后按约定进入优化 B。回滚备份 `_备份_20261127_v166_cloud_dedup_and_task_sync_before`。
+  - 验证状态：Ozon `node --check`、全量 `npm.cmd test`（含 `test-category-background.mjs` 云端查重与任务状态导入导出测试、`test-standalone.mjs` 独立版剥离与保留断言）、`verify-project.ps1`、双版发布包（`ozon-erp-collector-extension.zip` SHA256 `dd7418d59d3a0f1e6906bf99c45b138d61a9813378f950d4c43862c9201d5e93`；独立版 `ozon-standalone-extension.zip` SHA256 `bcde58764a58680edcc8e0e13683a42cbb0628d14c0ede3bc4f134f739ced369`），以及 Workbench `sync-workbench-core --check`、`check-release-version.mjs`（`V1.65 → V1.66`）、`npm.cmd run build`、`ozon-collector.test.mjs`（9/9，含双电脑任务合并/重置/墓碑同步）、`ozon-product-pool.test.mjs`（含 `poolSkus` 增量与账号隔离）、`ozon-workbench-nav.test.mjs`（2/2）全部通过。用户确认工作台 V1.66 已成功部署上线（未附站点 Revision / Deployment ID）；双版 `v0.6.84` 实机验收后，下一版按用户选择（选项 1）合并推进 **V1.67：防 OOM 治本（滚过卡片瘦身释内存 + 修复 `pending` 锁死提前翻页）+ 优化 B（续扫入口置顶 + Ozon 人民币模式网页预筛）**。回滚备份 `_备份_20261127_v166_cloud_dedup_and_task_sync_before`。
 - V1.65 / 0.6.83（用户确认工作台 V1.65 已上线，源码 `64d3a84`，**无新增 D1 数据库迁移**；双版独立包已构建）：修复类目续扫沿用旧卢布区间导致不滚动及货币冲突提示：
   - 续扫条件同步与表单回填（`category.js`）：打开/刷新页面时自动将当前批次 `options` 回填至顶部表单（用户手工修改后保留用户编辑不覆盖）；点击「仅扫剩余类目 / 继续扫下一轮」时显式携带全部表单筛选字段（清空卢布预筛即显式传 `pageMinRub: null, pageMaxRub: null` 剥离 `?currency_price=...`，避免沿用旧批次卢布区间）。
   - 非卢布货币冲突快速识别（`category-scanner.js`、`category-background.js`）：新增 `detectNonRubCurrency` 仅在侧栏 2 输入框价格组已渲染且含 `¥/$/€`（或无 `₽` 且列表为非卢布货币）时快速终止等待（3 次轮询内上报 `price_currency_mismatch`），暂停并给出清晰中文指引。
@@ -31,7 +31,7 @@
 
 ## 当前待验收与已知边界
 
-- 待现场真实验收：工作台 V1.66（`72a0fa4`）上线后实机验证 `v0.6.84` 多电脑云端 SKU 去重与常用任务同步、独立分享版 `0.6.84` 覆盖升级与隔离、以及 `v0.6.83` 清空卢布预筛续扫与人民币页面冲突提醒；优化 A 验收完成后推进优化 B。
+- 待现场真实验收：双版 `v0.6.84` 多电脑云端 SKU 去重、常用任务跨电脑同步与独立分享版覆盖升级、`v0.6.83` 清空卢布预筛续扫与人民币页面冲突提醒；工作台 V1.66 用户确认已上线。验收完成后进入下一版 V1.67（防 OOM 治本 + 优化 B）。
 - 本机测试环境未配置 Playwright 模块，隔离浏览器脚本（`test-category-browser.mjs`、`test-product-pool-browser.mjs`、`ozon-pool-browser.mjs` 等）未在本机运行；所有版本均未执行外部站点绕过或自动下单。
 - 工作边界：登录、CAPTCHA 和平台验证由用户处理；1688 自动搜款主线继续暂停（恢复需用户明确指示）；`AGENTS.md` 双线同步交付规则持续生效；常规 `_备份_*` 目录保留最新 5 份（保留 `_备份_20261125_v151_pool_before`）。
 
