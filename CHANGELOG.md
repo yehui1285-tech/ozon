@@ -1,5 +1,11 @@
 # CHANGELOG.md - Ozon 项目续接记录
 
+## 2026-11-28 - V1.70 / 0.6.88 商品池设备/批次总数口径修正与 4 列页面减法重构
+
+- 设备/批次总数联动口径（`lib/ozon-pool/store.ts`、`app/ozon/pool/pool-desk.tsx`、`product-pool-idb.js`、`product-pool.js`）：`readPoolPage` 新增 `scopeTotal`（选中设备或批次时统计对应范围内总件数，全局视角复用 `total`）与 `devices` 去重商品计数 `itemCount`；筛选「档口 / 公司」设备或单个批次时，`当前显示 X / Y 件` 的分母 `Y` 自动同步为对应设备/批次总数，避免继续混淆全库总数（**无新增 D1 迁移**）。独立分享版 `product-pool-idb.js` 同步返回单批次 `scopeTotal`。
+- 双版「商品池」UI 减法与 4 列瘦身（`pool-desk.tsx`、`pool.css`、`product-pool.html`、`product-pool.css`、`product-pool.js`）：① 统一单页头并移除重复标题及闲置文案；② 工作台「导入新批次」默认仅在有未入池新批次时展开，两版将「导出 CSV / 下载数据副本 / 历史 SKU 查重导入与导出」收进右上角 `数据与查重 ▾` 抽屉，取消底部常驻大卡片；③ 表格精简为 4 列（`商品`、`售价 / 指标`、`状态与备注`、`操作`），未改动行操作列保持简洁，点击整行联动右侧「单品快速核价」面板（核价面板逻辑保持不变）。
+- 打包与验证：回滚备份 `_备份_20261128_v170_pool_slim_and_scope_totals_before`（已轮换清理 `_备份_20261127_v166_cloud_dedup_and_task_sync_before`，保留 `_备份_20261125_v151_pool_before` 及共 5 份常规备份）。Ozon `node --check`、全量 `npm.cmd test`（含 `test-standalone.mjs` 新 4 列与抽屉断言）、`verify-project.ps1` 与双版构建（`ozon-erp-collector-extension.zip` SHA256 `06565B635ABC76800FD5EBB2CA2740EA74A6AAB9BA54225A3C149B15EF88FAD0`；独立版 `ozon-standalone-extension.zip` SHA256 `77E7028C821944CAC8B2174FA0135273235569C0ABECC8390C1B15084CB830EA`），以及 Workbench `sync-workbench-core --check`、`check-ozon-shared-core.mjs`、`check-release-version.mjs`（`V1.69 → V1.70`）、19/19 单测（含 `ozon-pool-d1.test.mjs` 设备/批次 `scopeTotal` 与 `itemCount` 用例）与 `npm.cmd run build` 全部通过（工作台本地提交 `eb9ba54`，待 Codex 部署上线及真实浏览器现场验收）。
+
 ## 2026-11-27 - V1.69 / 0.6.87 修复类目扫描几分钟回第 1 页循环刷新、补齐中文翻页并加入快进跳过（工作台已上线）
 
 - 根因与修复（`category-scanner.js`、`category-background.js`）：① 此前 `MAX_SCROLLS_BEFORE_RECYCLE = 160` 在未拿到下一页链接时约 4 分钟强行触发 `memory_recycle` 用原 `pageUrl` 新开标签页（等同刷回第 1 页），且新发现 1 个 SKU 就会把 `memoryRecycleCount` 清零形成无限重演；现移除滚动计数盲目重建，将真正应急 `memory_recycle` 阈值提高至 `0.85` / `1800MB`，`MAX_SAMPLES` / `MAX_SCROLLS` 提至 `1200`，并仅在 `next_page_available` 翻到真下一页时清零 `memoryRecycleCount`。② `pagination` 补齐 Ozon 中文 `下一页 / 下页`、`дальше`、`pagination-next` 及精确 `page = 当前页 + 1` 数字页码链接识别。③ 前台扫描新增 `fastSkip`：当可见商品均已在 `observedSkus` 且无新候选/待复查时，自动以 `1.25×` 视口高度、`350ms` 节拍快速越过已扫区域。

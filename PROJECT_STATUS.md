@@ -1,10 +1,14 @@
 # Ozon 当前状态
 
-更新时间：2026-11-27（用户确认工作台 V1.69 已成功部署上线，源码 `a4041bd`，内嵌扩展 `v0.6.87`；双版独立包 `0.6.87` 已构建；**无新增 D1 迁移**；Ozon 仓库同步推送 `origin/main`）。
+更新时间：2026-11-28（V1.70 / 0.6.88 已构建并同步工作台本地提交 `eb9ba54` 与独立分享版 `0.6.88`，**无新增 D1 迁移**；Ozon 仓库同步推送 `origin/main`，个人工作台 V1.70 待由 Codex 部署上线）。
 用途：新对话快速续接。详细过程按需查 [CHANGELOG](CHANGELOG.md) 和 [历史入口](docs/history/README.md)，不把历史待办当作当前任务。
 
 ## 当前版本与结论
 
+- V1.70 / 0.6.88（双版代码、构建、单测与工作台本地提交 `eb9ba54` 已完成，**无新增 D1 数据库迁移**；工作台待由 Codex 部署上线）：商品池设备/批次总数口径修正与页面减法重构：
+  - 设备/批次总数联动口径（`lib/ozon-pool/store.ts`、`app/ozon/pool/pool-desk.tsx`、`product-pool-idb.js`、`product-pool.js`）：`readPoolPage` 新增 `scopeTotal`（按所选设备或批次统计总件数，全局选「全部设备 / 批次」时等于全库 `total`）及去重后的 `devices` `itemCount`；切到某台电脑设备（如「档口-edge」「公司」）或单批次时，`当前显示 X / Y 件` 的分母 `Y` 自动对应当前设备/批次总量，下拉项同步显示各设备批次数与去重商品数；独立分享版同步支持单批次分母联动。
+  - 双版「商品池」4 列瘦身与抽屉收口（`pool-desk.tsx`、`pool.css`、`product-pool.html`、`product-pool.css`、`product-pool.js`）：① 保留右侧「单品快速核价」面板不变；② 合并重复页面大标题，去除闲置状态与冗余文案；③ 工作台「导入新批次」仅在存在待入池新批次时自动亮条展开（否则收起并可点击随时展开），两版将「导出 CSV / 下载备份 / 历史 SKU 查重导入与导出」收进右上角 `数据与查重 ▾` 抽屉；④ 表格精简为 4 列（`商品`、`售价 / 指标`、`状态与备注`、`操作`），未改动行操作列保持干净，单行点击整行即可联动右侧快速核价；同步更新 `test-standalone.mjs`。
+  - 验证状态：Ozon `node --check`、全量 `npm.cmd test`（含 `test-standalone.mjs` 新 4 列与抽屉断言）、`verify-project.ps1`、双版构建（`ozon-erp-collector-extension.zip` SHA256 `06565B635ABC76800FD5EBB2CA2740EA74A6AAB9BA54225A3C149B15EF88FAD0`；独立版 `ozon-standalone-extension.zip` SHA256 `77E7028C821944CAC8B2174FA0135273235569C0ABECC8390C1B15084CB830EA`），以及 Workbench `sync-workbench-core --check`、`check-ozon-shared-core.mjs`、`check-release-version.mjs`（`V1.69 → V1.70`）、19/19 单测（含 `ozon-pool-d1.test.mjs` 设备/批次 `scopeTotal` 与 `itemCount` 用例）与 `npm.cmd run build` 全部通过。工作台 V1.70 线上部署与真实浏览器现场验收待完成。回滚备份 `_备份_20261128_v170_pool_slim_and_scope_totals_before`。
 - V1.69 / 0.6.87（用户确认工作台 V1.69 已上线，源码 `a4041bd`，**无新增 D1 数据库迁移**；双版独立包已构建）：彻底修复类目扫描几分钟后刷回第 1 页重头再滚的问题：
   - 修复中文翻页识别与杜绝盲目第 1 页刷新（`category-scanner.js`、`category-background.js`）：① `pagination` 补齐中文 `下一页 / 下页`、`дальше`、`pagination-next` 及精确 `page = 当前页 + 1` 数字页码链接识别；② 删除导致约 4 分钟必触发第 1 页重开标签页的 `MAX_SCROLLS_BEFORE_RECYCLE = 160` 强制阈值，将兜底 `memory_recycle` 内存门槛提高至 `0.85` / `1800MB`，并将 `MAX_SAMPLES` / `MAX_SCROLLS` 提至 `1200`；③ `category-background.js` 在 `categorySample` 有新 SKU 时不再清零 `memoryRecycleCount`（仅 `next_page_available` 翻至真下一页才清零），断绝死循环；④ 新增前台 `fastSkip` 快进跳过（当当前屏全为已检查过的旧 SKU 时，步长提至 `1.25×` 视口高、等待缩至 `350ms`）。
   - 验证状态：Ozon `node --check`、全量 `npm.cmd test`（含 `test-category-scanner.mjs` 中文 `下一页`/纯数字页码/高滚动不误触发 `memory_recycle`/前台快进，与 `test-category-background.mjs` 单次新 SKU 不重置重建计数用例）、`verify-project.ps1`、双版构建（`ozon-erp-collector-extension.zip` SHA256 `5AB438C2E986CBB6E9992C241EF9BF3B3C07ADD3546C503DF7EB949854BF01EB`；独立版 `ozon-standalone-extension.zip` SHA256 `156F7D01E36E77BA2E41CF4934102401336C4589F53954343FFF4651B57E37AB`），以及 Workbench `sync-workbench-core --check`、`check-ozon-shared-core.mjs`、`check-release-version.mjs`（`V1.68 → V1.69`）、12/12 单测与 `npm.cmd run build` 全部通过。用户确认工作台 V1.69 已成功部署上线（未附站点 Revision / Deployment ID）；真实 Ozon 页面连续扫描与双版 `0.6.87` 覆盖升级待现场验收。回滚备份 `_备份_20261127_v169_stop_p1_refresh_and_cn_pagination_before`。
@@ -43,7 +47,7 @@
 
 ## 当前待验收与已知边界
 
-- 待现场真实验收：工作台 V1.69（`a4041bd`）已上线，待在真实 Ozon 页面覆盖加载 `v0.6.87` / 独立分享版 `0.6.87` 后验收中文翻页接续、无 4 分钟回第 1 页重载、快进跳过已查区域及瘦身后的「类目选品」与方案 A 价格筛选区间。
+- 待现场真实验收：工作台 V1.70（`eb9ba54`）待由 Codex 部署上线；上线并加载 `v0.6.88` / 独立分享版 `0.6.88` 后，待在真实浏览器验收商品池设备/批次分母联动、4 列精简排版、「数据与查重 ▾」抽屉与「导入新批次」折叠提醒，以及 V1.69 中文翻页接续长时扫描表现。
 - 本机测试环境未配置 Playwright 模块，隔离浏览器脚本（`test-category-browser.mjs`、`test-product-pool-browser.mjs`、`ozon-pool-browser.mjs` 等）未在本机运行；所有版本均未执行外部站点绕过或自动下单。
 - 工作边界：登录、CAPTCHA 和平台验证由用户处理；1688 自动搜款主线继续暂停（恢复需用户明确指示）；`AGENTS.md` 双线同步交付规则持续生效；常规 `_备份_*` 目录保留最新 5 份（保留 `_备份_20261125_v151_pool_before`）。
 

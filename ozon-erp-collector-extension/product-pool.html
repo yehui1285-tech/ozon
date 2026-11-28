@@ -8,19 +8,93 @@
 </head>
 <body>
   <main>
-    <header><div><h1>商品池</h1><p>跨批次保留已采集商品，按 SKU 去重，管理人工找品进度。</p></div><a href="batch.html">批量店铺扫描</a></header>
     <section class="panel">
-      <div class="summary"><div>商品总数<strong id="total">0</strong></div><div>待找品<strong id="newCount">0</strong></div><div>历史查重 SKU<strong id="historyCount">0</strong></div></div>
-      <div class="toolbar"><input id="query" type="search" placeholder="搜索 SKU、名称、类目、店铺" aria-label="搜索商品">
-        <select id="filter" aria-label="处理状态"><option value="pending" selected>待处理（隐藏已复核、淘汰）</option><option value="">全部状态</option></select><select id="source" aria-label="来源筛选"><option value="">全部来源</option><option value="category">类目选品</option><option value="store">店铺扫描</option></select><select id="batchFilter" aria-label="批次筛选"><option value="">全部批次</option></select><select id="sort" aria-label="排序"><option value="recent">最近发现优先</option><option value="oldest">最早发现优先</option><option value="savedRecent">最近保存优先</option><option value="savedOldest">最早保存优先</option></select><label class="image-toggle"><input id="showImages" type="checkbox" checked> 显示图片</label><label class="select-page-pill"><input id="selectPage" type="checkbox"> 全选本页</label><button id="refresh">刷新</button><button id="export" class="primary">导出商品池 CSV</button><button id="backup">下载数据备份</button></div>
-      <p>保存状态与备注后会保存在当前浏览器。切换为“全部状态”可以查看已经处理的商品。勾选商品后底部浮出批量操作栏。</p>
-      <p id="message" role="status"></p>
-      <div class="toolbar batch-tools pool-batch-float" id="batchFloat" hidden><strong id="selectionCount">已选 0 件</strong><button id="saveSelected" class="primary">批量保存已修改项</button><button id="rejectSelected" class="danger">批量淘汰所选</button><button id="clearSelectionBtn" class="ghost" type="button">取消选择</button></div>
-      <div class="table"><table><thead><tr><th class="check-col"></th><th>SKU / 商品</th><th>售价 · 月销 · 重量</th><th>来源 / 最近发现</th><th>处理状态</th><th>备注</th><th class="operation-col">操作</th></tr></thead><tbody id="rows"></tbody></table></div>
-      <div class="toolbar"><button id="previous">上一页</button><span id="page"></span><button id="next">下一页</button></div>
-    </section>
-    <section class="panel"><h2>历史 SKU 查重</h2><p>粘贴已处理或已上架商品 SKU，按行或逗号分隔。命中历史 SKU 的新商品不会重复入池。</p>
-      <textarea id="history" rows="5" placeholder="每行一个 SKU" aria-label="历史SKU"></textarea><div class="toolbar"><button id="importHistory" class="primary">导入历史 SKU</button><button id="exportHistory">导出历史 SKU</button></div>
+      <div class="pool-header">
+        <div class="pool-title-group">
+          <h1>商品池 <span id="total" class="count-pill">0</span></h1>
+          <span class="pool-sub-stats">待找品 <strong id="newCount">0</strong> · 历史查重 <strong id="historyCount">0</strong></span>
+        </div>
+        <div class="pool-header-actions">
+          <button id="toggleDataDrawer" type="button">数据与查重 ▾</button>
+          <button id="refresh" type="button">刷新</button>
+          <a class="header-link" href="batch.html">批量扫描</a>
+        </div>
+      </div>
+
+      <div id="dataDrawer" class="data-drawer" hidden>
+        <div class="data-drawer-top">
+          <span class="data-drawer-title">导出备份与历史 SKU 查重（命中历史 SKU 的新商品不会重复入池）</span>
+          <div class="data-drawer-btns">
+            <button id="export" type="button">导出商品池 CSV</button>
+            <button id="backup" type="button">下载数据备份</button>
+            <button id="exportHistory" type="button">导出历史 SKU</button>
+          </div>
+        </div>
+        <div class="data-drawer-grid">
+          <textarea id="history" rows="3" placeholder="粘贴已处理或已上架的 SKU（每行或逗号分隔）" aria-label="历史SKU"></textarea>
+          <button id="importHistory" class="primary" type="button">导入历史 SKU</button>
+        </div>
+      </div>
+
+      <div class="toolbar filter-row">
+        <input id="query" type="search" placeholder="搜索 SKU、名称、类目、店铺" aria-label="搜索商品">
+        <select id="filter" aria-label="处理状态">
+          <option value="pending" selected>待处理（隐藏已复核、淘汰）</option>
+          <option value="">全部状态</option>
+        </select>
+        <select id="source" aria-label="来源筛选">
+          <option value="">全部来源</option>
+          <option value="category">类目选品</option>
+          <option value="store">店铺扫描</option>
+        </select>
+        <select id="batchFilter" aria-label="批次筛选">
+          <option value="">全部批次</option>
+        </select>
+        <select id="sort" aria-label="排序">
+          <option value="recent">最近发现优先</option>
+          <option value="oldest">最早发现优先</option>
+          <option value="savedRecent">最近保存优先</option>
+          <option value="savedOldest">最早保存优先</option>
+        </select>
+      </div>
+
+      <div class="meta-bar">
+        <div class="meta-bar-left">
+          <label class="select-page-pill"><input id="selectPage" type="checkbox"> 全选本页</label>
+          <span class="scope-counter">当前显示 <strong id="matchedCount">0</strong> / <strong id="scopeTotalCount">0</strong> 件<span id="scopeBadge" class="scope-badge" hidden></span></span>
+          <span id="message" role="status"></span>
+        </div>
+        <div class="meta-bar-right">
+          <label class="image-toggle"><input id="showImages" type="checkbox" checked> 显示图片</label>
+        </div>
+      </div>
+
+      <div class="toolbar batch-tools pool-batch-float" id="batchFloat" hidden>
+        <strong id="selectionCount">已选 0 件</strong>
+        <button id="saveSelected" class="primary" type="button">批量保存已修改项</button>
+        <button id="rejectSelected" class="danger" type="button">批量淘汰所选</button>
+        <button id="clearSelectionBtn" class="ghost" type="button">取消选择</button>
+      </div>
+
+      <div class="table">
+        <table>
+          <thead>
+            <tr>
+              <th>商品</th>
+              <th>售价 / 指标</th>
+              <th>状态与备注</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+
+      <div class="toolbar pager-bar">
+        <button id="previous" type="button">上一页</button>
+        <span id="page"></span>
+        <button id="next" type="button">下一页</button>
+      </div>
     </section>
   </main>
   <script src="store-scanner-core.js"></script><script src="product-pool-core.js"></script><script src="product-pool.js"></script>

@@ -269,7 +269,8 @@
         matchingPage(listing, search, opts), collectBatches(search),
       ]);
       const items = await Promise.all(found.keys.map(sku => request(products.get(sku))));
-      return { items, total, matched: found.matched, newCount, historyCount, offset: found.offset, limit: opts.limit, batches };
+      const scopeTotal = opts.batchId ? (batches.find(b => b.id === opts.batchId)?.count ?? 0) : total;
+      return { items, total, scopeTotal, matched: found.matched, newCount, historyCount, offset: found.offset, limit: opts.limit, batches };
     });
   }
 

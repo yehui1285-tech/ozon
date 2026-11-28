@@ -21,6 +21,14 @@ assert.match(read("background.js"),/chrome\.runtime\.getURL\("pricing\.html"\)/)
 assert.match(read("pricing-app.js"),/deliverProductToPricing/);
 assert.match(read("pricing.html"),/src="pricing-app\.js"/);
 assert.match(read("product-pool.html"),/quick-pricing-panel/);
+assert.match(read("product-pool.html"),/id="toggleDataDrawer"/);
+assert.match(read("product-pool.html"),/id="dataDrawer"/);
+assert.match(read("product-pool.html"),/id="matchedCount"/);
+assert.match(read("product-pool.html"),/id="scopeTotalCount"/);
+assert.match(read("product-pool.html"),/id="scopeBadge"/);
+assert.match(read("product-pool.html"),/id="batchFilter"/);
+assert.match(read("product-pool.html"),/<th>状态与备注<\/th>/);
+assert.doesNotMatch(read("product-pool.html"),/<section class="panel"><h2>历史 SKU 查重<\/h2>/);
 assert.match(read("product-pool.html"),/quick-pricing-local\.js/);
 assert.match(read("product-pool.html"),/quick-pricing-core\.js/);
 assert.match(read("pricing-app.js"),/quickPricingPatch/);
