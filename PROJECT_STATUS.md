@@ -1,16 +1,16 @@
 # Ozon 当前状态
 
-更新时间：2026-11-28（工作台 V1.71 已完成本地构建与提交 `6a3663c`，内嵌扩展 `v0.6.89`；独立分享版 `0.6.89` 已构建；**无新增 D1 迁移**；Ozon 仓库同步推送 `origin/main`；工作台线上部署与真实浏览器实机验收待完成）。
+更新时间：2026-11-28（用户确认工作台 V1.71 已成功部署上线，源码 `6a3663c`，内嵌扩展 `v0.6.89`；独立分享版 `0.6.89` 已构建；**无新增 D1 迁移**；Ozon 仓库同步推送 `origin/main`）。
 用途：新对话快速续接。详细过程按需查 [CHANGELOG](CHANGELOG.md) 和 [历史入口](docs/history/README.md)，不把历史待办当作当前任务。
 
 ## 当前版本与结论
 
-- V1.71 / 0.6.89（双版编码与打包验证通过，工作台本地提交 `6a3663c`，**无新增 D1 数据库迁移**；工作台 V1.71 线上部署与实机验收待完成）：商品池快速核价池内自动预填、按需同源黑标测试抓取、主图高清扫码大图及空批次默认隐藏：
+- V1.71 / 0.6.89（用户确认工作台 V1.71 已上线，源码 `6a3663c`，**无新增 D1 数据库迁移**；双版独立包已构建）：商品池快速核价池内自动预填、按需同源黑标测试抓取、主图高清扫码大图及空批次默认隐藏：
   - 商品池直通快速核价（`quick-pricing-core.js`、`quick-pricing-panel.js`、`quick-pricing-panel.css`、`quick-pricing-model.ts`、`quick-pricing-local.js`、`build-standalone.mjs`）：① 新增 `prefillFromPoolItem` 与 `createRow`，选中无核价记录的人民币商品（类目选品/批量店铺扫描通用）时自动预填池内绿标价（比对卡片价与跟卖最低价取低并标明来源）、对应档位佣金%及按长宽高重量自动匹配的 CEL 国际运费，下方展示只读「保底参考（黑标=绿标）18% 上限」（不自动写入黑标框）；非人民币商品明确提示跳过预填；② 补齐真实黑标后支持在右侧面板直接新建保存并标记复核，不再强制先到详情页手工推送（仍 100% 保留原有「打开 Ozon 商品页」与详情页插件推送）。
   - 按需「读取同源黑标价（测试）」按钮（`workbench-pool-bridge.js`、`manifest.json`、`pool-desk.tsx`、`quick-pricing-local.js`）：复用现有 `readOzonTaskPricing` 链路（无更低跟卖直接抓本品黑标，存在更低跟卖自动悬停跟卖弹窗跳转最低价跟卖页抓同源真实黑标），独立分享版直接可用，工作台通过仅限 `/ozon/pool*` 的极窄桥接脚本调用本机扩展 `v0.6.89+`；`build-standalone.mjs` 自动剥离个人工作台桥接与域名。
   - 主图高清放大与扫码找同款优化（`product-pool-core.js`、`pool-desk.tsx`、`pool.css`、`product-pool.js`、`product-pool.css`）：新增 `highResImageUrl`（自动将 Ozon `/wc\d+/` / `/c\d+/` 升档为 `/wc1000/`，失败无缝回退原图，不增存储）；悬停缩略图改为 `340 × 340 px` 视口防裁切悬浮预览；点击表格缩略图或右侧核价主图居中弹出 `560 × 560 px` 干净白底高清扫码大图（`Esc` 或点击空白关闭）。
   - 扫描批次空批次隐藏（`pool-desk.tsx`、`product-pool.js`）：工作台 `#poolBatchSelect` 与独立版批次筛选默认过滤 `0 件` 空批次，待入池非空批次置顶排序。
-  - 验证状态：Ozon `node --check`、全量 `verify-project.ps1`（含扩展 `test-quick-pricing.mjs` 预填/新建/测试抓取/高清图与 `test-standalone.mjs` 本地新建断言）、`test-1688-extension.mjs`、`test-pinduoduo-agent.mjs`、双版打包（`ozon-erp-collector-extension.zip` SHA256 `544D287DEEF180B979DF75A91ACE9792271AE938D27691C618947476745792DC`；独立版 `ozon-standalone-extension.zip` SHA256 `6AF6F923E0B36A573289C01F3D06B1ED998EAD7248BD18FF290DB3A2C5516265`），以及 Workbench `sync-workbench-core --check`、`check-ozon-shared-core.mjs`、`npx tsc --noEmit`、`check-release-version.mjs`（`V1.70 → V1.71`）、全部 `tests/*.test.mjs`（273/273）与 `npm.cmd run build`（`vinext build`）均已通过。待完成：将工作台提交 `6a3663c` 部署上线，并在真实浏览器覆盖更新扩展 `v0.6.89` / 独立版 `0.6.89` 现场验收。回滚备份 `_备份_20261128_v171_quick_pricing_prefill_black_price_lightbox_before`。
+  - 验证状态：Ozon `node --check`、全量 `verify-project.ps1`（含扩展 `test-quick-pricing.mjs` 预填/新建/测试抓取/高清图与 `test-standalone.mjs` 本地新建断言）、`test-1688-extension.mjs`、`test-pinduoduo-agent.mjs`、双版打包（`ozon-erp-collector-extension.zip` SHA256 `544D287DEEF180B979DF75A91ACE9792271AE938D27691C618947476745792DC`；独立版 `ozon-standalone-extension.zip` SHA256 `6AF6F923E0B36A573289C01F3D06B1ED998EAD7248BD18FF290DB3A2C5516265`），以及 Workbench `sync-workbench-core --check`、`check-ozon-shared-core.mjs`、`npx tsc --noEmit`、`check-release-version.mjs`（`V1.70 → V1.71`）、全部 `tests/*.test.mjs`（273/273）与 `npm.cmd run build`（`vinext build`）均已通过。用户确认工作台 V1.71 已成功部署上线（未附站点 Revision / Deployment ID）；真实浏览器覆盖更新扩展 `v0.6.89` / 独立版 `0.6.89` 现场验收待完成。回滚备份 `_备份_20261128_v171_quick_pricing_prefill_black_price_lightbox_before`。
 - V1.70 / 0.6.88（用户确认工作台 V1.70 已上线，源码 `eb9ba54`，**无新增 D1 数据库迁移**；双版独立包已构建）：商品池设备/批次总数口径修正与页面减法重构：
   - 设备/批次总数联动口径（`lib/ozon-pool/store.ts`、`app/ozon/pool/pool-desk.tsx`、`product-pool-idb.js`、`product-pool.js`）：`readPoolPage` 新增 `scopeTotal`（按所选设备或批次统计总件数，全局选「全部设备 / 批次」时等于全库 `total`）及去重后的 `devices` `itemCount`；切到某台电脑设备（如「档口-edge」「公司」）或单批次时，`当前显示 X / Y 件` 的分母 `Y` 自动对应当前设备/批次总量，下拉项同步显示各设备批次数与去重商品数；独立分享版同步支持单批次分母联动。
   - 双版「商品池」4 列瘦身与抽屉收口（`pool-desk.tsx`、`pool.css`、`product-pool.html`、`product-pool.css`、`product-pool.js`）：① 保留右侧「单品快速核价」面板不变；② 合并重复页面大标题，去除闲置状态与冗余文案；③ 工作台「导入新批次」仅在存在待入池新批次时自动亮条展开（否则收起并可点击随时展开），两版将「导出 CSV / 下载备份 / 历史 SKU 查重导入与导出」收进右上角 `数据与查重 ▾` 抽屉；④ 表格精简为 4 列（`商品`、`售价 / 指标`、`状态与备注`、`操作`），未改动行操作列保持干净，单行点击整行即可联动右侧快速核价；同步更新 `test-standalone.mjs`。
@@ -53,7 +53,7 @@
 
 ## 当前待验收与已知边界
 
-- 待现场真实验收：工作台 V1.71（`6a3663c`）待由 Codex 部署上线；待在真实浏览器覆盖加载 `v0.6.89` / 独立分享版 `0.6.89` 后验收快速核价预填与新建、按需「读取同源黑标价（测试）」跳转最低价跟卖页、主图 340px 悬停 / 560px 扫码大图及空批次默认隐藏。
+- 待现场真实验收：工作台 V1.71（`6a3663c`）已上线，待在真实浏览器覆盖加载 `v0.6.89` / 独立分享版 `0.6.89` 后验收快速核价预填与新建、按需「读取同源黑标价（测试）」跳转最低价跟卖页、主图 340px 悬停 / 560px 扫码大图及空批次默认隐藏。
 - 本机测试环境未配置 Playwright 模块，隔离浏览器脚本（`test-category-browser.mjs`、`test-product-pool-browser.mjs`、`ozon-pool-browser.mjs` 等）未在本机运行；所有版本均未执行外部站点绕过或自动下单。
 - 工作边界：登录、CAPTCHA 和平台验证由用户处理；1688 自动搜款主线继续暂停（恢复需用户明确指示）；`AGENTS.md` 双线同步交付规则持续生效；常规 `_备份_*` 目录保留最新 5 份（保留 `_备份_20261125_v151_pool_before`）。
 
