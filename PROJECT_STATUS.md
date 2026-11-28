@@ -1,10 +1,14 @@
 # Ozon 当前状态
 
-更新时间：2026-11-28（用户确认工作台 V1.71 已成功部署上线，源码 `6a3663c`，内嵌扩展 `v0.6.89`；独立分享版 `0.6.89` 已构建；**无新增 D1 迁移**；Ozon 仓库同步推送 `origin/main`）。
+更新时间：2026-11-28（工作台 V1.72 已完成本地构建与提交 `73eba34`，内嵌扩展 `v0.6.90`；独立分享版 `0.6.90` 已构建；**无新增 D1 迁移**；Ozon 仓库同步推送 `origin/main`；工作台 V1.72 线上部署及扩展 `0.6.90` 实机验收待完成）。
 用途：新对话快速续接。详细过程按需查 [CHANGELOG](CHANGELOG.md) 和 [历史入口](docs/history/README.md)，不把历史待办当作当前任务。
 
 ## 当前版本与结论
 
+- V1.72 / 0.6.90（双版编码与打包验证通过，工作台本地提交 `73eba34`，**无新增 D1 数据库迁移**；工作台 V1.72 线上部署及实机验收待完成）：解决工作台路由切换/重装扩展后需按 `F5` 的桥接注入 Bug，并提速「读取同源黑标价（测试）」：
+  - 免 `F5` 全站 SPA 路由与重装自动补注桥接（`manifest.json`、`workbench-pool-bridge.js`、`workbench-bridge.js`、`background.js`）：① 将 `workbench-pool-bridge.js` 挂载放宽至工作台域名根目录、提前至 `document_start` 并做幂等保护，每次收到消息时再动态校验 `location.pathname.startsWith("/ozon/pool")`，从工作台首页/工具箱/扫描页 SPA 切入商品池立即可用；② `onStartup`/`onInstalled` 新增 `wbInjectPoolBridgeToOpenTabs()` 向已打开的工作台标签页自动补注桥接脚本（`build-standalone.mjs` 自动随 `wbSettings()` 钩子剥离，独立版零残留）。
+  - 「读取同源黑标价（测试）」提速（`quick-pricing-core.js`、`content.js`、`background.js`、`pool-desk.tsx`）：① 去掉 `readOzonTaskPricing` 重复导航等待，紧缩导航/注入/黑标轮询与防抖节拍（`250/300ms → 100/120ms`，`fastMode` 连稳 `2` 次）；② 当商品池商品确认无更低跟卖价（`source === 'page'` 且池内佣金与尺寸重量完整）时传递 `poolFastLane: true`，优先直接读取 Ozon 官方价格区 `[data-widget="webPrice"]` 原生黑标并复核实时绿标（`350ms` 容错窗口防止遗漏刚渲染出的更低跟卖），命中即秒回；存在更低跟卖时仍完整走跟卖弹窗 → 同源跟卖详情页流程，不牺牲同源准确度。
+  - 验证状态：Ozon `node --check`、全量 `verify-project.ps1`（含扩展 `test-quick-pricing.mjs` `fastMode`/`poolFastLane` 用例与 `test-standalone.mjs`）、`test-1688-extension.mjs`、`test-pinduoduo-agent.mjs`、双版打包（`ozon-erp-collector-extension.zip` SHA256 `59EFA101C1B96F61D7228316113A24D3FA0ACCC8DD2BD3C4C3EE4B52F5A6A6E5`；独立版 `ozon-standalone-extension.zip` SHA256 `A26233C67E98CA6A8BE0E920D94F55B8E8D1FC06241C0867F658FAB41F4CA3FF`），以及 Workbench `sync-workbench-core --check`、`check-ozon-shared-core.mjs`、`npx tsc --noEmit`、`check-release-version.mjs`（`V1.71 → V1.72`）、273/273 单元测试与 `npm.cmd run build`（`vinext build`）均通过。待完成：将工作台 `73eba34` 部署上线，并在真实浏览器加载 `0.6.90` 验收免 `F5` 切页抓取与提速体感。回滚备份 `_备份_20261128_v172_pool_bridge_spa_and_black_price_speedup_before`。
 - V1.71 / 0.6.89（用户确认工作台 V1.71 已上线，源码 `6a3663c`，**无新增 D1 数据库迁移**；双版独立包已构建）：商品池快速核价池内自动预填、按需同源黑标测试抓取、主图高清扫码大图及空批次默认隐藏：
   - 商品池直通快速核价（`quick-pricing-core.js`、`quick-pricing-panel.js`、`quick-pricing-panel.css`、`quick-pricing-model.ts`、`quick-pricing-local.js`、`build-standalone.mjs`）：① 新增 `prefillFromPoolItem` 与 `createRow`，选中无核价记录的人民币商品（类目选品/批量店铺扫描通用）时自动预填池内绿标价（比对卡片价与跟卖最低价取低并标明来源）、对应档位佣金%及按长宽高重量自动匹配的 CEL 国际运费，下方展示只读「保底参考（黑标=绿标）18% 上限」（不自动写入黑标框）；非人民币商品明确提示跳过预填；② 补齐真实黑标后支持在右侧面板直接新建保存并标记复核，不再强制先到详情页手工推送（仍 100% 保留原有「打开 Ozon 商品页」与详情页插件推送）。
   - 按需「读取同源黑标价（测试）」按钮（`workbench-pool-bridge.js`、`manifest.json`、`pool-desk.tsx`、`quick-pricing-local.js`）：复用现有 `readOzonTaskPricing` 链路（无更低跟卖直接抓本品黑标，存在更低跟卖自动悬停跟卖弹窗跳转最低价跟卖页抓同源真实黑标），独立分享版直接可用，工作台通过仅限 `/ozon/pool*` 的极窄桥接脚本调用本机扩展 `v0.6.89+`；`build-standalone.mjs` 自动剥离个人工作台桥接与域名。
@@ -53,7 +57,7 @@
 
 ## 当前待验收与已知边界
 
-- 待现场真实验收：工作台 V1.71（`6a3663c`）已上线，待在真实浏览器覆盖加载 `v0.6.89` / 独立分享版 `0.6.89` 后验收快速核价预填与新建、按需「读取同源黑标价（测试）」跳转最低价跟卖页、主图 340px 悬停 / 560px 扫码大图及空批次默认隐藏。
+- 待现场真实验收：工作台 V1.72（`73eba34`）待部署上线；待在真实浏览器覆盖加载 `v0.6.90` / 独立分享版 `0.6.90` 后验收免 `F5` 从首页/其他页面切入 `/ozon/pool` 直接点击「读取同源黑标价（测试）」的成功率与耗时表现。
 - 本机测试环境未配置 Playwright 模块，隔离浏览器脚本（`test-category-browser.mjs`、`test-product-pool-browser.mjs`、`ozon-pool-browser.mjs` 等）未在本机运行；所有版本均未执行外部站点绕过或自动下单。
 - 工作边界：登录、CAPTCHA 和平台验证由用户处理；1688 自动搜款主线继续暂停（恢复需用户明确指示）；`AGENTS.md` 双线同步交付规则持续生效；常规 `_备份_*` 目录保留最新 5 份（保留 `_备份_20261125_v151_pool_before`）。
 

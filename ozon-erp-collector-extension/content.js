@@ -280,7 +280,7 @@ async function waitForOriginalBlackPrice(pageGreen, timeoutMs = 4500) {
   while (Date.now() - startedAt < timeoutMs) {
     const value = readOriginalBlackPrice(pageGreen);
     if (value > 0) return value;
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
   return 0;
 }
@@ -330,7 +330,7 @@ async function findLowestCompetitorProduct(product, timeoutMs = 5500) {
     if (trigger) hoverElement(trigger);
     const selected = blackPriceCore.chooseCompetitorRow(visibleCompetitorRows(), product.minCompetitorPrice);
     if (selected) return selected;
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
   return null;
 }
@@ -508,6 +508,10 @@ function startBlackPriceLookup(product) {
 async function collectOzonTaskPricingSnapshot(hints = {}) {
   const expectedSku = String(hints.sku || "").trim();
   const trustedQualified = hints.trustedQualified === true;
+  const fastMode = hints.fastMode === true;
+  const poolFastLane = fastMode && hints.poolFastLane === true;
+  const pollMs = fastMode ? 100 : 250;
+  const requiredStable = fastMode ? 2 : 3;
   const timeoutMs = Math.min(15000, Math.max(2000, Number(hints.timeoutMs || 6000)));
   const startedAt = Date.now();
   let product = null;
@@ -519,6 +523,7 @@ async function collectOzonTaskPricingSnapshot(hints = {}) {
   let lastObservedSku = "";
   let rejectedFingerprint = "";
   let rejectedStableCount = 0;
+  let nativeReadyAt = 0;
   const applySnapshotFallback = (current) => {
     const fallback = hints?.snapshotFallback;
     const currentSku = String(current?.sku || "").trim();
@@ -556,7 +561,8 @@ async function collectOzonTaskPricingSnapshot(hints = {}) {
     if (expectedSku && lastObservedSku && lastObservedSku !== expectedSku) {
       stableCount = 0;
       stableFingerprint = "";
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      nativeReadyAt = 0;
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
       continue;
     }
     if (!trustedQualified && product.erpLoaded && product.selectionState === "rejected") {
@@ -574,7 +580,7 @@ async function collectOzonTaskPricingSnapshot(hints = {}) {
           product,
         };
       }
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
       continue;
     }
     rejectedStableCount = 0;
@@ -600,12 +606,40 @@ async function collectOzonTaskPricingSnapshot(hints = {}) {
       ]);
       stableCount = fingerprint === stableFingerprint ? stableCount + 1 : 1;
       stableFingerprint = fingerprint;
-      if (stableCount >= 3) break;
+      if (fastMode ? stableCount >= 2 : stableCount >= 3) break;
     } else {
       stableCount = 0;
       stableFingerprint = "";
+      if (poolFastLane && trustedQualified && hints.snapshotFallback && pagePrice > 0 && source === "page" && product.selectionState !== "rejected") {
+        const liveBlack = readOriginalBlackPrice(pagePrice);
+        const urlSku = String(location.pathname.match(/-(\d+)\/?$/)?.[1] || "");
+        const skuConfirmed = !expectedSku || lastObservedSku === expectedSku || (!lastObservedSku && urlSku === expectedSku);
+        if (liveBlack > 0 && skuConfirmed) {
+          if (!nativeReadyAt) nativeReadyAt = Date.now();
+          if (Date.now() - nativeReadyAt >= 350) {
+            const fastProduct = applySnapshotFallback({
+              ...product,
+              sku: lastObservedSku || expectedSku,
+              competitorPriceResolved: true,
+              selectionQualified: true,
+              qualificationSource: "batch_store_scan",
+            });
+            if (fastProduct.commissionOptions?.length >= 3 && fastProduct.lengthCm > 0 && fastProduct.widthCm > 0 && fastProduct.heightCm > 0 && fastProduct.weightKg > 0) {
+              return {
+                product: fastProduct,
+                pageGreenPrice: pagePrice,
+                minCompetitorPrice: 0,
+                effectiveGreenPrice: pagePrice,
+                source: "page",
+                sourceUrl: location.href,
+                currentBlackPrice: liveBlack,
+              };
+            }
+          }
+        }
+      }
     }
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
   }
   if (!trustedQualified && product?.erpLoaded && product?.selectionState === "rejected") {
     return {
@@ -626,7 +660,7 @@ async function collectOzonTaskPricingSnapshot(hints = {}) {
   if (expectedSku && lastObservedSku && lastObservedSku !== expectedSku) {
     throw new Error(`${Math.ceil(timeoutMs / 1000)}秒内未切换到任务商品：任务${expectedSku}，页面${lastObservedSku}`);
   }
-  if (stableCount < 3 || source === "none") {
+  if (stableCount < requiredStable || source === "none") {
     return {
       dataPending: true,
       dataPendingReason: `${Math.ceil(timeoutMs / 1000)}秒内当前页面数据未完整稳定：${missing.join("、") || "价格或ERP字段仍在变化"}`,

@@ -92,7 +92,7 @@ async function waitForOzonProductNavigation(tabId, expectedSku, timeoutMs = 2000
       const documentSku = productSkuFromUrl(documentState.href);
       if ((!targetSku || documentSku === targetSku) && ["interactive", "complete"].includes(documentState.readyState)) return tab;
     }
-    await wait(150);
+    await wait(80);
   }
   const observed = lastSku ? `，当前地址SKU ${lastSku}` : "";
   throw new Error(`${label}未在${Math.ceil(timeoutMs / 1000)}秒内进入任务SKU ${targetSku || "-"}${observed}`);
@@ -235,7 +235,7 @@ async function probeOriginalBlackPrice(timeoutMs) {
       singleFingerprint = "";
       singleStableCount = 0;
     }
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    await new Promise((resolve) => setTimeout(resolve, 120));
   }
   return null;
 }
@@ -263,7 +263,7 @@ async function readOriginalBlackPriceAsSoonAsAvailable(tabId, timeoutMs = 8000) 
       // The new tab may still be switching from its initial document to Ozon.
       // Retry immediately instead of waiting for the whole page to finish loading.
     }
-    await wait(120);
+    await wait(80);
   }
   return { blackPrice: 0, singlePrice: false, sourceGreenPrice: 0 };
 }
@@ -437,7 +437,7 @@ async function injectTaskPricingCollector(tabId, timeoutMs = 5000) {
       await chrome.scripting.executeScript({ target: { tabId }, files: ["black-price-core.js", "content.js"] });
       return;
     } catch {
-      await wait(150);
+      await wait(80);
     }
   }
   throw new Error("Ozon商品页核价采集器未能启动");
@@ -447,6 +447,8 @@ async function collectTaskPricingSnapshot(tabId, task, timeoutMs = 6000) {
   const trustedQualified = task?.qualification?.status === "qualified"
     && task?.qualification?.source === "batch_store_scan";
   const snapshotFallback = trustedQualified ? taskPricingCore.trustedBatchScanSnapshot(task) : null;
+  const fastMode = task?.fastMode === true;
+  const poolFastLane = fastMode && task?.poolFastLane === true;
   let lastError = null;
   for (let attempt = 0; attempt < 4; attempt += 1) {
     try {
@@ -458,6 +460,8 @@ async function collectTaskPricingSnapshot(tabId, task, timeoutMs = 6000) {
           sku: String(task?.ozon?.sku || ""),
           timeoutMs,
           trustedQualified,
+          fastMode,
+          poolFastLane,
           snapshotFallback,
         },
       });
@@ -474,11 +478,11 @@ async function collectTaskPricingSnapshot(tabId, task, timeoutMs = 6000) {
           } else {
             await chrome.tabs.update(tabId, { url: taskUrl, active: false });
           }
-          await wait(350);
+          await wait(250);
           await waitForOzonProductNavigation(tabId, task?.ozon?.sku, 20000, "任务商品页");
         }
       }
-      await wait(200);
+      await wait(120);
     }
   }
   throw new Error(lastError?.message || "无法连接Ozon商品页核价采集器");
@@ -494,7 +498,6 @@ async function readOzonTaskPricing(rawTask) {
     tab = await chrome.tabs.create({ url, active: false });
     temporaryProductTabs.add(tab.id);
     await chrome.tabs.update(tab.id, { autoDiscardable: false }).catch(() => null);
-    await waitForOzonProductNavigation(tab.id, task?.ozon?.sku, 20000, "任务商品页");
     let snapshotResponse = await collectTaskPricingSnapshot(tab.id, task, 6000);
     if (snapshotResponse?.ok && snapshotResponse.snapshot?.dataPending) {
       snapshotResponse = await runWithForegroundTabWakeup(
@@ -1415,13 +1418,13 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 chrome.runtime.onStartup.addListener(() => {
   OzonCategoryBackground.onRestart().catch(()=>null);
-  wbSettings().then(s=>{if(s.token)wbSchedule()}).catch(()=>{});
+  wbSettings().then(s=>{wbInjectPoolBridgeToOpenTabs();if(s.token)wbSchedule()}).catch(()=>{});
   enqueueStoreOperation(() => ensureStoreStorageMigrated()).catch(() => null);
   batchOperation(() => resumeInterruptedBatch()).catch(() => null);
 });
 chrome.runtime.onInstalled.addListener(() => {
   OzonCategoryBackground.onRestart().catch(()=>null);
-  wbSettings().then(s=>{if(s.token)wbSchedule()}).catch(()=>{});
+  wbSettings().then(s=>{wbInjectPoolBridgeToOpenTabs();if(s.token)wbSchedule()}).catch(()=>{});
   enqueueStoreOperation(() => ensureStoreStorageMigrated()).catch(() => null);
   batchOperation(() => resumeInterruptedBatch()).catch(() => null);
 });

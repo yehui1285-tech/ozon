@@ -1,8 +1,15 @@
 (() => {
   const ORIGIN = "https://deep-breath-design-desk.yehui1285.chatgpt.site";
-  if (location.origin !== ORIGIN || !location.pathname.startsWith("/ozon/pool")) return;
+  if (location.origin !== ORIGIN) return;
+  if (globalThis.__ozonPoolBridgeInstalled) return;
+  globalThis.__ozonPoolBridgeInstalled = true;
+
   const version = chrome.runtime.getManifest().version;
-  document.documentElement.dataset.ozonPoolBridge = version;
+  const markReady = () => {
+    if (document.documentElement) document.documentElement.dataset.ozonPoolBridge = version;
+  };
+  markReady();
+  document.addEventListener("DOMContentLoaded", markReady, { once: true });
   window.dispatchEvent(new CustomEvent("ozon-pool-bridge-ready", { detail: { version } }));
 
   function cleanProductUrl(raw) {
@@ -32,7 +39,8 @@
   }
 
   window.addEventListener("message", (event) => {
-    if (event.source !== window || event.origin !== ORIGIN) return;
+    if (event.source !== window || event.origin !== ORIGIN || !location.pathname.startsWith("/ozon/pool")) return;
+    markReady();
     const msg = event.data;
     if (!msg || typeof msg !== "object") return;
     const requestId = typeof msg.requestId === "string" && msg.requestId.length <= 100 ? msg.requestId : "";
@@ -53,6 +61,8 @@
     const snapshot = sanitizeSnapshot(msg.snapshot, sku);
     const task = {
       qualification: { status: "qualified", source: "batch_store_scan" },
+      fastMode: true,
+      poolFastLane: Boolean(msg.poolFastLane),
       ozon: { sku, productUrl, ...(snapshot ? { batchScanSnapshot: snapshot } : {}) },
     };
     chrome.runtime.sendMessage({ type: "readOzonTaskPricing", task }, (response) => {

@@ -124,6 +124,17 @@ async function wbSyncBatch(manual=false){if(wbSyncRunning)return wbSyncRunning;w
  const snap=await batchOperation(async()=>wbSnapshot(await getBatch()));if(!snap)return {ok:true,count:0};const data=await wbRequest(settings.token,{action:'batch',batch:snap});await chrome.storage.local.set({ozonWorkbenchLastSync:{ok:true,id:snap.id,count:data.count,at:new Date().toISOString()}});return data}catch(e){await chrome.storage.local.set({ozonWorkbenchLastSync:{ok:false,error:e.message,at:new Date().toISOString()}});if(manual)throw e;return {ok:false,error:e.message}}
  })();try{return await wbSyncRunning}finally{wbSyncRunning=null}}
 function wbSchedule(){chrome.alarms.create(WB_ALARM,{periodInMinutes:1})?.catch?.(()=>{})}
+function wbInjectPoolBridgeToOpenTabs(){
+ try{
+  chrome.tabs?.query?.({url:[WB_ORIGIN+'/*']},tabs=>{
+   if(chrome.runtime?.lastError||!Array.isArray(tabs))return;
+   for(const tab of tabs){
+    if(!tab?.id||!chrome.scripting?.executeScript)continue;
+    chrome.scripting.executeScript({target:{tabId:tab.id},files:['workbench-pool-bridge.js']}).catch?.(()=>{});
+   }
+  });
+ }catch{}
+}
 
 // Independent category batches use the same authenticated append-only batch endpoint.
 let wbCategorySyncRunning=null;

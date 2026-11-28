@@ -1,5 +1,11 @@
 # CHANGELOG.md - Ozon 项目续接记录
 
+## 2026-11-28 - V1.72 / 0.6.90 修复工作台路由切换/重装扩展免 F5 桥接注入，并提速「读取同源黑标价（测试）」（待工作台部署与实机验收）
+
+- 修复无需 `F5` 的 SPA 桥接与重装自动补注（`manifest.json`、`workbench-pool-bridge.js`、`workbench-bridge.js`、`background.js`）：① 此前内容脚本仅匹配 `.../ozon/pool*` 与 `document_idle`，工作台作为 SPA 从其他页面切入 `/ozon/pool` 时未触发注入；现改为匹配工作台根目录于 `document_start` 挂载（幂等防重复），并在消息接收时动态校验 `location.pathname.startsWith("/ozon/pool")`；② 在 `onStartup`/`onInstalled` 调用 `wbInjectPoolBridgeToOpenTabs()` 向已开启的工作台页面自动补注桥接脚本（`build-standalone.mjs` 随 `wbSettings()` 规则自动剥离，不影响独立版）。
+- 「读取同源黑标价（测试）」提速（`quick-pricing-core.js`、`content.js`、`background.js`、`pool-desk.tsx`）：① 取消 `readOzonTaskPricing` 中冗余的前置导航探测，将导航/注入/黑标轮询与防抖步长缩至 `80~120ms`（`fastMode` 下 `requiredStable = 2`）；② 对于池内无更低跟卖且参数完整的商品（`poolFastLane: true`），只要 Ozon 原生价格区 `[data-widget="webPrice"]` 读出黑标与绿标且 `350ms` 内未出现更低跟卖即结合池内快照秒回；遇到存在更低跟卖时仍完整执行跟卖弹窗与最低价跟卖详情页同源读取，兼顾速度与准确度（**无新增 D1 迁移**）。
+- 打包与验证：回滚备份 `_备份_20261128_v172_pool_bridge_spa_and_black_price_speedup_before`（已轮换清理 `_备份_20261127_v168_category_slim_and_option_a_before`，保留 `_备份_20261125_v151_pool_before` 及共 5 份常规备份）。Ozon `node --check`、`verify-project.ps1`（含新增 `fastMode`/`poolFastLane` 用例与 `test-standalone.mjs`）、`test-1688-extension.mjs`、`test-pinduoduo-agent.mjs` 与双版打包（`ozon-erp-collector-extension.zip` SHA256 `59EFA101C1B96F61D7228316113A24D3FA0ACCC8DD2BD3C4C3EE4B52F5A6A6E5`；独立版 `ozon-standalone-extension.zip` SHA256 `A26233C67E98CA6A8BE0E920D94F55B8E8D1FC06241C0867F658FAB41F4CA3FF`），以及 Workbench `sync-workbench-core --check`、`check-ozon-shared-core.mjs`、`npx tsc --noEmit`、`check-release-version.mjs`（`V1.71 → V1.72`）、273/273 单元测试与 `npm.cmd run build`（`vinext build`）均通过（Workbench 提交 `73eba34`，工作台 V1.72 线上部署与实机 `0.6.90` 验收待完成）。
+
 ## 2026-11-28 - V1.71 / 0.6.89 商品池快速核价自动预填、按需同源黑标抓取、高清扫码大图与隐藏空批次（工作台已上线）
 
 - 商品池直通快速核价与直接新建（`quick-pricing-core.js`、`quick-pricing-panel.js`、`quick-pricing-panel.css`、`quick-pricing-model.ts`、`quick-pricing-local.js`、`build-standalone.mjs`）：① 新增 `prefillFromPoolItem` 与 `createRow`，选中无核价记录的人民币商品（类目选品与批量店铺扫描均通用）时自动带出池内绿标价（比对卡片价与跟卖最低价取低并标明来源）、对应档位佣金%及按长宽高重量匹配的 CEL 国际运费，同时展示只读「保底参考（黑标=绿标）18% 上限」（不自动填入正式黑标框，非人民币价格跳过自动预填）；② 补齐真实黑标后支持在右侧直接新建保存并标记复核，100% 保留原有打开 Ozon 商品页与详情页插件推送方式。

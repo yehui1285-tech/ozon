@@ -186,9 +186,13 @@
     } catch {}
     if (!productUrl) throw new Error('缺少有效的 Ozon 商品链接');
     const prefill = prefillFromPoolItem(product, taskPricing);
+    const snap = prefill.snapshot;
+    const poolFastLane = prefill.source === 'page' && prefill.available && snap.commissions.length >= 3 && snap.lengthMm > 0 && snap.widthMm > 0 && snap.heightMm > 0 && snap.weightG > 0;
     return {
       qualification: { status: 'qualified', source: 'batch_store_scan' },
-      ozon: { sku, productUrl, batchScanSnapshot: prefill.snapshot },
+      fastMode: true,
+      poolFastLane,
+      ozon: { sku, productUrl, batchScanSnapshot: snap },
     };
   }
 
