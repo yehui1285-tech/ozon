@@ -1,16 +1,16 @@
 # Ozon 当前状态
 
-更新时间：2026-11-28（工作台 V1.75 / 扩展 `v0.6.93` / 独立分享版 `0.6.93` 已完成改造、构建、压测与本地验收，**无新增 D1 迁移**；工作台源码 `b425806` 待部署上线，Ozon 仓库将同步推送 `origin/main`）。
+更新时间：2026-11-28（用户确认工作台 V1.75 已成功部署上线，源码 `b425806`，内嵌扩展 `v0.6.93`；独立分享版 `0.6.93` 已构建；**无新增 D1 迁移**；Ozon 仓库同步推送 `origin/main`）。
 用途：新对话快速续接。详细过程按需查 [CHANGELOG](CHANGELOG.md) 和 [历史入口](docs/history/README.md)，不把历史待办当作当前任务。
 
 ## 当前版本与结论
 
-- V1.75 / 0.6.93（工作台源码 `b425806` 本地构建与校验已通过，**待部署上线**；双版 `ozon-erp-collector-extension.zip` / `ozon-standalone-extension.zip` 已构建）：
+- V1.75 / 0.6.93（用户确认工作台 V1.75 已上线，源码 `b425806`，**无新增 D1 数据库迁移**；双版独立包已构建）：
   - **商品池「保存 / 新建一件核价」单行原子写入**：工作台 `lib/ozon-model.ts`、`app/api/ozon/route.ts` 新增 `action: 'patchRow'` 与 `'createRow'` 原子 CAS 接口，[pool-desk.tsx](C:/Users/Microsoft/AppData/Local/Temp/ozon-workbench-tls-6438271f99d243b3a9fe30bbbb5a0a60/.sites-checkout/app/ozon/pool/pool-desk.tsx) 取消保存前的整表 `GET /api/ozon` 与整表回传，仅发送当前修改行（保留 R2 变更前快照备份、行级冲突检测 `409`、并发改不同 SKU 自动 CAS 重试合并与保存成功校验）。
   - **商品池汇总与批次/设备统计按修订号复用 + 实操压测**：工作台 `lib/ozon-pool/store.ts` 为 `readPoolPage` 新增按 `revision` + `30s` TTL 缓存 `total`/`newCount`/`historyCount`/`batches`/`devices`，翻页或切换批次免重复全表 `json_each` 聚合，`saveTouched` 写入后立即失效；`ozon-pool-benchmark.mjs` 补齐 1k / 10k / 50k 规模下「打开商品池、切换批次、连续复核 20 件」耗时实测（50k 规模深度翻页 `2.27ms`、单次更新 `0.14ms`、冷开池 `69.59ms`、切批次 `87.69ms`、20 连复核均单件 `69.86ms`）。
   - **双端共用核价面板保存耗时反馈**：[quick-pricing-panel.js](ozon-erp-collector-extension/quick-pricing-panel.js) 同步工作台与独立分享版，保存/新建/复核通过提示附带真实往返耗时（`ms`）。
   - 双版 SHA-256：`ozon-erp-collector-extension.zip` = `9185A3357905336464EABA7A0EFDDCCEFECCAD6A3C21E7AEDD9E11C32A81A7E3`；`ozon-standalone-extension.zip` = `9701F9D782051B121F6448D9DE3A22E7AFB240DCEA79F99D61732BCD0A604F09`；回滚备份 `_备份_20261128_v175_single_row_pricing_and_pool_meta_cache_before`。
-- V1.74 / 0.6.92（工作台源码 `e12941f` 已上线/待配合现场实测，**无新增 D1 迁移**；双版独立包已构建）：
+- V1.74 / 0.6.92（已随工作台 V1.75 一并上线，源码 `e12941f`，**无新增 D1 迁移**；双版独立包已构建）：
   - **视口内毛子 ERP 等待与 `fastSkip` 收紧限速**：[category-scanner.js](ozon-erp-collector-extension/category-scanner.js) 识别当前视口待出卡 SKU（`viewportPendingSkus`），每 `500ms` 原地轮询等待毛子 ERP 渲染（前台上限 `8s`、后台上限 `16s`）后再滚动；收紧 `fastSkip` 仅在视口内存在可见商品且全为已查 SKU 时触发，并将步幅/间隔从 `1.25 屏 / 350ms` 调慢为 `0.75 屏 / 700ms`，防止跳过延迟加载卡片。
   - **翻页按原页保留 `pendingByPage` + 有限回查 + 明确残余提示**：[category-background.js](ozon-erp-collector-extension/category-background.js) 在主动/强行翻页时不再清空待复查列表，改按原 `pageUrl` 保存在 `pendingByPage`；类目到达可见末尾时自动对含待复查 SKU 的原页回查 `1` 次（`revisitPendingOnly`），仍未就绪的明确统计并在结果/悬浮窗/诊断中标注 `有 X 件 ERP 未就绪`（不降低「符合要求」入池门槛）。
   - **「有响应但无新增商品」显式告警**：`hudSummary`、[category-scanner.js](ozon-erp-collector-extension/category-scanner.js) 悬浮窗与 [category.js](ozon-erp-collector-extension/category.js) 管理页持续检测心跳（`90s` 内活跃）而连续 `>= 2` 分钟未发现新 SKU 时，直接显示 `采集页仍有响应，已 X 分钟未发现新商品`。
@@ -71,8 +71,8 @@
 
 ## 当前待验收与已知边界
 
-- 待现场真实验收：工作台 V1.75（`b425806`）待部署上线；上线并加载 `v0.6.93` / 独立分享版 `0.6.93` 后验收：① 双设备分别修改不同 SKU 的核价行可独立保存（提示附真实耗时 `ms`），再同时修改同一核价行触发 `409` 冲突保护不互相覆盖；② 线上实测「打开商品池、切换批次、连续复核 20 件（保存→下一件）」耗时体感。
-- 待现场真实验收：工作台 V1.74（`e12941f`）待部署上线；加载 `v0.6.92` / 独立分享版 `0.6.92` 后建议按两项实测闭环：① 准备含「有红标、无红标、ERP 延迟出现」的类目页，分别测试正常翻页、65 屏/180 SKU 强行翻页及暂停续扫并逐 SKU 对账（核对命中 / 排除 / 回查 / `有 X 件 ERP 未就绪` 报告）；② 同一类目在前台、被另一窗口完全遮挡、恢复前台三种状态下对比新增 SKU / ERP 就绪 / 红标命中，并确认无新增持续 2 分钟时是否准确提示 `采集页仍有响应，已 X 分钟未发现新商品`。
+- 待现场真实验收：工作台 V1.75（`b425806`，含 V1.74 改动）已上线，加载 `v0.6.93` / 独立分享版 `0.6.93` 后建议验收：① 双设备分别修改不同 SKU 的核价行可独立保存（提示附真实耗时 `ms`），再同时修改同一核价行触发 `409` 冲突保护不互相覆盖；② 线上实测「打开商品池、切换批次、连续复核 20 件（保存→下一件）」耗时体感。
+- 待现场真实验收：工作台 V1.74 / V1.75 已上线，加载 `v0.6.93` / 独立分享版 `0.6.93` 后建议按两项实测闭环类目扫描：① 准备含「有红标、无红标、ERP 延迟出现」的类目页，分别测试正常翻页、65 屏/180 SKU 强行翻页及暂停续扫并逐 SKU 对账（核对命中 / 排除 / 回查 / `有 X 件 ERP 未就绪` 报告）；② 同一类目在前台、被另一窗口完全遮挡、恢复前台三种状态下对比新增 SKU / ERP 就绪 / 红标命中，并确认无新增持续 2 分钟时是否准确提示 `采集页仍有响应，已 X 分钟未发现新商品`。
 - 待现场真实验收：工作台 V1.73（`cfef93b`）已上线，待在真实 Ozon 页面覆盖加载 `v0.6.91` / 独立分享版 `0.6.91` 后验收类目扫描左下角 Shadow DOM 悬浮小窗（进度、拖动、折叠胶囊、暂停/跳过类目/停止/返回管理页 ↗）与精简版店铺扫描双胞胎小窗（左下角定位、拖动、折叠、`更多 ▾` 抽屉与底部单行保存提示）视觉与交互。
 - 待现场真实验收：工作台 V1.72（`73eba34`）已上线，待在真实浏览器覆盖加载 `v0.6.90` / 独立分享版 `0.6.90` 后验收免 `F5` 从首页/其他页面切入 `/ozon/pool` 直接点击「读取同源黑标价（测试）」的成功率与耗时表现。
 - 本机测试环境未配置 Playwright 模块，隔离浏览器脚本（`test-category-browser.mjs`、`test-product-pool-browser.mjs`、`ozon-pool-browser.mjs` 等）未在本机运行；所有版本均未执行外部站点绕过或自动下单。
