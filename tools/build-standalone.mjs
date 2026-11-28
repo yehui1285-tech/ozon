@@ -29,7 +29,7 @@ let poolHtml = withLocalNav(read("product-pool.html"),"product-pool.html","<main
 poolHtml = replace(poolHtml,"</head>",'<link rel="stylesheet" href="quick-pricing-panel.css">\n</head>');
 poolHtml = replace(poolHtml,'    <section class="panel">','    <div class="qp-layout"><div><section class="panel">');
 poolHtml = replace(poolHtml,'  </main>','    </div><aside id="quick-pricing-panel" aria-label="单品快速核价"></aside></div>\n  </main>');
-poolHtml = replace(poolHtml,'</body>','<script src="pricing-core.js"></script><script src="quick-pricing-core.js"></script><script src="quick-pricing-panel.js"></script><script src="quick-pricing-local.js"></script>\n</body>');
+poolHtml = replace(poolHtml,'</body>','<script src="pricing-core.js"></script><script src="task-pricing-core.js"></script><script src="quick-pricing-core.js"></script><script src="quick-pricing-panel.js"></script><script src="quick-pricing-local.js"></script>\n</body>');
 write("product-pool.html",poolHtml);
 for (const name of ['quick-pricing-core.js','quick-pricing-panel.js','quick-pricing-panel.css','quick-pricing-local.js']) fs.copyFileSync(path.join(extension,name),path.join(dest,name));
 const manifest = JSON.parse(read("manifest.json"));
@@ -129,6 +129,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const updated=rows.find(row=>row.id===message.id&&row.sku===String(message.sku));
       if (!persisted || !updated || PRICING_ROW_KEYS.some(key=>String(persisted[key]??'')!==String(updated[key]??''))) {rows=before;renderRows();throw new Error("核价已更新但本地保存未确认，请刷新核对。");}
       sendResponse({ok:true,rows:OzonQuickPricingCore.rowsForSku(saved.rows,message.sku)});
+      return false;
+    }
+    if (message.type === "quickPricingCreate") {
+      const before=rows;
+      const blankFirst = before.length === 1 && (typeof isBlankOrLegacyDefaultRow === "function" ? isBlankOrLegacyDefaultRow(before[0]) : false);
+      const baseRows = blankFirst ? [] : before;
+      const cap = typeof MAX_DRAFT_ROWS === "number" ? MAX_DRAFT_ROWS : 1000;
+      const created = OzonQuickPricingCore.createRow(baseRows,{sku:message.sku,link:message.link,values:message.values},cap);
+      rows = created.rows;
+      renderRows();
+      if(!savePricingDraft()){rows=before;renderRows();throw Error("核价新建未确认，请刷新核价页");}
+      const saved = JSON.parse(localStorage.getItem(PRICING_DRAFT_KEY) || "null");
+      const persisted = saved?.rows?.find(row => row.id === created.row.id && row.sku === String(message.sku));
+      if (!persisted) {rows=before;renderRows();throw new Error("核价已新建但本地保存未确认，请刷新核对。");}
+      sendResponse({ok:true,row:persisted,rows:OzonQuickPricingCore.rowsForSku(saved.rows,message.sku)});
       return false;
     }
     throw new Error("不支持的核价操作");

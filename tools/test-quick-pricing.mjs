@@ -7,7 +7,7 @@ vm.runInContext(fs.readFileSync('web-src/pricing-core.js','utf8')+'\nglobalThis.
 const source='ozon-erp-collector-extension/quick-pricing-core.js';
 assert.ok(fs.existsSync(source),'商品池快速核价共享逻辑尚缺失');
 vm.runInContext(fs.readFileSync(source,'utf8'),context);
-const {rowsForSku,evaluate,patchRow}=context.OzonQuickPricingCore;
+const {rowsForSku,evaluate,patchRow,createRow,prefillFromPoolItem,buildTaskPricingPayload}=context.OzonQuickPricingCore;
 const original={id:'id-a',sku:'0012',green:'100',black:'120',commission:'10',freight:'20',cost:'50',factorOverride:'',quoteOverride:'',link:'https://www.ozon.ru/product/item-0012/',source:'',note:''};
 const rows=[original,{...original,id:'id-b',sku:'12'},{...original,id:'id-c',sku:'0012'}];
 assert.equal(JSON.stringify(rowsForSku(rows,'0012').map(r=>r.id)),JSON.stringify(['id-a','id-c']));
@@ -116,4 +116,85 @@ const styles=fs.readFileSync('ozon-erp-collector-extension/quick-pricing-panel.c
 for(const selector of ['qp-price-label','qp-price-badge','qp-price-detail'])assert.match(styles,new RegExp(`\\.${selector}\\{[^}]*color:#000000(?:;|})`));
 assert.match(styles,/\.qp-price-amount\{[^}]*color:#a92323/);
 assert.match(styles,/\.qp-panel input\[data-field="green"\]\{[^}]*background:#e4f4e8/);
-console.log('Quick pricing: exact SKU and row identity, original formula, target cost, incomplete inputs, conflict-safe patch passed.');
+
+// Verify highResImageUrl image upgrade helper.
+vm.runInContext(fs.readFileSync('ozon-erp-collector-extension/store-scanner-core.js','utf8'),context);
+vm.runInContext(fs.readFileSync('ozon-erp-collector-extension/product-pool-core.js','utf8'),context);
+vm.runInContext(fs.readFileSync('ozon-erp-collector-extension/task-pricing-core.js','utf8'),context);
+const poolCore=context.OzonProductPoolCore;
+assert.equal(poolCore.highResImageUrl('https://ir.ozone.ru/s3/multimedia-1-a/wc250/699123.jpg'),'https://ir.ozone.ru/s3/multimedia-1-a/wc1000/699123.jpg');
+assert.equal(poolCore.highResImageUrl('https://cdn1.ozone.ru/s3/multimedia-a/c500/123.jpg'),'https://cdn1.ozone.ru/s3/multimedia-a/wc1000/123.jpg');
+assert.equal(poolCore.highResImageUrl('https://ir.ozone.ru/s3/multimedia-a/123.jpg'),'https://ir.ozone.ru/s3/multimedia-a/123.jpg');
+assert.equal(poolCore.highResImageUrl('https://evil.example/wc250/123.jpg'),'');
+
+// Verify prefillFromPoolItem with CNY competitor, CNY page-only, and RUB currency block.
+const dollItem={
+  sku:'5418079062',title:'娃娃',link:'https://www.ozon.ru/product/doll-5418079062/',
+  price:'119,74',commissions:'12% / 14% / 17.5%',dimensions:'300 x 150 x 50mm',weight:'250g',competitor:'¥94.10'
+};
+const dollPrefill=prefillFromPoolItem(dollItem,context.OzonTaskPricingCore);
+assert.equal(dollPrefill.available,true);
+assert.equal(dollPrefill.currencyBlocked,false);
+assert.equal(dollPrefill.source,'competitor');
+assert.equal(dollPrefill.green,'94.10');
+assert.equal(dollPrefill.commission,'14');
+assert.equal(dollPrefill.freight,'10.43');
+assert.equal(dollPrefill.freightRoute,'CEL Economy Extra Small');
+assert.equal(dollPrefill.floorMaxCost,50.45);
+
+const rubPrefill=prefillFromPoolItem({...dollItem,price:'1 990 ₽',competitor:''},context.OzonTaskPricingCore);
+assert.equal(rubPrefill.available,false);
+assert.equal(rubPrefill.currencyBlocked,true);
+assert.equal(rubPrefill.green,'');
+
+// Verify createRow & buildTaskPricingPayload.
+const taskPayload=buildTaskPricingPayload(dollItem,context.OzonTaskPricingCore);
+assert.equal(taskPayload.qualification.source,'batch_store_scan');
+assert.equal(taskPayload.ozon.sku,'5418079062');
+assert.equal(taskPayload.ozon.batchScanSnapshot.weightG,250);
+const created=createRow([],{sku:'5418079062',link:dollItem.link,values:{green:'94.10',black:'118.00',commission:'14',freight:'10.43',cost:'40',factorOverride:'',quoteOverride:'',source:'1688'}},2);
+assert.equal(created.rows.length,1);
+assert.equal(created.row.sku,'5418079062');
+assert.equal(created.row.black,'118.00');
+assert.throws(()=>createRow(created.rows,{sku:'5418079062',id:created.row.id,values:{green:'94.10',black:'118.00'}}),/已存在|无效/);
+assert.throws(()=>createRow([created.row,created.row],{sku:'5418079062',values:{green:'94.10',black:'118.00'}},2),/上限/);
+assert.throws(()=>createRow([],{sku:'5418079062',values:{green:'94.10',black:''}}),/黑标价格/);
+
+// Verify draft prefill + test black-price fetch + create flow inside QuickPricingPanel.
+let currentRows=[];
+let createCalls=[];
+const draftFixture=new Element();
+const draftPanel=context.OzonQuickPricingPanel.create(draftFixture,{
+  math:context.math,
+  taskPricing:context.OzonTaskPricingCore,
+  normalizeImageUrl:poolCore.normalizeImageUrl,
+  load:async sku=>rowsForSku(currentRows,sku),
+  create:async req=>{createCalls.push(req);const res=createRow(currentRows,{sku:req.sku,link:req.link,values:req.values});currentRows=res.rows;return res.row},
+  fetchBlackPrice:async item=>({
+    ok:true,sku:item.sku,blackPriceSource:'competitor',sourceProductUrl:'https://www.ozon.ru/product/comp-999/',
+    effectiveGreenPrice:94.10,selectedCommission:14,internationalFreight:10.43,freightRoute:'CEL Economy Extra Small',originalBlackPrice:118.00
+  }),
+  save:async()=>{throw Error('should use create on draft')},
+  status:async()=>{},advance:()=>{}
+});
+draftPanel.select({...dollItem,imageUrl:'https://ir.ozone.ru/s3/multimedia-1-a/wc250/699123.jpg'});
+await new Promise(resolve=>setImmediate(resolve));
+assert.equal(draftFixture.querySelector('[data-field="green"]').value,'94.10');
+assert.equal(draftFixture.querySelector('[data-field="commission"]').value,'14');
+assert.equal(draftFixture.querySelector('[data-field="freight"]').value,'10.43');
+assert.equal(draftFixture.querySelector('[data-field="black"]').value,'');
+assert.equal(draftFixture.querySelector('[data-qp="approve"]').disabled,true,'approve stays disabled without black and cost');
+assert.match(draftFixture.querySelector('[data-qp="result"]').text(),/保底参考.*50\.45/);
+await draftFixture.querySelector('[data-qp="fetchBlack"]').events.click();
+await new Promise(resolve=>setImmediate(resolve));
+assert.equal(draftFixture.querySelector('[data-field="black"]').value,'118.00');
+draftFixture.querySelector('[data-field="cost"]').value='45';
+draftFixture.querySelector('[data-field="cost"]').events.input();
+assert.equal(draftFixture.querySelector('[data-qp="save"]').disabled,false);
+await draftFixture.querySelector('[data-qp="save"]').events.click();
+await new Promise(resolve=>setImmediate(resolve));
+assert.equal(createCalls.length,1);
+assert.equal(currentRows.length,1);
+assert.equal(currentRows[0].black,'118.00');
+draftPanel.dispose();
+console.log('Quick pricing: exact SKU and row identity, original formula, target cost, incomplete inputs, conflict-safe patch, prefill, black-price fetch and create passed.');

@@ -1,5 +1,12 @@
 # CHANGELOG.md - Ozon 项目续接记录
 
+## 2026-11-28 - V1.71 / 0.6.89 商品池快速核价自动预填、按需同源黑标抓取、高清扫码大图与隐藏空批次（待工作台部署与实机验收）
+
+- 商品池直通快速核价与直接新建（`quick-pricing-core.js`、`quick-pricing-panel.js`、`quick-pricing-panel.css`、`quick-pricing-model.ts`、`quick-pricing-local.js`、`build-standalone.mjs`）：① 新增 `prefillFromPoolItem` 与 `createRow`，选中无核价记录的人民币商品（类目选品与批量店铺扫描均通用）时自动带出池内绿标价（比对卡片价与跟卖最低价取低并标明来源）、对应档位佣金%及按长宽高重量匹配的 CEL 国际运费，同时展示只读「保底参考（黑标=绿标）18% 上限」（不自动填入正式黑标框，非人民币价格跳过自动预填）；② 补齐真实黑标后支持在右侧直接新建保存并标记复核，100% 保留原有打开 Ozon 商品页与详情页插件推送方式。
+- 按需「读取同源黑标价（测试）」按钮（`workbench-pool-bridge.js`、`manifest.json`、`pool-desk.tsx`、`quick-pricing-local.js`）：复用现有 `readOzonTaskPricing` 引擎（存在更低跟卖时自动悬停跟卖弹窗跳转最低价跟卖详情页读取同源黑标，并对齐回填实时绿标、佣金与运费及同源来源链接）；新增极窄范围 `workbench-pool-bridge.js` 仅在 `/ozon/pool*` 响应同源窗口请求，独立分享版自动剥离并直接调用插件后台执行。
+- 主图放大预览、高清扫码大图与空批次隐藏（`product-pool-core.js`、`pool-desk.tsx`、`pool.css`、`product-pool.js`、`product-pool.css`）：新增 `highResImageUrl` 临时将 Ozon `/wc\d+/` / `/c\d+/` 升档为 `/wc1000/`（失败自动回退原 URL，不增加数据库存储）；表格悬停缩略图改为 `340 × 340 px` 视口固定悬浮防裁切；点击表格缩略图或右侧核价头部主图弹出居中 `560 × 560 px` 干净白底高清大图，方便手机直接扫码找 1688 / 拼多多同款；工作台 `#poolBatchSelect` 与独立版批次筛选默认隐藏 `0 件` 空批次，待入池非空批次置顶排序（**无新增 D1 迁移**）。
+- 打包与验证：回滚备份 `_备份_20261128_v171_quick_pricing_prefill_black_price_lightbox_before`（已轮换清理 `_备份_20261127_v167_oom_and_route_b_before`，保留 `_备份_20261125_v151_pool_before` 及共 5 份常规备份）。Ozon `node --check`、`verify-project.ps1`（含新增 `test-quick-pricing.mjs`、`test-standalone.mjs` 断言）、`test-1688-extension.mjs`、`test-pinduoduo-agent.mjs` 与双版打包（`ozon-erp-collector-extension.zip` SHA256 `544D287DEEF180B979DF75A91ACE9792271AE938D27691C618947476745792DC`；独立版 `ozon-standalone-extension.zip` SHA256 `6AF6F923E0B36A573289C01F3D06B1ED998EAD7248BD18FF290DB3A2C5516265`），以及 Workbench `sync-workbench-core --check`、`check-ozon-shared-core.mjs`、`npx tsc --noEmit`、`check-release-version.mjs`（`V1.70 → V1.71`）、273/273 单元测试与 `npm.cmd run build`（`vinext build`）均通过（Workbench 提交 `6a3663c`，工作台线上部署及真实浏览器 `0.6.89` 实机验收待完成）。
+
 ## 2026-11-28 - V1.70 / 0.6.88 商品池设备/批次总数口径修正与 4 列页面减法重构（工作台已上线）
 
 - 设备/批次总数联动口径（`lib/ozon-pool/store.ts`、`app/ozon/pool/pool-desk.tsx`、`product-pool-idb.js`、`product-pool.js`）：`readPoolPage` 新增 `scopeTotal`（选中设备或批次时统计对应范围内总件数，全局视角复用 `total`）与 `devices` 去重商品计数 `itemCount`；筛选「档口 / 公司」设备或单个批次时，`当前显示 X / Y 件` 的分母 `Y` 自动同步为对应设备/批次总数，避免继续混淆全库总数（**无新增 D1 迁移**）。独立分享版 `product-pool-idb.js` 同步返回单批次 `scopeTotal`。

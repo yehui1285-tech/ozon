@@ -72,6 +72,10 @@ const message=(request,sender={id:'test',url:'chrome-extension://test/product-po
 const base={...record};
 assert.equal(message({type:'quickPricingPatch',sku:'123',id:'a',base,patch:{cost:'6'}}).ok,true);
 assert.equal(JSON.parse(data).rows[0].cost,'6');assert.equal(JSON.parse(data).rows[1].note,'preserve');
+const createdRes=message({type:'quickPricingCreate',sku:'789',link:'https://www.ozon.ru/product/test-789/',values:{green:'94.10',black:'119.74',commission:'14',freight:'10.43',cost:'40',factorOverride:'',quoteOverride:'',source:''}});
+assert.equal(createdRes.ok,true);
+assert.equal(createdRes.row.sku,'789');
+assert.equal(JSON.parse(data).rows.length,3);
 assert.equal(message({type:'quickPricingPatch',sku:'123',id:'a',base,patch:{cost:'7'}}).ok,false);
 assert.equal(message({type:'quickPricingPatch',sku:'456',id:'a',base,patch:{cost:'7'}}).ok,false);
 assert.equal(message({type:'quickPricingPatch',sku:'123',id:'a',base,patch:{cost:'7'}},{id:'test',url:'chrome-extension://test/pricing.html'}),undefined);

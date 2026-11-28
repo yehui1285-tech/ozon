@@ -41,6 +41,86 @@ let showImages = (() => { try { return localStorage.getItem(showImagesKey) !== "
 const failedImages = new Set();
 if ($("showImages")) $("showImages").checked = showImages;
 
+let hoverPreviewEl = null;
+let hoverImgEl = null;
+let lightboxEl = null;
+let lightboxImgEl = null;
+let lightboxTitleEl = null;
+
+function ensureHoverPreview() {
+  if (hoverPreviewEl) return hoverPreviewEl;
+  hoverPreviewEl = document.createElement("div");
+  hoverPreviewEl.className = "pool-hover-preview";
+  hoverPreviewEl.hidden = true;
+  hoverImgEl = document.createElement("img");
+  hoverImgEl.alt = "";
+  hoverImgEl.referrerPolicy = "no-referrer";
+  hoverPreviewEl.append(hoverImgEl);
+  document.body.append(hoverPreviewEl);
+  return hoverPreviewEl;
+}
+
+function hideHoverPreview() {
+  if (hoverPreviewEl) hoverPreviewEl.hidden = true;
+}
+
+function showHoverPreview(anchorEl, rawUrl) {
+  const url = core.normalizeImageUrl ? core.normalizeImageUrl(rawUrl) : "";
+  if (!url || failedImages.has(url)) return;
+  const box = ensureHoverPreview();
+  const hiRes = core.highResImageUrl ? core.highResImageUrl(url) : url;
+  hoverImgEl.dataset.fallback = url;
+  hoverImgEl.onerror = () => {
+    if (hoverImgEl.src !== url) { hoverImgEl.src = url; return; }
+    failedImages.add(url);
+    hideHoverPreview();
+  };
+  if (hoverImgEl.src !== hiRes) hoverImgEl.src = hiRes;
+  const rect = anchorEl.getBoundingClientRect();
+  const size = Math.min(340, Math.max(200, window.innerWidth - 32));
+  box.style.width = `${size}px`;
+  box.style.height = `${size}px`;
+  const left = rect.right + 12 + size <= window.innerWidth - 12 ? rect.right + 12 : Math.max(12, rect.left - size - 12);
+  const top = Math.max(12, Math.min(rect.top - 24, window.innerHeight - size - 12));
+  box.style.left = `${Math.round(left)}px`;
+  box.style.top = `${Math.round(top)}px`;
+  box.hidden = false;
+}
+
+function closeLightbox() {
+  if (lightboxEl) lightboxEl.hidden = true;
+}
+
+function openLightbox(item) {
+  const url = core.normalizeImageUrl ? core.normalizeImageUrl(item?.imageUrl) : "";
+  if (!url || failedImages.has(url)) return;
+  hideHoverPreview();
+  if (!lightboxEl) {
+    lightboxEl = document.createElement("div");
+    lightboxEl.className = "pool-lightbox";
+    lightboxEl.hidden = true;
+    lightboxEl.innerHTML = '<div class="pool-lightbox-card" role="dialog" aria-modal="true" aria-label="高清商品主图"><div class="pool-lightbox-stage"><img alt="" referrerpolicy="no-referrer"></div><div class="pool-lightbox-foot"><div class="pool-lightbox-meta"><strong data-lb="title"></strong><small>手机对准大图扫码找 1688 / 拼多多同款 · 按 Esc 或点空白处关闭</small></div><button type="button" data-lb="close">关闭</button></div></div>';
+    lightboxImgEl = lightboxEl.querySelector("img");
+    lightboxTitleEl = lightboxEl.querySelector('[data-lb="title"]');
+    lightboxEl.querySelector('[data-lb="close"]').addEventListener("click", closeLightbox);
+    lightboxEl.addEventListener("click", (e) => { if (e.target === lightboxEl) closeLightbox(); });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && lightboxEl && !lightboxEl.hidden) closeLightbox(); });
+    document.body.append(lightboxEl);
+  }
+  const hiRes = core.highResImageUrl ? core.highResImageUrl(url) : url;
+  lightboxImgEl.onerror = () => {
+    if (lightboxImgEl.src !== url) { lightboxImgEl.src = url; return; }
+    failedImages.add(url);
+    closeLightbox();
+  };
+  lightboxImgEl.src = hiRes;
+  lightboxTitleEl.textContent = `${item.sku || ""} · ${item.title || "商品主图"}`;
+  lightboxEl.hidden = false;
+}
+globalThis.ozonOpenPoolImageLightbox = openLightbox;
+document.querySelector(".table")?.addEventListener("scroll", hideHoverPreview, { passive: true });
+window.addEventListener("scroll", hideHoverPreview, { passive: true });
+
 function createThumb(item) {
   const box = document.createElement("span");
   box.className = "pool-thumb";
@@ -55,26 +135,25 @@ function createThumb(item) {
     box.append(fallback(url ? "加载失败" : "无图"));
     return box;
   }
+  box.title = "悬停放大预览 · 点击打开扫码高清大图";
   const img = document.createElement("img");
   img.loading = "lazy";
   img.decoding = "async";
   img.referrerPolicy = "no-referrer";
   img.alt = item.title || item.sku || "商品缩略图";
   img.src = url;
-  const preview = document.createElement("span");
-  preview.className = "pool-thumb-preview";
-  const previewImg = document.createElement("img");
-  previewImg.loading = "lazy";
-  previewImg.decoding = "async";
-  previewImg.referrerPolicy = "no-referrer";
-  previewImg.alt = "";
-  previewImg.src = url;
-  preview.append(previewImg);
   img.addEventListener("error", () => {
     failedImages.add(url);
     box.replaceChildren(fallback("加载失败"));
   }, { once: true });
-  box.append(img, preview);
+  box.addEventListener("mouseenter", () => showHoverPreview(box, url));
+  box.addEventListener("mouseleave", hideHoverPreview);
+  box.addEventListener("click", (e) => {
+    e.stopPropagation();
+    globalThis.ozonLocalQuick?.select(item);
+    openLightbox(item);
+  });
+  box.append(img);
   return box;
 }
 
@@ -116,7 +195,7 @@ function render() {
     const currentBatch = batchSel.value || appliedQuery.batchId || "";
     batchSel.replaceChildren();
     option(batchSel, "", "全部批次");
-    for (const b of (pageInfo.batches || [])) {
+    for (const b of (pageInfo.batches || []).filter(item => Number(item.count) > 0)) {
       const prefix = String(b.id || "").startsWith("category-") ? "类目" : "店铺";
       const ts = b.updatedAt ? new Date(b.updatedAt).toLocaleString("zh-CN", { hour12: false, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : String(b.id || "").slice(0, 16);
       option(batchSel, b.id, `${prefix} · ${ts}（${b.count} 件）`);

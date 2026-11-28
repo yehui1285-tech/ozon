@@ -15,6 +15,21 @@
       return "";
     }
   };
+  const highResImageUrl = (value) => {
+    const normalized = normalizeImageUrl(value);
+    if (!normalized) return "";
+    try {
+      const parsed = new URL(normalized);
+      if (/(?:^|\.)ozone\.ru$/i.test(parsed.hostname) && /\/s3\/multimedia-/i.test(parsed.pathname)) {
+        const upgraded = parsed.pathname.replace(/(^|\/)(?:wc\d+|c\d+)(?=\/)/i, "$1wc1000");
+        if (upgraded !== parsed.pathname) {
+          parsed.pathname = upgraded;
+          return parsed.href;
+        }
+      }
+    } catch {}
+    return normalized;
+  };
   function matchesStatus(product, filter) {
     if (filter === "pending") return !["approved", "rejected"].includes(product.status);
     return !filter || product.status === filter;
@@ -168,5 +183,5 @@
     return [header, ...rows].map(row => row.map(scanner.csvCell).join(",")).join("\r\n");
   }
 
-  scope.OzonProductPoolCore = Object.freeze({ emptyPool, statuses, normalizeImageUrl, matchesStatus, normalizePageQuery, matchesPageQuery, comparePoolItems, importHistory, addBatch, updateProduct, updateProducts, productExpectation, exportPoolCsv });
+  scope.OzonProductPoolCore = Object.freeze({ emptyPool, statuses, normalizeImageUrl, highResImageUrl, matchesStatus, normalizePageQuery, matchesPageQuery, comparePoolItems, importHistory, addBatch, updateProduct, updateProducts, productExpectation, exportPoolCsv });
 })(globalThis);

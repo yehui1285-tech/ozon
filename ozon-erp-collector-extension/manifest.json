@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "OZON ERP Detail Sender",
-  "version": "0.6.88",
+  "version": "0.6.89",
   "description": "Collect OZON product data, scan stores, and send product details to the pricing page.",
   "permissions": [
     "storage",
@@ -53,6 +53,15 @@
       "js": [
         "1688-core.js",
         "1688-content.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://deep-breath-design-desk.yehui1285.chatgpt.site/ozon/pool*"
+      ],
+      "js": [
+        "workbench-pool-bridge.js"
       ],
       "run_at": "document_idle"
     }

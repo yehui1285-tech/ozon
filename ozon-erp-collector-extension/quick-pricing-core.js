@@ -66,5 +66,151 @@
     if(select()===true)return true;
     event.preventDefault();return false;
   }
-  scope.OzonQuickPricingCore=Object.freeze({rowsForSku,evaluate,patchRow,selectBeforeOpen});
+
+  function parseNumber(value) {
+    let textValue = String(value ?? '').replace(/[¥￥₽%]/g, '').replace(/[\u00a0\u202f]/g, ' ').trim();
+    const match = textValue.match(/-?[\d\s.,]+/);
+    if (!match) return 0;
+    textValue = match[0].replace(/\s+/g, '');
+    const comma = textValue.lastIndexOf(','), dot = textValue.lastIndexOf('.');
+    if (comma >= 0 && dot >= 0) {
+      const dec = comma > dot ? ',' : '.';
+      textValue = textValue.replace(new RegExp(`\\${dec === ',' ? '.' : ','}`, 'g'), '').replace(dec, '.');
+    } else if (/^-?\d{1,3}(,\d{3})+$/.test(textValue)) textValue = textValue.replace(/,/g, '');
+    else if (comma >= 0) textValue = textValue.replace(',', '.');
+    const result = Number(textValue);
+    return Number.isFinite(result) ? result : 0;
+  }
+
+  function parseCommissionsList(raw) {
+    if (Array.isArray(raw)) return raw.map(parseNumber).filter(v => v > 0).slice(0, 3);
+    const str = String(raw ?? '').trim();
+    if (!str) return [];
+    const withPercent = [...str.matchAll(/(\d+(?:[.,]\d+)?)\s*%/g)].map(m => parseNumber(m[1])).filter(v => v > 0);
+    if (withPercent.length) return withPercent.slice(0, 3);
+    return [...str.matchAll(/\d+(?:[.,]\d+)?/g)].map(m => parseNumber(m[0])).filter(v => v > 0).slice(0, 3);
+  }
+
+  function parseDimensionsSpec(raw) {
+    const norm = String(raw ?? '').replace(/[×]/g, 'x').replace(/\s+/g, ' ').trim();
+    const match = norm.match(/(\d+(?:[.,]\d+)?)\s*[xX*]\s*(\d+(?:[.,]\d+)?)\s*[xX*]\s*(\d+(?:[.,]\d+)?)\s*(mm|毫米|cm|厘米)?/i);
+    if (!match) return { lengthCm: 0, widthCm: 0, heightCm: 0, lengthMm: 0, widthMm: 0, heightMm: 0 };
+    const vals = [parseNumber(match[1]), parseNumber(match[2]), parseNumber(match[3])];
+    if (vals.some(v => !(v > 0))) return { lengthCm: 0, widthCm: 0, heightCm: 0, lengthMm: 0, widthMm: 0, heightMm: 0 };
+    const unit = String(match[4] || '').toLowerCase();
+    const isMm = unit.includes('mm') || unit.includes('毫米') || (!unit && Math.max(...vals) > 150);
+    const cm = isMm ? vals.map(v => v / 10) : vals;
+    const mm = isMm ? vals : vals.map(v => Math.round(v * 1000) / 100);
+    return { lengthCm: cm[0], widthCm: cm[1], heightCm: cm[2], lengthMm: mm[0], widthMm: mm[1], heightMm: mm[2] };
+  }
+
+  function parseWeightSpec(raw) {
+    const str = String(raw ?? '').trim();
+    const match = str.match(/(\d+(?:[.,]\d+)?)\s*(kg|千克|公斤|кг|g|克)?/i);
+    if (!match) return { weightKg: 0, weightG: 0 };
+    const val = parseNumber(match[1]);
+    if (!(val > 0)) return { weightKg: 0, weightG: 0 };
+    const unit = String(match[2] || '').toLowerCase();
+    const isKg = /^(?:kg|千克|公斤|кг)$/i.test(unit);
+    const weightKg = isKg ? val : val / 1000;
+    const weightG = isKg ? Math.round(val * 1000) : val;
+    return { weightKg, weightG };
+  }
+
+  function prefillFromPoolItem(product, taskPricing = scope.OzonTaskPricingCore) {
+    const empty = (extra = {}) => ({
+      available: false, currencyBlocked: false, green: '', commission: '', freight: '', freightRoute: '',
+      source: 'none', pagePrice: '', competitorPrice: '', floorMaxCost: null, missing: [],
+      snapshot: { sku: skuOf(product?.sku), commissions: [], lengthMm: 0, widthMm: 0, heightMm: 0, weightG: 0 },
+      ...extra,
+    });
+    if (!product || typeof product !== 'object') return empty();
+    const rawPrice = text(product.price);
+    if (rawPrice && /[₽$€]|\bRUB\b|руб\.?/i.test(rawPrice)) return empty({ currencyBlocked: true });
+    const numFn = taskPricing?.number || parseNumber;
+    const pagePrice = numFn(rawPrice);
+    const rawComp = text(product.competitor);
+    const competitorPrice = rawComp && !/[₽$€]|\bRUB\b|руб\.?/i.test(rawComp) ? numFn(rawComp) : 0;
+    const source = taskPricing?.chooseSource
+      ? taskPricing.chooseSource(pagePrice, competitorPrice)
+      : (competitorPrice > 0 && (pagePrice <= 0 || competitorPrice < pagePrice - 0.01) ? 'competitor' : pagePrice > 0 ? 'page' : 'none');
+    const effectiveGreen = source === 'competitor' ? competitorPrice : source === 'page' ? pagePrice : 0;
+    const commissions = parseCommissionsList(product.commissions);
+    const commission = effectiveGreen > 0 && taskPricing?.selectedCommission ? taskPricing.selectedCommission(effectiveGreen, commissions) : 0;
+    const dims = parseDimensionsSpec(product.dimensions);
+    const weight = parseWeightSpec(product.weight);
+    const freight = effectiveGreen > 0 && taskPricing?.calculateFreight
+      ? taskPricing.calculateFreight({ greenPrice: effectiveGreen, weightKg: weight.weightKg, lengthCm: dims.lengthCm, widthCm: dims.widthCm, heightCm: dims.heightCm })
+      : { price: 0, route: '' };
+    const missing = [];
+    if (!(effectiveGreen > 0)) missing.push('绿标价格');
+    if (!(commission > 0)) missing.push('佣金档位');
+    if (!(freight.price > 0)) missing.push('国际运费');
+    let floorMaxCost = null;
+    if (effectiveGreen > 0 && commission > 0 && freight.price > 0 && taskPricing?.calculateMaxPurchaseCost) {
+      const calc = taskPricing.calculateMaxPurchaseCost({ greenPrice: effectiveGreen, blackPrice: effectiveGreen, commission, freight: freight.price, targetMargin: 0.18 });
+      if (calc) floorMaxCost = calc.maxPurchaseCost;
+    }
+    return {
+      available: effectiveGreen > 0,
+      currencyBlocked: false,
+      green: effectiveGreen > 0 ? effectiveGreen.toFixed(2) : '',
+      commission: commission > 0 ? String(commission) : '',
+      freight: freight.price > 0 ? freight.price.toFixed(2) : '',
+      freightRoute: String(freight.route || ''),
+      source,
+      pagePrice: pagePrice > 0 ? pagePrice.toFixed(2) : '',
+      competitorPrice: competitorPrice > 0 ? competitorPrice.toFixed(2) : '',
+      floorMaxCost,
+      missing,
+      snapshot: {
+        sku: skuOf(product.sku),
+        commissions,
+        lengthMm: dims.lengthMm,
+        widthMm: dims.widthMm,
+        heightMm: dims.heightMm,
+        weightG: weight.weightG,
+      },
+    };
+  }
+
+  function buildTaskPricingPayload(product, taskPricing = scope.OzonTaskPricingCore) {
+    const sku = skuOf(product?.sku);
+    if (!sku) throw new Error('商品 SKU 无效');
+    let productUrl = '';
+    try {
+      const u = new URL(String(product?.link || ''));
+      if (u.protocol === 'https:' && u.hostname === 'www.ozon.ru' && /^\/product\//i.test(u.pathname) && !u.username && !u.password) {
+        u.search = ''; u.hash = ''; productUrl = u.href;
+      }
+    } catch {}
+    if (!productUrl) throw new Error('缺少有效的 Ozon 商品链接');
+    const prefill = prefillFromPoolItem(product, taskPricing);
+    return {
+      qualification: { status: 'qualified', source: 'batch_store_scan' },
+      ozon: { sku, productUrl, batchScanSnapshot: prefill.snapshot },
+    };
+  }
+
+  function createRow(rows, { sku, link = '', values = {}, id = '' }, maxRows = 1000) {
+    const key = skuOf(sku);
+    if (!key || !Array.isArray(rows)) throw new Error('SKU 或核价记录列表无效');
+    if (rows.length >= maxRows) throw new Error(`核价表已达到 ${maxRows} 行上限`);
+    const rowId = text(id) || ('qp-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8));
+    if (!/^[a-zA-Z0-9_-]{1,80}$/.test(rowId) || rows.some(r => r?.id === rowId)) throw new Error('新建核价记录编号无效或已存在');
+    const row = { id: rowId, sku: key, link: String(link ?? '') };
+    if (row.link.length > 4000) throw new Error('商品链接过长');
+    for (const field of editable) {
+      const rawVal = String(values?.[field] ?? '');
+      if (rawVal.length > (field === 'source' || field === 'note' ? 4000 : 240)) throw new Error('核价字段过长：' + field);
+      row[field] = rawVal;
+    }
+    const defaultMath = { number: parseNumber };
+    if (!validNumber(row, 'green', defaultMath) || !validNumber(row, 'black', defaultMath)) {
+      throw new Error('新建核价记录需先补齐有效的绿标价格与黑标价格');
+    }
+    return { rows: [...rows, row], row };
+  }
+
+  scope.OzonQuickPricingCore=Object.freeze({rowsForSku,evaluate,patchRow,createRow,prefillFromPoolItem,buildTaskPricingPayload,selectBeforeOpen});
 })(globalThis);
