@@ -1,10 +1,14 @@
 # Ozon 当前状态
 
-更新时间：2026-11-28（用户确认工作台 V1.72 已成功部署上线，源码 `73eba34`，内嵌扩展 `v0.6.90`；独立分享版 `0.6.90` 已构建；**无新增 D1 迁移**；Ozon 仓库同步推送 `origin/main`）。
+更新时间：2026-11-28（工作台 V1.73 / 扩展 `v0.6.91` / 独立分享版 `0.6.91` 已完成改造、构建与本地验收，**无新增 D1 迁移**；工作台源码 `cfef93b` 待部署上线，Ozon 仓库将同步推送 `origin/main`）。
 用途：新对话快速续接。详细过程按需查 [CHANGELOG](CHANGELOG.md) 和 [历史入口](docs/history/README.md)，不把历史待办当作当前任务。
 
 ## 当前版本与结论
 
+- V1.73 / 0.6.91（工作台源码 `cfef93b` 本地构建与校验已通过，**待部署上线**；双版 `ozon-erp-collector-extension.zip` / `ozon-standalone-extension.zip` 已构建）：
+  - **类目选品悬浮进度小窗（Shadow DOM 双胞胎 HUD）**：`category-background.js` 新增 `hudSummary`、`notifyHud`、`categorySkipCurrent` 与 `categoryOpenManager`；`category-scanner.js` 在 `document.documentElement` 挂载可拖动、可折叠胶囊的蓝紫渐变 Shadow DOM 小窗（默认左下角 `18px/18px`），展示进度、数量、跳过与停止控制及管理页快捷入口，不污染 `readCards` / 翻页统计。
+  - **店铺扫描小窗精简与统一**：`store-scanner.js` 同步为左下角 `18px/18px`、`304px` 蓝紫渐变可拖动/可折叠双胞胎 HUD，主按钮精简为单行（`开始/停止扫描` + 批量 `结束当前店，扫描下一家`），`导出 Markdown` / `清空本店记录` 收纳进 `更多 ▾` 抽屉，底部持久化提示精简为安静单行 `✓ 已保存 HH:MM:SS`（保留全部原有 DOM ID 与测试契约）。
+  - 双版 SHA-256：`ozon-erp-collector-extension.zip` = `349A73B39BD00C456AAEFD665F8C942E79C23B9F772BDD07183381E338CADBB9`；`ozon-standalone-extension.zip` = `5B0AEE626931C4F4B4695606363B37BA5DA63F00EAEA8A45C5B079AECE129F0B`；回滚备份 `_备份_20261128_v173_category_hud_and_store_hud_slim_before`。
 - V1.72 / 0.6.90（用户确认工作台 V1.72 已上线，源码 `73eba34`，**无新增 D1 数据库迁移**；双版独立包已构建）：解决工作台路由切换/重装扩展后需按 `F5` 的桥接注入 Bug，并提速「读取同源黑标价（测试）」：
   - 免 `F5` 全站 SPA 路由与重装自动补注桥接（`manifest.json`、`workbench-pool-bridge.js`、`workbench-bridge.js`、`background.js`）：① 将 `workbench-pool-bridge.js` 挂载放宽至工作台域名根目录、提前至 `document_start` 并做幂等保护，每次收到消息时再动态校验 `location.pathname.startsWith("/ozon/pool")`，从工作台首页/工具箱/扫描页 SPA 切入商品池立即可用；② `onStartup`/`onInstalled` 新增 `wbInjectPoolBridgeToOpenTabs()` 向已打开的工作台标签页自动补注桥接脚本（`build-standalone.mjs` 自动随 `wbSettings()` 钩子剥离，独立版零残留）。
   - 「读取同源黑标价（测试）」提速（`quick-pricing-core.js`、`content.js`、`background.js`、`pool-desk.tsx`）：① 去掉 `readOzonTaskPricing` 重复导航等待，紧缩导航/注入/黑标轮询与防抖节拍（`250/300ms → 100/120ms`，`fastMode` 连稳 `2` 次）；② 当商品池商品确认无更低跟卖价（`source === 'page'` 且池内佣金与尺寸重量完整）时传递 `poolFastLane: true`，优先直接读取 Ozon 官方价格区 `[data-widget="webPrice"]` 原生黑标并复核实时绿标（`350ms` 容错窗口防止遗漏刚渲染出的更低跟卖），命中即秒回；存在更低跟卖时仍完整走跟卖弹窗 → 同源跟卖详情页流程，不牺牲同源准确度。
@@ -57,6 +61,7 @@
 
 ## 当前待验收与已知边界
 
+- 待现场真实验收：工作台 V1.73（`cfef93b`）待部署上线；在真实 Ozon 页面覆盖加载 `v0.6.91` / 独立分享版 `0.6.91` 后，验收类目扫描左下角 Shadow DOM 悬浮小窗（进度、拖动、折叠胶囊、暂停/跳过类目/停止/返回管理页 ↗）与精简版店铺扫描双胞胎小窗（左下角定位、拖动、折叠、`更多 ▾` 抽屉与底部单行保存提示）视觉与交互。
 - 待现场真实验收：工作台 V1.72（`73eba34`）已上线，待在真实浏览器覆盖加载 `v0.6.90` / 独立分享版 `0.6.90` 后验收免 `F5` 从首页/其他页面切入 `/ozon/pool` 直接点击「读取同源黑标价（测试）」的成功率与耗时表现。
 - 本机测试环境未配置 Playwright 模块，隔离浏览器脚本（`test-category-browser.mjs`、`test-product-pool-browser.mjs`、`ozon-pool-browser.mjs` 等）未在本机运行；所有版本均未执行外部站点绕过或自动下单。
 - 工作边界：登录、CAPTCHA 和平台验证由用户处理；1688 自动搜款主线继续暂停（恢复需用户明确指示）；`AGENTS.md` 双线同步交付规则持续生效；常规 `_备份_*` 目录保留最新 5 份（保留 `_备份_20261125_v151_pool_before`）。

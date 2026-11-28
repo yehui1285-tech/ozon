@@ -7,7 +7,7 @@ let created = [], reloads=0, sentMessages=[], debuggerCommands=[], debuggerAttac
 const storage = { async get(k) { return k ? { ...(data[k] ? { [k]: data[k] } : {}) } : { ...data }; }, async set(v) { Object.assign(data, v); }, async remove(k) { for (const key of Array.isArray(k) ? k : [k]) delete data[key]; } };
 let declaredDebugger=true;
 const chrome = {
-  runtime:{getManifest:()=>({version:'0.6.90',permissions:declaredDebugger?['debugger']:[]})},
+  runtime:{getManifest:()=>({version:'0.6.91',permissions:declaredDebugger?['debugger']:[]})},
   storage: { local: storage,session:{async get(k){return {[k]:sessionData[k]}},async set(v){Object.assign(sessionData,v)},async remove(k){delete sessionData[k]}} },
   alarms:{async get(n){return alarms.get(n)},async create(n,o){alarms.set(n,o)},async clear(n){alarms.delete(n)}},
   tabs: {
@@ -894,4 +894,32 @@ assert.equal(batch.options.minPriceRub, undefined, 'switching back to CNY clears
 assert.equal(batch.options.pageMinCny, 100);
 assert.equal(batch.stores[0].pageUrl, 'https://www.ozon.ru/category/opt-a-980/?currency_price=100.000%3B500.000');
 await runner.handle({ type: 'categoryStop' });
+
+// V1.73: Category HUD summary & categorySkipCurrent while running.
+const hudUrl1 = 'https://www.ozon.ru/category/hud-cat-1/';
+const hudUrl2 = 'https://www.ozon.ru/category/hud-cat-2/';
+batch = (await runner.handle({ type: 'categoryStart', urls: [hudUrl1, hudUrl2], targetCount: 15, confirmArchiveOverflow: true })).batch;
+const hudSample = await runner.handle({
+  type: 'categorySample',
+  batchId: batch.id,
+  attemptId: batch.attemptId,
+  categoryUrl: batch.stores[0].pageUrl,
+  observedSkus: ['77001'],
+  products: [{ sku: '77001', name: 'HudItem', link: 'https://www.ozon.ru/product/p-77001', price: '120', qualified: true, shippingRisk: { type: 'clear' } }]
+}, { tab: { id: batch.tabId, url: batch.stores[0].pageUrl } });
+assert.equal(hudSample.ok, true);
+assert.equal(hudSample.hud.version, '0.6.91');
+assert.equal(hudSample.hud.categoryIndex, 1);
+assert.equal(hudSample.hud.categoryTotal, 2);
+assert.equal(hudSample.hud.qualified, 1);
+assert.equal(hudSample.hud.targetCount, 15);
+assert.equal(hudSample.hud.observed, 1);
+const skipRes = await runner.handle({ type: 'categorySkipCurrent', batchId: batch.id });
+assert.equal(skipRes.batch.stores[0].status, 'skipped');
+assert.equal(skipRes.batch.currentIndex, 1);
+assert.equal(skipRes.batch.status, 'running');
+assert.equal(skipRes.hud.categoryIndex, 2);
+const skipLast = await runner.handle({ type: 'categorySkipCurrent', batchId: batch.id });
+assert.equal(skipLast.batch.status, 'completed');
+assert.equal(skipLast.hud.status, 'completed');
 console.log("category background runner tests passed");

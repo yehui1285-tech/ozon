@@ -1,5 +1,22 @@
 # CHANGELOG.md - Ozon 项目续接记录
 
+## 2026-11-28 - V1.73 / 0.6.91 新增类目选品左下角 Shadow DOM 悬浮进度小窗并精简统一店铺扫描双胞胎小窗（工作台待部署）
+
+- 变更背景与目标：
+  - 类目批量扫描缺乏页内实时进度与快捷控制，而店铺扫描页内卡片原有按钮、持久化栏堆叠较多。按双胞胎 HUD 方案，统一改为左下角（`left: 18px; bottom: 18px`）蓝紫渐变可拖动/可折叠悬浮窗。
+- 关键改动（共享逻辑 + 扩展双版同步 `0.6.91`）：
+  - `ozon-erp-collector-extension/category-background.js`：新增 `hudSummary(batch)`、`notifyHud(batch)` 与消息处理 `categorySkipCurrent`、`categoryOpenManager`，在启动/采样/等待/暂停/停止/翻页/推进节点向当前活动扫描标签页推送实时 HUD 状态。
+  - `ozon-erp-collector-extension/category-scanner.js`：通过 `canMountHud()` 在真实 DOM 中向 `document.documentElement` 挂载 Shadow DOM 悬浮窗（避免污染 `readCards`、分页及验证计数），支持标题栏/胶囊拖动保存位置（`ozonCategoryHudPosV1`）、折叠成实时胶囊（`ozonCategoryHudCollapsedV1`），提供 `暂停/继续`、`跳过类目`、`停止`、`返回管理页 ↗` 控制。
+  - `ozon-erp-collector-extension/store-scanner.js`：精简并统一为左下角 `304px` 蓝紫渐变双胞胎 HUD，支持拖动保存位置（`ozonStoreHudPosV1`）、折叠胶囊（`ozonStoreHudCollapsedV1`）、单行主操作（`开始准确扫描`/`停止扫描` + 批量 `结束当前店，扫描下一家`）、`更多 ▾` 抽屉收纳 `导出 Markdown` 与 `清空本店记录`、底部安静单行持久化状态 `✓ 已保存 HH:MM:SS`（保留全部原有 DOM ID 与测试契约）。
+  - 版本同步与测试扩展：`manifest.json`、`popup.html`、`sourcing-enrichment.html`、`tools/test-1688-extension.mjs`、`tools/test-black-price.mjs`、`tools/test-main-image.mjs`、`tools/test-pinduoduo-agent.mjs` 升至 `0.6.91`；`tools/test-category-background.mjs` 与 `tools/test-store-scanner.mjs` 补充 HUD 及 `categorySkipCurrent` 断言；工作台同步升级至 `V1.73`（源码 `cfef93b`）。
+- 验证结果：
+  - `powershell -ExecutionPolicy Bypass -File tools\build-release.ps1`、`node tools/test-1688-extension.mjs`、`node tools/test-pinduoduo-agent.mjs`、`node tools/sync-workbench-core.mjs --workbench $wb --check` 全部通过；独立版生成 41 个文件。
+  - 工作台 `cfef93b`：`npm run check:ozon-shared`、`npx tsc --noEmit`、`node scripts/check-release-version.mjs`、`node --test tests/*.test.mjs`（273 通过 / 0 失败）、`npm.cmd run build` 全部通过。
+  - 双版扩展 ZIP SHA-256：
+    - `ozon-erp-collector-extension.zip`：`349A73B39BD00C456AAEFD665F8C942E79C23B9F772BDD07183381E338CADBB9`
+    - `ozon-standalone-extension.zip`：`5B0AEE626931C4F4B4695606363B37BA5DA63F00EAEA8A45C5B079AECE129F0B`
+  - 回滚备份：`_备份_20261128_v173_category_hud_and_store_hud_slim_before`（常规 `_备份_*` 保持 5 个）。
+
 ## 2026-11-28 - V1.72 / 0.6.90 修复工作台路由切换/重装扩展免 F5 桥接注入，并提速「读取同源黑标价（测试）」（工作台已上线）
 
 - 修复无需 `F5` 的 SPA 桥接与重装自动补注（`manifest.json`、`workbench-pool-bridge.js`、`workbench-bridge.js`、`background.js`）：① 此前内容脚本仅匹配 `.../ozon/pool*` 与 `document_idle`，工作台作为 SPA 从其他页面切入 `/ozon/pool` 时未触发注入；现改为匹配工作台根目录于 `document_start` 挂载（幂等防重复），并在消息接收时动态校验 `location.pathname.startsWith("/ozon/pool")`；② 在 `onStartup`/`onInstalled` 调用 `wbInjectPoolBridgeToOpenTabs()` 向已开启的工作台页面自动补注桥接脚本（`build-standalone.mjs` 随 `wbSettings()` 规则自动剥离，不影响独立版）。

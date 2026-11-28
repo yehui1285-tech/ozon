@@ -378,7 +378,11 @@ assert.match(batchHtmlSource, /id="shippingRisks"/);
 assert.match(batchHtmlSource, /禁运与运输限制复核/);
 
 const manifest = JSON.parse(fs.readFileSync(new URL("../ozon-erp-collector-extension/manifest.json", import.meta.url), "utf8"));
-assert.equal(manifest.version, "0.6.90");
+assert.equal(manifest.version, "0.6.91");
+assert.match(scannerSource, /left:18px;bottom:18px/);
+assert.match(scannerSource, /ozonStoreHudPosV1/);
+assert.match(scannerSource, /ozonStoreHudCollapsedV1/);
+assert.match(scannerSource, /更多 ▾/);
 assert.equal(core.normalizeImageUrl("https://ir.ozone.ru/s3/multimedia-1-a/wc250/123.jpg"), "https://ir.ozone.ru/s3/multimedia-1-a/wc250/123.jpg");
 assert.equal(core.normalizeImageUrl("https://evil.example/a.jpg"), "");
 assert.equal(core.normalizeImageUrl("data:image/png;base64,AAA"), "");

@@ -373,6 +373,158 @@
   globalScope.__ozonCategoryListenerInstalled = true;
   let activeRun = null;
   let nativeHidden=false;
+  let hudState=null;
+  let hudBusy=false;
+  const HUD_POS_KEY='ozonCategoryHudPosV1';
+  const HUD_COLLAPSED_KEY='ozonCategoryHudCollapsedV1';
+  const canMountHud=()=>typeof globalScope.document?.createElement==='function'&&typeof globalScope.document?.documentElement?.appendChild==='function';
+  function createCategoryHud(){
+    if(!canMountHud())return null;
+    const existing=globalScope.document.getElementById?.('ozon-category-hud-host');
+    if(existing&&existing.__hudApi)return existing.__hudApi;
+    if(existing)existing.remove?.();
+    const host=globalScope.document.createElement('div');
+    host.id='ozon-category-hud-host';
+    host.style.cssText='position:fixed;left:18px;bottom:18px;z-index:2147483647;font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif;font-size:12px;';
+    const root=typeof host.attachShadow==='function'?host.attachShadow({mode:'open'}):host;
+    const box=globalScope.document.createElement('section');
+    box.className='chud-box';
+    box.innerHTML=`
+      <style>
+        *{box-sizing:border-box}
+        .chud-box{width:304px;border:1px solid #d9def4;border-radius:15px;background:rgba(248,250,255,.97);box-shadow:0 16px 38px rgba(36,48,98,.2);color:#1f2b46;overflow:hidden;padding:11px}
+        .chud-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;border-radius:11px;color:#fff;background:linear-gradient(135deg,#245be9,#7a72dc);font-weight:800;cursor:move;user-select:none}
+        .chud-head-left{display:flex;align-items:center;gap:6px;min-width:0}
+        .chud-ver{opacity:.8;font-size:11px;font-weight:600}
+        .chud-head-right{display:flex;align-items:center;gap:6px;flex-shrink:0;font-size:11px;font-weight:700}
+        .chud-icon-btn{width:22px;height:22px;min-height:0;padding:0;border:0;border-radius:6px;background:rgba(255,255,255,.2);color:#fff;font-size:14px;line-height:1;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
+        .chud-icon-btn:hover{background:rgba(255,255,255,.32)}
+        .chud-cat{margin-top:8px;padding:0 2px;font-size:12px;font-weight:700;color:#2c3a59;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        .chud-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:8px}
+        .chud-stat{padding:7px 8px;border-radius:9px;background:#eef2ff;font-size:11px;color:#4a587a}
+        .chud-stat strong{display:block;margin-top:2px;font-size:17px;font-variant-numeric:tabular-nums;color:#1b2847}
+        .chud-stat.hit{background:#fff0f2;color:#a82b45}.chud-stat.hit strong{color:#a82b45}
+        .chud-stat.wait{background:#fff8e7;color:#986b11}.chud-stat.wait strong{color:#986b11}
+        .chud-actions{display:flex;gap:6px;margin-top:8px}
+        .chud-actions button{flex:1;min-height:31px;border:1px solid #dce2f4;border-radius:8px;background:#fff;color:#38486b;font:inherit;font-size:12px;font-weight:800;cursor:pointer;padding:0 8px;white-space:nowrap}
+        .chud-actions button:hover:not(:disabled){border-color:#7d8ee6;color:#245be9}
+        .chud-actions button:disabled{opacity:.5;cursor:not-allowed}
+        .chud-actions .chud-primary{color:#fff;border:0;background:linear-gradient(135deg,#245be9,#746fd9)}
+        .chud-actions .chud-warn{color:#8a5800;background:#fff7df;border-color:#f0cf7b}
+        .chud-actions .chud-stop{color:#a82b45;background:#fff0f2;border-color:#ffd5de}
+        .chud-status{margin-top:8px;padding:6px 8px;border-radius:8px;background:#eef1f8;color:#556380;font-size:11px;line-height:1.4;overflow-wrap:anywhere}
+        .chud-foot{margin-top:6px;display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11px;color:#6b7a94;padding:0 2px}
+        .chud-link{color:#3559d6;font-weight:700;text-decoration:none;cursor:pointer;background:none;border:0;padding:0;font:inherit}
+        .chud-link:hover{text-decoration:underline}
+        .chud-pill{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:999px;color:#fff;background:linear-gradient(135deg,#245be9,#7a72dc);box-shadow:0 12px 28px rgba(36,48,98,.24);font-weight:800;cursor:move;user-select:none;white-space:nowrap}
+        .chud-pill span{font-size:12px;font-variant-numeric:tabular-nums}
+        [hidden]{display:none!important}
+      </style>
+      <div class="chud-pill" data-chud="pill" hidden>
+        <span data-chud="pillText">OZON 类目选品</span>
+        <button type="button" class="chud-icon-btn" data-chud="expand" title="展开小窗">+</button>
+      </div>
+      <div data-chud="full">
+        <div class="chud-head" data-chud="head" title="按住可拖动位置">
+          <span class="chud-head-left">OZON 类目选品 <span class="chud-ver" data-chud="ver"></span></span>
+          <span class="chud-head-right"><span data-chud="pos">类目 -/-</span><button type="button" class="chud-icon-btn" data-chud="collapse" title="收起为小条">−</button></span>
+        </div>
+        <div class="chud-cat" data-chud="catName">准备类目…</div>
+        <div class="chud-stats">
+          <div class="chud-stat">已查看<strong data-chud="observed">0</strong></div>
+          <div class="chud-stat hit">本批新采<strong data-chud="qualified">0</strong></div>
+          <div class="chud-stat wait">待复查<strong data-chud="pending">0</strong></div>
+        </div>
+        <div class="chud-actions">
+          <button type="button" class="chud-primary" data-chud="pauseResume">暂停</button>
+          <button type="button" class="chud-warn" data-chud="skip">跳过类目</button>
+          <button type="button" class="chud-stop" data-chud="stop">停止</button>
+        </div>
+        <div class="chud-status" data-chud="status">准备扫描…</div>
+        <div class="chud-foot">
+          <span data-chud="saved">进度已保存</span>
+          <button type="button" class="chud-link" data-chud="manager">返回管理页 ↗</button>
+        </div>
+      </div>
+    `;
+    root.appendChild(box);
+    globalScope.document.documentElement.appendChild(host);
+    const q=k=>box.querySelector(`[data-chud="${k}"]`);
+    let collapsed=false;try{collapsed=globalScope.localStorage?.getItem(HUD_COLLAPSED_KEY)==='1'}catch{}
+    const applyPos=(left,top)=>{
+      const maxX=Math.max(8,(globalScope.innerWidth||1200)-host.offsetWidth-8);
+      const maxY=Math.max(8,(globalScope.innerHeight||800)-host.offsetHeight-8);
+      host.style.left=`${Math.round(Math.max(8,Math.min(left,maxX)))}px`;
+      host.style.top=`${Math.round(Math.max(8,Math.min(top,maxY)))}px`;
+      host.style.bottom='auto';
+      return {left:parseInt(host.style.left,10),top:parseInt(host.style.top,10)};
+    };
+    const restorePos=()=>{
+      try{
+        const raw=globalScope.localStorage?.getItem(HUD_POS_KEY);
+        if(!raw)return;
+        const pos=JSON.parse(raw);
+        if(Number.isFinite(pos?.left)&&Number.isFinite(pos?.top))applyPos(pos.left,pos.top);
+      }catch{}
+    };
+    restorePos();
+    const bindDrag=handle=>{
+      handle?.addEventListener?.('pointerdown',e=>{
+        if(e.button!==0||e.target?.closest?.('button,a'))return;
+        const rect=host.getBoundingClientRect();
+        const offX=e.clientX-rect.left,offY=e.clientY-rect.top;
+        e.preventDefault();
+        const move=ev=>{const p=applyPos(ev.clientX-offX,ev.clientY-offY);try{globalScope.localStorage?.setItem(HUD_POS_KEY,JSON.stringify(p))}catch{}};
+        const up=()=>{globalScope.removeEventListener('pointermove',move);globalScope.removeEventListener('pointerup',up)};
+        globalScope.addEventListener('pointermove',move);
+        globalScope.addEventListener('pointerup',up);
+      });
+    };
+    bindDrag(q('head'));bindDrag(q('pill'));
+    const setCollapsed=next=>{collapsed=Boolean(next);try{globalScope.localStorage?.setItem(HUD_COLLAPSED_KEY,collapsed?'1':'0')}catch{};q('full').hidden=collapsed;q('pill').hidden=!collapsed;if(host.style.top&&host.style.top!=='auto')applyPos(parseInt(host.style.left,10)||18,parseInt(host.style.top,10)||18);};
+    q('collapse').addEventListener('click',()=>setCollapsed(true));
+    q('expand').addEventListener('click',()=>setCollapsed(false));
+    setCollapsed(collapsed);
+    const sendAction=(type,extra={})=>{
+      if(hudBusy)return;
+      hudBusy=true;renderHud(hudState||{});
+      globalScope.chrome.runtime.sendMessage({type,batchId:hudState?.batchId,...extra},res=>{
+        hudBusy=false;
+        if(res?.hud)hudState=res.hud;
+        else if(res?.ok===false&&res?.error)hudState={...(hudState||{}),statusText:res.error};
+        renderHud(hudState||{});
+      });
+    };
+    q('pauseResume').addEventListener('click',()=>sendAction(hudState?.status==='paused'?'categoryResume':'categoryPause'));
+    q('skip').addEventListener('click',()=>sendAction('categorySkipCurrent'));
+    q('stop').addEventListener('click',()=>sendAction('categoryStop'));
+    q('manager').addEventListener('click',()=>globalScope.chrome.runtime.sendMessage({type:'categoryOpenManager'}));
+    function renderHud(state){
+      const s=state||{};
+      const done=['completed','stopped','failed'].includes(s.status);
+      const targetText=Number(s.targetCount)>0?`${s.qualified||0}/${s.targetCount}`:String(s.qualified||0);
+      q('ver').textContent=s.version?`v${s.version}`:'';
+      q('pos').textContent=`类目 ${s.categoryIndex||1}/${s.categoryTotal||1} · 第${s.pageNum||1}页`;
+      q('catName').textContent=s.categoryName||'类目扫描中';
+      q('observed').textContent=String(s.observed||0);
+      q('qualified').textContent=targetText;
+      q('pending').textContent=String(s.pending||0);
+      q('pillText').textContent=`OZON 类目 · ${targetText} · 第${s.pageNum||1}页`;
+      const pauseBtn=q('pauseResume'),skipBtn=q('skip'),stopBtn=q('stop');
+      pauseBtn.textContent=s.status==='paused'?'继续':'暂停';
+      pauseBtn.hidden=done;skipBtn.hidden=done;stopBtn.hidden=done;
+      pauseBtn.disabled=hudBusy;skipBtn.disabled=hudBusy;stopBtn.disabled=hudBusy;
+      q('status').textContent=s.statusText||s.message||(s.status==='paused'?'已暂停，点击继续可恢复扫描':'扫描中…');
+      if(s.savedAt)q('saved').textContent=`已保存 ${s.savedAt}`;
+    }
+    const api={update(next){hudState={...(hudState||{}),...(next||{})};renderHud(hudState);}};
+    host.__hudApi=api;
+    return api;
+  }
+  function updateCategoryHud(next){
+    const hud=createCategoryHud();
+    if(hud)hud.update(next);
+  }
   const pageReportedHidden=()=>globalScope.document?.hidden===true;
   const pageFocused=()=>typeof globalScope.document?.hasFocus==='function'?Boolean(globalScope.document.hasFocus()):undefined;
   const hidden=()=>pageReportedHidden()||nativeHidden;
@@ -386,15 +538,17 @@
   globalScope.document?.addEventListener?.('visibilitychange',()=>activeRun?.wait?.wake());
   globalScope.document?.addEventListener?.('resume',()=>activeRun?.wait?.wake());
   globalScope.chrome.runtime.onMessage.addListener((message, _sender, reply) => {
-    if (message?.type === 'categoryScanStop') { if(activeRun?.batchId===message.batchId&&activeRun?.attemptId===message.attemptId)cancelRun(); reply?.({ ok: true }); return false; }
+    if (message?.type === 'categoryHudUpdate') { if (message.hud) updateCategoryHud(message.hud); reply?.({ ok: true }); return false; }
+    if (message?.type === 'categoryScanStop') { if(activeRun?.batchId===message.batchId&&activeRun?.attemptId===message.attemptId)cancelRun(); if(message.hud)updateCategoryHud(message.hud); reply?.({ ok: true }); return false; }
     if(message?.type==='categoryScanTick'){
       const running=!!activeRun&&activeRun.batchId===message.batchId&&activeRun.attemptId===message.attemptId;
       if(running&&typeof message.pageNativeHidden==='boolean')nativeHidden=message.pageNativeHidden;
       reply?.({ok:true,running,...pageState()});if(running)activeRun.wait?.wake();return false;
     }
     if (message?.type !== 'categoryScanStart') return false;
-    if(activeRun?.batchId===message.batchId&&activeRun?.attemptId===message.attemptId){reply?.({ok:true,accepted:true});return false;}
+    if(activeRun?.batchId===message.batchId&&activeRun?.attemptId===message.attemptId){if(message.hud)updateCategoryHud(message.hud);reply?.({ok:true,accepted:true});return false;}
     cancelRun();nativeHidden=message.pageNativeHidden===true;const run={batchId:message.batchId,attemptId:message.attemptId,wait:null};activeRun=run;
+    if(message.hud||canMountHud())updateCategoryHud(message.hud||{batchId:message.batchId,status:'running',observed:(message.observedSkus||[]).length,pending:(message.pendingSkus||[]).length,statusText:'正在启动类目扫描…'});
     reply?.({ ok: true, accepted: true, batchId: message.batchId, attemptId: message.attemptId });
     void scan(message,run).catch(() => {if(activeRun===run)return done(message, false, 'reader_error')}).finally(()=>{if(activeRun===run)activeRun=null});
     return false;
@@ -410,7 +564,7 @@
     const rubRange=resolvedPagePriceRange(msg.options);let pagePriceConfirmed=!rubRange,pricePolls=0;
     const wait=ms=>waitForRun(run,ms);
     const settle=()=>hidden()?BACKGROUND_SETTLE_MS:FOREGROUND_SETTLE_MS;
-    const reportWait=reason=>new Promise(resolve=>globalScope.chrome.runtime.sendMessage({type:'categoryWait',batchId:msg.batchId,attemptId:msg.attemptId,categoryUrl:url,reason,...pageState()},response=>resolve(response||{})));
+    const reportWait=reason=>new Promise(resolve=>globalScope.chrome.runtime.sendMessage({type:'categoryWait',batchId:msg.batchId,attemptId:msg.attemptId,categoryUrl:url,reason,...pageState()},response=>{if(response?.hud)updateCategoryHud({...response.hud,statusText:response.hud.message||'等待页面状态…'});resolve(response||{});}));
     const waitStopped=ack=>ack.ok!==true||ack.stop===true||ack.stopped===true||activeRun!==run;
     for (let sample = 0; sample < MAX_SAMPLES && scrolls <= MAX_SCROLLS; sample++) {
       if (activeRun!==run) return;
@@ -503,6 +657,12 @@
       if(pageHidden&&atBottom){if(confirmedBottom){const waiting=await reportWait('hidden_bottom');if(waitStopped(waiting))return;}await wait(confirmedBottom?BACKGROUND_RETRY_MS:BACKGROUND_SETTLE_MS);sample--;continue;}
       if (sample === MAX_SAMPLES - 1 || scrolls >= MAX_SCROLLS) break;
       const fastSkip = !pageHidden && result.available && result.discoverSkus.length > 0 && deltaObserved.length === 0 && products.length === 0 && pending.size === 0 && !confirmedBottom && !atBottom;
+      if(ack.hud||canMountHud()){
+        const nowTime=new Date().toLocaleTimeString('zh-CN',{hour12:false});
+        const baseHud=ack.hud||{};
+        const statusText=ack.stop?(baseHud.message||'已达到采集目标'):fastSkip?`快进跳过已查商品（第${baseHud.pageNum||1}页）`:pageHidden?'后台扫描中…':`正在扫描第${baseHud.pageNum||1}页 · 待复查 ${pending.size}`;
+        updateCategoryHud({...baseHud,pending:pending.size,observed:baseHud.observed??observed.size,savedAt:nowTime,statusText});
+      }
       const scrollStep = fastSkip ? Math.max(400, Math.floor(globalScope.innerHeight * 1.25)) : Math.max(200, Math.floor(globalScope.innerHeight * 0.65));
       const beforeScroll=globalScope.scrollY;globalScope.scrollBy(0, scrollStep);
       if(pageHidden&&Math.abs(globalScope.scrollY-beforeScroll)<5){const waiting=await reportWait('scroll_stalled');if(waitStopped(waiting))return;await wait(BACKGROUND_RETRY_MS);sample--;continue;}
@@ -514,7 +674,9 @@
   }
   function done(msg, complete, reason, nextUrl = '', verification = '') {
     const requested = core.exactPageUrl(msg.categoryUrl);
+    const doneNote=reason==='next_page_available'?'正在翻至下一页…':complete?'本类目已扫到底':'扫描已暂停';
+    updateCategoryHud({statusText:doneNote});
     const result = { type: 'categoryPageDone', batchId: msg.batchId, attemptId: msg.attemptId, categoryUrl: requested, ...(nextUrl ? { nextUrl } : {}), ...(verification?{verificationDetail:verification}:{}), complete, reason };
-    return new Promise((resolve) => globalScope.chrome.runtime.sendMessage(result, () => resolve(result)));
+    return new Promise((resolve) => globalScope.chrome.runtime.sendMessage(result, (res) => { if(res?.hud)updateCategoryHud(res.hud); resolve(result); }));
   }
 })(globalThis);

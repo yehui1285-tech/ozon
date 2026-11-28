@@ -324,15 +324,18 @@
     if (!element) return;
     if (lastSaveError) {
       element.textContent = `本地保存失败：${lastSaveError}`;
-      element.style.color = "#b42318";
-      element.style.background = "#fff0f0";
+      element.style.color = "#a82b45";
+      element.style.background = "#fff0f2";
+      element.style.padding = "4px 6px";
+      element.style.borderRadius = "6px";
       return;
     }
-    element.style.color = "#476078";
-    element.style.background = "#edf7f2";
-    if (saveInFlight || pendingSaveRequest) element.textContent = "正在保存扫描记录……";
-    else if (lastSavedAt) element.textContent = `记录已安全保存（${new Date(lastSavedAt).toLocaleTimeString("zh-CN", { hour12: false })}）`;
-    else element.textContent = "正在读取本店历史记录……";
+    element.style.color = "#6b7a94";
+    element.style.background = "transparent";
+    element.style.padding = "0";
+    if (saveInFlight || pendingSaveRequest) element.textContent = "保存中…";
+    else if (lastSavedAt) element.textContent = `✓ 已保存 ${new Date(lastSavedAt).toLocaleTimeString("zh-CN", { hour12: false })}`;
+    else element.textContent = "读取历史记录中…";
   }
 
   function sendStoreState(request) {
@@ -489,6 +492,8 @@
     document.getElementById("ozon-store-observed").textContent = String(observedSkus.size);
     document.getElementById("ozon-store-qualified").textContent = String(records.size);
     document.getElementById("ozon-store-pending").textContent = String(pendingLinks.size);
+    const pillText = document.getElementById("ozon-store-pill-text");
+    if (pillText) pillText.textContent = `OZON 店铺 · ${observedSkus.size} / 命中 ${records.size}`;
     document.getElementById("ozon-store-start").hidden = autoScanning;
     document.getElementById("ozon-store-stop").hidden = !autoScanning;
     document.getElementById("ozon-store-skip").hidden = !(autoScanning && activeBatchId);
@@ -869,33 +874,117 @@
   }
 
   function installPanel() {
+    const POS_KEY = "ozonStoreHudPosV1";
+    const COLLAPSED_KEY = "ozonStoreHudCollapsedV1";
     const panel = document.createElement("section");
     panel.id = PANEL_ID;
-    panel.style.cssText = "position:fixed;left:18px;bottom:150px;z-index:2147483647;width:330px;padding:13px;border:1px solid #d9def4;border-radius:16px;background:rgba(248,250,255,.96);box-shadow:0 16px 38px rgba(36,48,98,.18);font-family:Microsoft YaHei,system-ui,sans-serif;color:#1f2b46;font-size:12px;";
+    panel.style.cssText = "position:fixed;left:18px;bottom:18px;z-index:2147483647;font-family:Microsoft YaHei,PingFang SC,system-ui,sans-serif;color:#1f2b46;font-size:12px;";
     panel.innerHTML = `
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:9px 10px;border-radius:12px;color:#fff;background:linear-gradient(135deg,#245be9,#7a72dc);font-weight:800;">
-        <span>OZON 店铺扫描 <small style="opacity:.75;font-weight:600;">v${version}</small></span>
-        <span>${storeName()}</span>
+      <div id="ozon-store-pill" hidden>
+        <span id="ozon-store-pill-text">OZON 店铺 · 0 / 命中 0</span>
+        <button id="ozon-store-expand" class="oz-hud-icon" type="button" title="展开小窗">+</button>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px;margin-top:10px;">
-        <div style="padding:9px;border-radius:10px;background:#eef2ff;">已查看<br><strong id="ozon-store-observed" style="font-size:19px;">0</strong></div>
-        <div style="padding:9px;border-radius:10px;background:#fff0f2;color:#a82b45;">符合要求<br><strong id="ozon-store-qualified" style="font-size:19px;">0</strong></div>
-        <div style="padding:9px;border-radius:10px;background:#fff8e7;color:#986b11;">待复查<br><strong id="ozon-store-pending" style="font-size:19px;">0</strong></div>
+      <div id="ozon-store-card">
+        <div id="ozon-store-head" title="按住可拖动位置">
+          <span class="oz-hud-title">OZON 店铺扫描 <small>v${version}</small></span>
+          <span class="oz-hud-right"><span id="ozon-store-name"></span><button id="ozon-store-collapse" class="oz-hud-icon" type="button" title="收起为小条">−</button></span>
+        </div>
+        <div class="oz-stats">
+          <div class="oz-stat">已查看<strong id="ozon-store-observed">0</strong></div>
+          <div class="oz-stat hit">符合要求<strong id="ozon-store-qualified">0</strong></div>
+          <div class="oz-stat wait">待复查<strong id="ozon-store-pending">0</strong></div>
+        </div>
+        <div class="oz-actions">
+          <button id="ozon-store-start" type="button">开始准确扫描</button>
+          <button id="ozon-store-stop" type="button" hidden>停止扫描</button>
+          <button id="ozon-store-skip" type="button" hidden>结束当前店，扫描下一家</button>
+        </div>
+        <div id="ozon-store-status"></div>
+        <div class="oz-foot">
+          <span id="ozon-store-persistence">读取历史记录中…</span>
+          <details class="oz-more">
+            <summary>更多 ▾</summary>
+            <div class="oz-more-actions">
+              <button id="ozon-store-export" type="button">导出 Markdown</button>
+              <button id="ozon-store-clear" type="button">清空本店记录</button>
+            </div>
+          </details>
+        </div>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:9px;">
-        <button id="ozon-store-start" type="button">开始准确扫描</button>
-        <button id="ozon-store-stop" type="button" hidden>停止扫描</button>
-        <button id="ozon-store-export" type="button">导出 Markdown</button>
-        <button id="ozon-store-clear" type="button">清空本店记录</button>
-        <button id="ozon-store-skip" type="button" hidden style="grid-column:1/-1;">结束当前店，扫描下一家</button>
-      </div>
-      <div id="ozon-store-status" style="margin-top:9px;padding:8px;border-radius:9px;background:#eef1f8;color:#5f6d88;line-height:1.45;"></div>
-      <div id="ozon-store-persistence" style="margin-top:6px;padding:7px;border-radius:9px;background:#edf7f2;color:#476078;line-height:1.4;">正在读取本店历史记录……</div>
       <style>
-        #${PANEL_ID} *{box-sizing:border-box}#${PANEL_ID} button{min-height:34px;border:1px solid #dce2f4;border-radius:9px;background:#fff;color:#3e4e72;font:inherit;font-weight:800;cursor:pointer}#${PANEL_ID} button:hover{border-color:#8796e5;color:#274fc4}#${PANEL_ID} button:disabled{opacity:.55;cursor:not-allowed}#${PANEL_ID} #ozon-store-start,#${PANEL_ID} #ozon-store-export{color:#fff;border:0;background:linear-gradient(135deg,#245be9,#746fd9)}#${PANEL_ID} #ozon-store-stop{color:#a82b45;background:#fff0f2;border-color:#ffd7df}#${PANEL_ID} #ozon-store-skip{color:#8a5800;background:#fff7df;border-color:#f3d58a}
+        #${PANEL_ID} *{box-sizing:border-box}
+        #${PANEL_ID} [hidden]{display:none!important}
+        #${PANEL_ID} #ozon-store-card{width:304px;padding:11px;border:1px solid #d9def4;border-radius:15px;background:rgba(248,250,255,.97);box-shadow:0 16px 38px rgba(36,48,98,.18)}
+        #${PANEL_ID} #ozon-store-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;border-radius:11px;color:#fff;background:linear-gradient(135deg,#245be9,#7a72dc);font-weight:800;cursor:move;user-select:none}
+        #${PANEL_ID} .oz-hud-title{white-space:nowrap;flex-shrink:0}#${PANEL_ID} .oz-hud-title small{opacity:.8;font-weight:600;font-size:11px}
+        #${PANEL_ID} .oz-hud-right{display:flex;align-items:center;gap:6px;min-width:0}
+        #${PANEL_ID} #ozon-store-name{font-size:11px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:110px}
+        #${PANEL_ID} .oz-hud-icon{width:22px;height:22px;min-height:0;padding:0;border:0;border-radius:6px;background:rgba(255,255,255,.2);color:#fff;font-size:14px;line-height:1;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0}
+        #${PANEL_ID} .oz-hud-icon:hover{background:rgba(255,255,255,.32)}
+        #${PANEL_ID} .oz-stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:8px}
+        #${PANEL_ID} .oz-stat{padding:7px 8px;border-radius:9px;background:#eef2ff;font-size:11px;color:#4a587a}
+        #${PANEL_ID} .oz-stat strong{display:block;margin-top:2px;font-size:17px;font-variant-numeric:tabular-nums;color:#1b2847}
+        #${PANEL_ID} .oz-stat.hit{background:#fff0f2;color:#a82b45}#${PANEL_ID} .oz-stat.hit strong{color:#a82b45}
+        #${PANEL_ID} .oz-stat.wait{background:#fff8e7;color:#986b11}#${PANEL_ID} .oz-stat.wait strong{color:#986b11}
+        #${PANEL_ID} .oz-actions{display:flex;gap:6px;margin-top:8px}
+        #${PANEL_ID} .oz-actions button{flex:1;min-height:32px;border:1px solid #dce2f4;border-radius:8px;background:#fff;color:#3e4e72;font:inherit;font-size:12px;font-weight:800;cursor:pointer;padding:0 8px;white-space:nowrap}
+        #${PANEL_ID} .oz-actions button:disabled{opacity:.55;cursor:not-allowed}
+        #${PANEL_ID} #ozon-store-start{color:#fff;border:0;background:linear-gradient(135deg,#245be9,#746fd9)}
+        #${PANEL_ID} #ozon-store-stop{color:#a82b45;background:#fff0f2;border-color:#ffd7df}
+        #${PANEL_ID} #ozon-store-skip{flex:1.4;color:#8a5800;background:#fff7df;border-color:#f3d58a}
+        #${PANEL_ID} #ozon-store-status{margin-top:8px;padding:6px 8px;border-radius:8px;background:#eef1f8;color:#556380;font-size:11px;line-height:1.4}
+        #${PANEL_ID} .oz-foot{margin-top:6px;display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11px;color:#6b7a94;padding:0 2px}
+        #${PANEL_ID} .oz-more{position:relative}
+        #${PANEL_ID} .oz-more summary{list-style:none;cursor:pointer;color:#485a82;font-weight:700;user-select:none}
+        #${PANEL_ID} .oz-more summary::-webkit-details-marker{display:none}
+        #${PANEL_ID} .oz-more-actions{display:flex;gap:6px;margin-top:7px}
+        #${PANEL_ID} .oz-more-actions button{min-height:28px;padding:0 8px;border:1px solid #dce2f4;border-radius:7px;background:#fff;color:#3e4e72;font:inherit;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap}
+        #${PANEL_ID} .oz-more-actions button:hover{border-color:#8796e5;color:#245be9}
+        #${PANEL_ID} #ozon-store-clear{color:#a82b45;border-color:#ffd7df}
+        #${PANEL_ID} #ozon-store-pill{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:999px;color:#fff;background:linear-gradient(135deg,#245be9,#7a72dc);box-shadow:0 12px 28px rgba(36,48,98,.24);font-weight:800;cursor:move;user-select:none;white-space:nowrap}
+        #${PANEL_ID} #ozon-store-pill-text{font-size:12px;font-variant-numeric:tabular-nums}
       </style>
     `;
     document.body.appendChild(panel);
+    document.getElementById("ozon-store-name").textContent = storeName();
+    const applyPos = (left, top) => {
+      const maxX = Math.max(8, (window.innerWidth || 1200) - panel.offsetWidth - 8);
+      const maxY = Math.max(8, (window.innerHeight || 800) - panel.offsetHeight - 8);
+      panel.style.left = `${Math.round(Math.max(8, Math.min(left, maxX)))}px`;
+      panel.style.top = `${Math.round(Math.max(8, Math.min(top, maxY)))}px`;
+      panel.style.bottom = "auto";
+      return { left: parseInt(panel.style.left, 10), top: parseInt(panel.style.top, 10) };
+    };
+    try {
+      const savedPos = JSON.parse(localStorage.getItem(POS_KEY) || "null");
+      if (Number.isFinite(savedPos?.left) && Number.isFinite(savedPos?.top)) applyPos(savedPos.left, savedPos.top);
+    } catch {}
+    const bindDrag = (handle) => {
+      handle?.addEventListener("pointerdown", (e) => {
+        if (e.button !== 0 || e.target?.closest?.("button,summary,a")) return;
+        const rect = panel.getBoundingClientRect();
+        const offX = e.clientX - rect.left, offY = e.clientY - rect.top;
+        e.preventDefault();
+        const move = (ev) => {
+          const pos = applyPos(ev.clientX - offX, ev.clientY - offY);
+          try { localStorage.setItem(POS_KEY, JSON.stringify(pos)); } catch {}
+        };
+        const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", up);
+      });
+    };
+    bindDrag(document.getElementById("ozon-store-head"));
+    bindDrag(document.getElementById("ozon-store-pill"));
+    const setCollapsed = (collapsed) => {
+      try { localStorage.setItem(COLLAPSED_KEY, collapsed ? "1" : "0"); } catch {}
+      document.getElementById("ozon-store-card").hidden = collapsed;
+      document.getElementById("ozon-store-pill").hidden = !collapsed;
+      if (panel.style.top && panel.style.top !== "auto") applyPos(parseInt(panel.style.left, 10) || 18, parseInt(panel.style.top, 10) || 18);
+    };
+    try { setCollapsed(localStorage.getItem(COLLAPSED_KEY) === "1"); } catch {}
+    document.getElementById("ozon-store-collapse").addEventListener("click", () => setCollapsed(true));
+    document.getElementById("ozon-store-expand").addEventListener("click", () => setCollapsed(false));
     document.getElementById("ozon-store-start").addEventListener("click", startAutoScan);
     document.getElementById("ozon-store-stop").addEventListener("click", () => void stopAutoScan("扫描已停止，可导出当前结果或稍后继续。", false, { reason: "manual-stop" }));
     document.getElementById("ozon-store-export").addEventListener("click", exportMarkdown);

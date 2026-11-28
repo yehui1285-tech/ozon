@@ -300,6 +300,37 @@
   const finished = batch => !!batch && ["completed", "stopped", "failed"].includes(batch.status);
   const emptyFinished = batch => finished(batch) && qualifiedTotal(batch) === 0;
   const historySummary = batch => ({ id: batch.id, status: batch.status, updatedAt: batch.updatedAt, qualifiedCount: qualifiedTotal(batch), storeCount: batch.stores?.length || 0 });
+  function hudSummary(batch) {
+    if (!batch) return null;
+    const task = currentStore(batch);
+    const total = Array.isArray(batch.stores) ? batch.stores.length : 0;
+    const current = Number(batch.currentIndex || 0);
+    const urlStr = task ? pageUrl(task) : '';
+    let pageNum = 1;
+    try { if (urlStr) pageNum = Math.max(1, Number(new URL(urlStr).searchParams.get('page') || 1) || 1); } catch {}
+    const observed = Array.isArray(batch.stores) ? batch.stores.reduce((sum, entry) => sum + (Number(entry?.observedCount) || 0), 0) : 0;
+    const version = String(scope.chrome?.runtime?.getManifest?.()?.version || '');
+    return {
+      version,
+      batchId: batch.id,
+      status: batch.status,
+      categoryName: String(task?.name || task?.label || task?.sellerKey || '类目扫描'),
+      sellerKey: String(task?.sellerKey || ''),
+      categoryIndex: total ? Math.min(total, current + 1) : 0,
+      categoryTotal: total,
+      pageNum,
+      observed,
+      qualified: qualifiedTotal(batch),
+      targetCount: Number(batch.options?.targetCount || 0),
+      taskQualified: Number(task?.qualifiedCount || 0),
+      perCategoryLimit: Number.isInteger(batch.options?.perCategoryLimit) ? batch.options.perCategoryLimit : null,
+      pending: Number(task?.pendingCount || 0),
+      message: String(batch.message || ''),
+    };
+  }
+  async function notifyHud(batch) {
+    if (batch?.tabId) await bounded(chrome.tabs.sendMessage(batch.tabId, { type: "categoryHudUpdate", batchId: batch.id, hud: hudSummary(batch) })).catch(() => null);
+  }
   function assertActive(batch, m, sender, requirePage = true) {
     if (!batch || batch.id !== m.batchId) throw Error("类目批次已变化");
     if (batch.status !== 'running' || currentStore(batch)?.status !== 'scanning') throw Error('类目任务已暂停或不再活动');
@@ -311,7 +342,7 @@
     return task;
   }
   async function stopScanner(batch) {
-    if (batch?.tabId) await bounded(chrome.tabs.sendMessage(batch.tabId, { type: "categoryScanStop", batchId: batch.id, attemptId: batch.attemptId })).catch(() => null);
+    if (batch?.tabId) await bounded(chrome.tabs.sendMessage(batch.tabId, { type: "categoryScanStop", batchId: batch.id, attemptId: batch.attemptId, hud: hudSummary(batch) })).catch(() => null);
   }
   async function replaceTaskTab(batch, targetUrl, oldTab = null) {
     const oldTabId = oldTab?.id ?? batch.tabId;
@@ -430,13 +461,14 @@
     }
     await stopScanner(batch);
     await save(batch);
+    await notifyHud(batch);
   }
   async function startScanner(batch,task){
     if(hasPagePrice(batch.options)&&task.pagePriceStatus!=='pending'){task.pagePriceStatus='pending';await save(batch);}
     const injection=await bounded(chrome.scripting.executeScript({target:{tabId:batch.tabId},files:['store-scanner-core.js','category-core.js','category-scanner.js']}));
     if(injection===null)throw Error('扫描页面暂未响应');
     const pageNativeHidden=batch.backgroundExperiment?await nativePageHidden(batch.tabId):false;
-    const ack=await bounded(chrome.tabs.sendMessage(batch.tabId,{type:'categoryScanStart',batchId:batch.id,attemptId:batch.attemptId,categoryUrl:pageUrl(task),options:batch.options,observedSkus:task.observedSkus||[],pendingSkus:task.pendingSkus||[],recheckFromTop:!!task.pendingCount&&!task.pendingSkus?.length,pageNativeHidden}));
+    const ack=await bounded(chrome.tabs.sendMessage(batch.tabId,{type:'categoryScanStart',batchId:batch.id,attemptId:batch.attemptId,categoryUrl:pageUrl(task),options:batch.options,observedSkus:task.observedSkus||[],pendingSkus:task.pendingSkus||[],recheckFromTop:!!task.pendingCount&&!task.pendingSkus?.length,pageNativeHidden,hud:hudSummary(batch)}));
     if(!ack?.ok)throw Error('扫描器未确认启动');
   }
   async function openCurrent(batch, create = false) {
@@ -753,7 +785,41 @@
           if (active?.status === 'scanning') active.status = active.pendingCount || active.observedCount ? 'partial' : 'pending';
           batch.status = m.type === "categoryStop" ? "stopped" : "paused";
           batch.message = m.type === "categoryStop" ? "已停止" : "已暂停";
-          diagnosticEvent(batch,m.type==='categoryStop'?'stop':'explicit_pause'); await save(batch); return { ok: true, batch: clone(batch) };
+          diagnosticEvent(batch,m.type==='categoryStop'?'stop':'explicit_pause'); await save(batch); await notifyHud(batch); return { ok: true, batch: clone(batch), hud: hudSummary(batch) };
+        }
+        case "categorySkipCurrent": {
+          if (!batch || !["running", "paused"].includes(batch.status)) throw Error("当前没有进行中或暂停的类目批次");
+          if (m.batchId && batch.id !== m.batchId) throw Error("类目批次已变化");
+          await stopScanner(batch);
+          const current = currentStore(batch);
+          if (current) { current.status = "skipped"; current.skipReason = "手动跳过"; delete current.waitSince; delete current.waitReason; }
+          diagnosticEvent(batch, "skip_current", current?.sellerKey || "");
+          const next = nextResumeIndex(batch);
+          if (next < 0) {
+            batch.status = "completed";
+            batch.message = "本批已无待扫描类目";
+            delete batch.resumeIndex;
+            await save(batch);
+            await notifyHud(batch);
+            return { ok: true, batch: clone(batch), hud: hudSummary(batch) };
+          }
+          batch.status = "running";
+          batch.message = "已跳过当前类目，切换到下一类目";
+          await switchTask(batch, next, true);
+          return { ok: true, batch: clone(batch), hud: hudSummary(batch) };
+        }
+        case "categoryOpenManager": {
+          const managerUrl = scope.chrome?.runtime?.getURL?.("category.html");
+          if (!managerUrl) return { ok: true };
+          const tabs = (await scope.chrome?.tabs?.query?.({ url: managerUrl }).catch(() => [])) || [];
+          const existing = tabs.find(t => t?.id);
+          if (existing) {
+            await scope.chrome.tabs.update(existing.id, { active: true }).catch(() => null);
+            if (Number.isInteger(existing.windowId)) await scope.chrome.windows?.update?.(existing.windowId, { focused: true }).catch(() => null);
+          } else {
+            await scope.chrome?.tabs?.create?.({ url: managerUrl, active: true }).catch(() => null);
+          }
+          return { ok: true };
         }
         case "categoryResume":
           if (!batch || batch.status !== "paused") throw Error("没有可继续的暂停类目批次");
@@ -902,7 +968,7 @@
             await save(batch);
           }
           const stop = stopBatch || hitPerCategoryLimit;
-          return { ok: true, stop, pageNativeHidden: batch.backgroundExperiment?await nativePageHidden(batch.tabId):false, ...(m.compactAck?{}:{batch:clone(batch)}) };
+          return { ok: true, stop, pageNativeHidden: batch.backgroundExperiment?await nativePageHidden(batch.tabId):false, hud: hudSummary(batch), ...(m.compactAck?{}:{batch:clone(batch)}) };
         }
         case "categoryWait": {
           const task = assertActive(batch,m,sender);
@@ -926,7 +992,7 @@
             }
           } else delete task.waitSince;
           await save(batch);
-          return {ok:true};
+          return {ok:true,hud:hudSummary(batch)};
         }
         case "categoryPageDone": {
           const task = assertActive(batch, m, sender);
@@ -983,7 +1049,7 @@
             const expectedCurrency=activeRange?.currency==='CNY'?'人民币（¥）':'卢布（₽）';
             if(activeRange&&['price_filter_unconfirmed','price_currency_mismatch','next_page_available'].includes(m.reason))task.pagePriceStatus='unconfirmed';
             const why=(m.reason==='manual-verification'&&Object.hasOwn(verificationWhy,m.verificationDetail)?verificationWhy[m.verificationDetail]:null)||{"manual-verification":"需人工完成站点验证或登录","catalog_list_unavailable":"未识别唯一主商品列表","scan_bound_reached":"达到单页扫描上限（非完成）","pending_cards":"仍有商品字段待复查","reader_error":"页面读取失败","sample_not_persisted":"未确认数据已保存","price_filter_unconfirmed":`未确认 Ozon 页面${expectedCurrency}价格区间，未读取本页商品`,"price_currency_mismatch":`当前 Ozon 页面货币不是${expectedCurrency}，与「价格筛选区间」不匹配；请切换 Ozon 网页货币，或修改/清空上方「价格筛选区间」后用绿色「下一轮续扫」继续`,"next_page_available":"下一页未保留已确认的类目和价格条件"}[m.reason]||"未确认扫描完成";task.note=why;batch.message=why+"，已暂停，检查页面后可继续。";diagnosticEvent(batch,m.reason==='manual-verification'?'manual_verification':m.reason==='reader_error'?'reader_failure':'scan_paused',why); }
-          await save(batch); return { ok: true, batch: clone(batch) };
+          await save(batch); await notifyHud(batch); return { ok: true, batch: clone(batch), hud: hudSummary(batch) };
         }
         case "categoryAddPool": {
           const selectedId = m.batchId || batch?.id;
