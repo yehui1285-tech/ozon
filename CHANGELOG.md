@@ -1,5 +1,28 @@
 # CHANGELOG.md - Ozon 项目续接记录
 
+## 2026-11-28 - V1.75 / 0.6.93 商品池「保存/新建一件核价」单行原子化、汇总/批次统计按版本缓存与实操压测（工作台待部署）
+
+- 变更背景与目标：
+  - 解决工作台 `/ozon/pool` 点击「保存」或「新建」核价时先 `GET /api/ozon` 拉取整张核价表再整表回传的传输开销问题；同时对 `readPoolPage` 重复执行的汇总/批次/设备统计增加按 `revision` 复用缓存，并用接近日常操作的三项动作补充实测基准。
+- 关键改动（工作台源码 + 共享核价面板双线 `0.6.93`）：
+  - 工作台 `lib/ozon-model.ts`、`app/api/ozon/route.ts`：新增 `action: 'patchRow'` 与 `action: 'createRow'` 单行原子 CAS 保存与新建路径（保留全表提交向后兼容）。写入前校验行级 `base` 冲突与字段格式/长度、写入 R2 变更前快照、在并发修改**不同商品**时自动 CAS 重试合并均成功，并发修改**同一条商品**时返回 `409` 冲突保护，无改动 `no-op` 不触发冗余备份。
+  - 工作台 `app/ozon/pool/pool-desk.tsx`：`save` 与 `create` 直接提交单行请求，不再先全表读取/全表回传。
+  - 共享核心 `ozon-erp-collector-extension/quick-pricing-panel.js`（同步工作台与独立分享版 `0.6.93`）：在核价保存/新建/复核确认提示中展示真实往返耗时（`ms`），便于日常观测从点击保存至处理下一件的实际响应时间。
+  - 工作台 `lib/ozon-pool/store.ts`：`readPoolPage` 新增 `poolMetaCache`（按 `owner` + `revision` + `30s` TTL 缓存 `total`/`newCount`/`historyCount`/`batches`/`devices`），同修订号翻页或切换批次跳过全表 `json_each` 聚合；`saveTouched` 提交后立即失效。
+  - 工作台测试与压测：`tests/ozon-sync.test.mjs` 新增并发改不同 SKU（双 `200`）与改同一行（`200`/`409`）单行原子接口测试；`tests/ozon-pool-d1.test.mjs` 新增同修订号命中缓存与写后失效断言；`tests/ozon-pool-benchmark.mjs` 修复排序参数并新增 `openPoolMs`、`switchBatchMs`、`review20TotalMs`、`review20PerItemMs`。
+  - 版本同步：`manifest.json`、`popup.html`、`sourcing-enrichment.html` 及 Ozon 测试版本号升至 `0.6.93`；工作台升级至 `V1.75`（源码 `b425806`）。
+- 验证与压测结果：
+  - `node tools/sync-workbench-core.mjs --workbench $wb`、`powershell -ExecutionPolicy Bypass -File tools\build-release.ps1`、`node tools/test-1688-extension.mjs`、`node tools/test-pinduoduo-agent.mjs`、`node tools/sync-workbench-core.mjs --workbench $wb --check` 全部通过；独立分享版生成 `41` 个文件。
+  - 工作台 `b425806`：`npm run check:ozon-shared`、`npx tsc --noEmit`、`node scripts/check-release-version.mjs`（`V1.74 → V1.75`）、`node --test tests/*.test.mjs`（`274` 通过 / `0` 失败）、`npm.cmd run build` 全部通过；**无新增 D1 迁移**。
+  - `node tests/ozon-pool-benchmark.mjs`（`node:sqlite :memory:` 执行生产 D1 SQL，ms）：
+    - `1,000` 条：`openPool 1.76` · `switchBatch 1.89` · `deep 0.27` · `search 0.51` · `sort 0.17` · `review20PerItem 1.68`（20 件总 `33.68`）· `update 0.11`
+    - `10,000` 条：`openPool 12.29` · `switchBatch 16.21` · `deep 0.69` · `search 2.18` · `sort 0.35` · `review20PerItem 12.61`（20 件总 `252.18`）· `update 0.14`
+    - `50,000` 条：`openPool 69.59` · `switchBatch 87.69` · `deep 2.27` · `search 12.24` · `sort 1.13` · `review20PerItem 69.86`（20 件总 `1397.15`）· `update 0.14`
+  - 双版扩展 ZIP SHA-256：
+    - `ozon-erp-collector-extension.zip`：`9185A3357905336464EABA7A0EFDDCCEFECCAD6A3C21E7AEDD9E11C32A81A7E3`
+    - `ozon-standalone-extension.zip`：`9701F9D782051B121F6448D9DE3A22E7AFB240DCEA79F99D61732BCD0A604F09`
+  - 回滚备份：`_备份_20261128_v175_single_row_pricing_and_pool_meta_cache_before`（常规 `_备份_*` 保持 5 个）。
+
 ## 2026-11-28 - V1.74 / 0.6.92 修复类目扫描“快进飙速 / 跳过延迟 ERP / 翻页清空待复查”，并增加无新增耗时提示（工作台待部署）
 
 - 变更背景与目标：

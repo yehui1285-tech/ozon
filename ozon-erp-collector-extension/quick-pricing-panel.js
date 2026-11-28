@@ -156,7 +156,7 @@
       const values=draft(),value=core.evaluate({...base,...values},adapter.math);
       if(approve&&(!value.complete||product.blocked))return;
       if(isDraft&&(!value.price||typeof adapter.create!=='function'))return;
-      const selected=product,savedBase=base,wasDraft=isDraft;busy=true;seq++;updateResult();notify(wasDraft?'正在新建并保存核价…':'正在保存核价…');let pricingSaved=false;
+      const selected=product,savedBase=base,wasDraft=isDraft,startedAt=typeof performance!=='undefined'?performance.now():Date.now();busy=true;seq++;updateResult();notify(wasDraft?'正在新建并保存核价…':'正在保存核价…');let pricingSaved=false;
       try{
         const saved=wasDraft
           ?await adapter.create({sku:selected.sku,link:selected.link||'',values})
@@ -165,8 +165,9 @@
         pricingSaved=true;prefillInfo=null;
         const nextRows=wasDraft?[...rows,saved]:rows.map(r=>r.id===saved.id?saved:r);
         isDraft=false;updateChoices(nextRows,saved.id);setBase(saved,false);
-        if(approve){if(!core.evaluate(saved,adapter.math).complete||selected.blocked)throw Error('核价数据不全或运输待复核');await adapter.status(selected,'approved');notify('核价已保存，商品已标记人工已复核。');busy=false;updateResult();adapter.advance(selected);return}
-        notify(wasDraft?'✓ 已新建并保存到核价表':'✓ 核价已保存');
+        const elapsedMs=Math.max(1,Math.round((typeof performance!=='undefined'?performance.now():Date.now())-startedAt));
+        if(approve){if(!core.evaluate(saved,adapter.math).complete||selected.blocked)throw Error('核价数据不全或运输待复核');await adapter.status(selected,'approved');const totalMs=Math.max(1,Math.round((typeof performance!=='undefined'?performance.now():Date.now())-startedAt));notify(`核价已保存，商品已标记人工已复核（${totalMs}ms）。`);busy=false;updateResult();adapter.advance(selected);return}
+        notify(wasDraft?`✓ 已新建并保存到核价表（${elapsedMs}ms）`:`✓ 核价已保存（${elapsedMs}ms）`);
       }
       catch(e){notify((pricingSaved?'核价已保存，处理状态未确认：':'保存未确认：')+(e.message||e),true)}finally{busy=false;updateResult()}
     }

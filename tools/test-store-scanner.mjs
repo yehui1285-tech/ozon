@@ -378,7 +378,7 @@ assert.match(batchHtmlSource, /id="shippingRisks"/);
 assert.match(batchHtmlSource, /禁运与运输限制复核/);
 
 const manifest = JSON.parse(fs.readFileSync(new URL("../ozon-erp-collector-extension/manifest.json", import.meta.url), "utf8"));
-assert.equal(manifest.version, "0.6.92");
+assert.equal(manifest.version, "0.6.93");
 assert.match(scannerSource, /left:18px;bottom:18px/);
 assert.match(scannerSource, /ozonStoreHudPosV1/);
 assert.match(scannerSource, /ozonStoreHudCollapsedV1/);

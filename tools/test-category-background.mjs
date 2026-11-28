@@ -7,7 +7,7 @@ let created = [], reloads=0, sentMessages=[], debuggerCommands=[], debuggerAttac
 const storage = { async get(k) { return k ? { ...(data[k] ? { [k]: data[k] } : {}) } : { ...data }; }, async set(v) { Object.assign(data, v); }, async remove(k) { for (const key of Array.isArray(k) ? k : [k]) delete data[key]; } };
 let declaredDebugger=true;
 const chrome = {
-  runtime:{getManifest:()=>({version:'0.6.92',permissions:declaredDebugger?['debugger']:[]})},
+  runtime:{getManifest:()=>({version:'0.6.93',permissions:declaredDebugger?['debugger']:[]})},
   storage: { local: storage,session:{async get(k){return {[k]:sessionData[k]}},async set(v){Object.assign(sessionData,v)},async remove(k){delete sessionData[k]}} },
   alarms:{async get(n){return alarms.get(n)},async create(n,o){alarms.set(n,o)},async clear(n){alarms.delete(n)}},
   tabs: {
@@ -908,7 +908,7 @@ const hudSample = await runner.handle({
   products: [{ sku: '77001', name: 'HudItem', link: 'https://www.ozon.ru/product/p-77001', price: '120', qualified: true, shippingRisk: { type: 'clear' } }]
 }, { tab: { id: batch.tabId, url: batch.stores[0].pageUrl } });
 assert.equal(hudSample.ok, true);
-assert.equal(hudSample.hud.version, '0.6.92');
+assert.equal(hudSample.hud.version, '0.6.93');
 assert.equal(hudSample.hud.categoryIndex, 1);
 assert.equal(hudSample.hud.categoryTotal, 2);
 assert.equal(hudSample.hud.qualified, 1);
