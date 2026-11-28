@@ -31,9 +31,12 @@ function renderTaskCard(task, batch) {
     ? waitReasons[task.waitReason] || task.error || task.message || task.note || (task.waitReason ? '等待条件暂未分类' : '')
     : task.error || task.message || task.note);
   const warnings = [];
+  const unresolvedCount = Number(task.unresolvedErpCount ?? task.pendingCount ?? 0);
   if (status === 'deferred') warnings.push('先扫待开始类目，再回查此项');
+  if (task.revisitingPendingPage) warnings.push('正在回查原页未就绪 ERP');
   if (Number(task.revisitCount) > 0) warnings.push(`自动回查 ${Math.max(0, Number(task.revisitCount))}/1`);
   if (Number(task.crashRecoveryCount) > 0) warnings.push(`已自动防崩溃重建标签页 ${Number(task.crashRecoveryCount)}/3 次`);
+  if (unresolvedCount > 0 && !String(reason || '').includes('ERP 未就绪')) warnings.push(`有 ${unresolvedCount} 件 ERP 未就绪`);
   if (reason) warnings.push(reason);
 
   const pagePriceStatus = pagePriceStatusLabels[task.pagePriceStatus] || '';
@@ -441,9 +444,17 @@ function render(batch, archive = history, tasks = savedTasks, nextCloudSync = cl
   const stores = Array.isArray(batch?.stores) ? batch.stores : [];
   const selected = stores.reduce((a, s) => a + Number(s.qualifiedCount || 0), 0);
   const checked = stores.reduce((a, s) => a + Number(s.observedCount || 0), 0);
-  const eligible = stores.filter(s => !s.removedFromQueue && s.status !== 'skipped' && s.status !== 'completed').reduce((a, s) => a + Number(s.pendingCount || 0), 0);
+  const eligible = stores.filter(s => !s.removedFromQueue && s.status !== 'skipped').reduce((a, s) => a + Number(s.unresolvedErpCount ?? s.pendingCount ?? 0), 0);
   const active = ['running', 'paused', 'scanning'].includes(batch?.status);
   const finishedBatch = ['completed', 'stopped', 'failed'].includes(batch?.status);
+  let noNewSkuMinutes = 0;
+  if (batch?.status === 'running') {
+    const lastResp = Math.max(Date.parse(batch.lastSampleAt) || 0, Date.parse(batch.lastProgressAt) || 0);
+    const ref = Math.max(Date.parse(batch.lastNewSkuAt) || 0, Date.parse(batch.lastDiscoveryAt) || 0, Date.parse(batch.startedAt) || 0);
+    if (lastResp && (Date.now() - lastResp) <= 90000 && ref > 0 && (Date.now() - ref) >= 120000) {
+      noNewSkuMinutes = Math.floor((Date.now() - ref) / 60000);
+    }
+  }
 
   const diagTotals = {};
   for (const store of stores) for (const [key, value] of Object.entries(store.diagnosticCounts || {})) diagTotals[key] = (diagTotals[key] || 0) + (Number(value) || 0);
@@ -468,6 +479,7 @@ function render(batch, archive = history, tasks = savedTasks, nextCloudSync = cl
     }
     if (times.length) diagnosticLines.push(times.join(' · '));
     if (batch.recentWaitReason) diagnosticLines.push(`最近等待：${waitReasons[batch.recentWaitReason] || '查看诊断记录'}`);
+    if (noNewSkuMinutes >= 2) diagnosticLines.push(`新增提示：采集页仍有响应，已 ${noNewSkuMinutes} 分钟未发现新商品`);
   }
   if ($('diagBox')) $('diagBox').hidden = !batch;
   if ($('diagnosticOverview')) $('diagnosticOverview').textContent = diagnosticLines.join('\n');
@@ -492,7 +504,9 @@ function render(batch, archive = history, tasks = savedTasks, nextCloudSync = cl
   }
   const updatedTime = formatShortTime(batch?.lastProgressAt || batch?.updatedAt);
   $('summary').textContent = batch ? (updatedTime ? `最近更新 ${updatedTime}` : '') : '暂无批次';
-  $('message').textContent = batch?.message || '';
+  $('message').textContent = noNewSkuMinutes >= 2
+    ? `采集页仍有响应，已 ${noNewSkuMinutes} 分钟未发现新商品${batch?.pageMode === 'background' ? '（后台可能被限流，建议切回前台）' : ''}`
+    : (batch?.message || '');
 
   const visibleStores = stores.filter(task => !task.removedFromQueue);
   const removedCount = stores.filter(task => task.removedFromQueue).length;

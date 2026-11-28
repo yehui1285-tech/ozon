@@ -15,6 +15,8 @@
   const STALL_MS = 90000;
   const CRASH_RECOVER_LIMIT = 3;
   const MEMORY_RECYCLE_LIMIT = 5;
+  const PENDING_PAGE_REVISIT_LIMIT = 1;
+  const STALE_NO_NEW_SKU_MS = 120000;
   const pagePriceRangeOf = options => core.pagePriceRange?.(options) || core.rubRange(options);
   const hasPagePrice = options => !!pagePriceRangeOf(options);
   let experimentDebuggerTabId = null;
@@ -146,9 +148,72 @@
   }
   const sourceKind=url=>core.keyFromUrl(url).startsWith('china-category:')?'china':'normal';
   function qualifiedTotal(batch) { return (batch.qualifiedSkuIds || []).length; }
+  function allPendingSkus(task) {
+    const observed = new Set(Array.isArray(task?.observedSkus) ? task.observedSkus.map(String) : []);
+    const result = [], seen = new Set();
+    if (task?.pendingByPage && typeof task.pendingByPage === 'object') {
+      for (const entry of Object.values(task.pendingByPage)) {
+        for (const raw of Array.isArray(entry?.skus) ? entry.skus : []) {
+          const s = String(raw || '').trim();
+          if (/^\d+$/.test(s) && !observed.has(s) && !seen.has(s)) { seen.add(s); result.push(s); }
+        }
+      }
+    }
+    for (const raw of Array.isArray(task?.pendingSkus) ? task.pendingSkus : []) {
+      const s = String(raw || '').trim();
+      if (/^\d+$/.test(s) && !observed.has(s) && !seen.has(s)) { seen.add(s); result.push(s); }
+    }
+    return result.slice(-5000);
+  }
+  function syncPendingByPage(task, currentPageUrl, currentPagePendingSkus) {
+    if (!task) return [];
+    const observed = new Set(Array.isArray(task.observedSkus) ? task.observedSkus.map(String) : []);
+    task.pendingByPage ||= {};
+    for (const [pUrl, entry] of Object.entries(task.pendingByPage)) {
+      const filtered = (Array.isArray(entry?.skus) ? entry.skus : []).map(String).filter(s => /^\d+$/.test(s) && !observed.has(s));
+      if (filtered.length) task.pendingByPage[pUrl] = { skus: [...new Set(filtered)].slice(-500), revisitAttempts: Number(entry?.revisitAttempts) || 0 };
+      else delete task.pendingByPage[pUrl];
+    }
+    if (currentPageUrl && Array.isArray(currentPagePendingSkus)) {
+      const clean = [...new Set(currentPagePendingSkus.map(String).filter(s => /^\d+$/.test(s) && !observed.has(s)))].slice(-500);
+      if (clean.length) task.pendingByPage[currentPageUrl] = { skus: clean, revisitAttempts: Number(task.pendingByPage[currentPageUrl]?.revisitAttempts) || 0 };
+      else delete task.pendingByPage[currentPageUrl];
+    }
+    const merged = [], seen = new Set();
+    for (const entry of Object.values(task.pendingByPage)) {
+      for (const s of entry.skus || []) if (!seen.has(s)) { seen.add(s); merged.push(s); }
+    }
+    task.pendingSkus = merged;
+    task.pendingCount = merged.length;
+    return merged;
+  }
+  function nextPendingRevisitPage(task) {
+    if (!task?.pendingByPage || typeof task.pendingByPage !== 'object') return null;
+    for (const [pUrl, entry] of Object.entries(task.pendingByPage)) {
+      const skus = Array.isArray(entry?.skus) ? entry.skus : [];
+      const attempts = Number(entry?.revisitAttempts) || 0;
+      if (skus.length > 0 && attempts < PENDING_PAGE_REVISIT_LIMIT) return { url: pUrl, skus };
+    }
+    return null;
+  }
+  function batchUnresolvedErpCount(batch) {
+    return (batch?.stores || []).filter(t => !t?.removedFromQueue).reduce((sum, t) => sum + (Number(t?.unresolvedErpCount ?? t?.pendingCount) || 0), 0);
+  }
+  function computeNoNewSkuMinutes(batch, task) {
+    if (!batch || batch.status !== 'running') return 0;
+    const lastResp = Math.max(Date.parse(batch.lastSampleAt) || 0, Date.parse(batch.lastProgressAt) || 0);
+    if (!lastResp || (Date.now() - lastResp) > 90000) return 0;
+    const ref = Math.max(Date.parse(task?.lastNewSkuAt) || 0, Date.parse(batch.lastNewSkuAt) || 0, Date.parse(task?.lastDiscoveryAt) || 0, Date.parse(batch.lastDiscoveryAt) || 0, Date.parse(batch.startedAt) || 0);
+    const diff = ref > 0 ? Date.now() - ref : 0;
+    return diff >= STALE_NO_NEW_SKU_MS ? Math.floor(diff / 60000) : 0;
+  }
   function finishAtTarget(batch) {
     if (qualifiedTotal(batch) < batch.options.targetCount) return false;
-    batch.status = "completed"; batch.message = "已达到批次目标有效商品数";
+    const unresolved = batchUnresolvedErpCount(batch);
+    batch.status = "completed";
+    batch.message = unresolved > 0
+      ? `已达到批次目标有效商品数（有 ${unresolved} 件 ERP 未就绪）`
+      : "已达到批次目标有效商品数";
     for (const task of batch.stores) if (task.status === 'deferred') {
       task.status = 'partial'; task.note = '批次目标已达到，保留已采记录';
     } else if (task.status === "pending" || task.status === "scanning") {
@@ -325,6 +390,13 @@
       taskQualified: Number(task?.qualifiedCount || 0),
       perCategoryLimit: Number.isInteger(batch.options?.perCategoryLimit) ? batch.options.perCategoryLimit : null,
       pending: Number(task?.pendingCount || 0),
+      unresolvedErpCount: batchUnresolvedErpCount(batch),
+      noNewSkuMinutes: computeNoNewSkuMinutes(batch, task),
+      discovered: Number(task?.discoveredCount || 0),
+      erpReady: Number(task?.erpReadyCount || 0),
+      labelHit: Number(task?.labelHitCount || 0),
+      revisitingPendingPage: Boolean(task?.revisitingPendingPage),
+      pageHidden: batch.pageMode === 'background',
       message: String(batch.message || ''),
     };
   }
@@ -446,6 +518,26 @@
       catch { await waitStatus(batch,'页面读取器暂未响应，正在等待自动恢复。'); }
     }
   }
+  async function beginPendingPageRevisit(batch, task, revisit) {
+    task.pendingByPage[revisit.url].revisitAttempts = (Number(task.pendingByPage[revisit.url].revisitAttempts) || 0) + 1;
+    task.revisitingPendingPage = revisit.url;
+    task.reachedCatalogEnd = true;
+    task.pageUrl = revisit.url;
+    const oldTab = batch.tabId == null ? null : await chrome.tabs.get(batch.tabId).catch(() => null);
+    diagnosticEvent(batch, 'pending_page_revisit', `回查原页 ${revisit.skus.length} 件待就绪 ERP`);
+    phase(batch, 'waiting', `正在回查原页未就绪的 ERP 商品（${revisit.skus.length} 件）`);
+    await stopScanner(batch);
+    batch.attemptId = uuid(); batch.watchdogSince = now(); batch.recoveryAttempts = 0; batch.noResponseCount = 0;
+    delete task.waitSince; delete task.waitReason;
+    const fresh = await replaceTaskTab(batch, revisit.url, oldTab);
+    await enableFocusExperiment(batch);
+    await save(batch);
+    const liveTab = await chrome.tabs.get(fresh.id).catch(() => null);
+    if (liveTab?.status === 'complete' && pageMatches(liveTab.url, task) && !liveTab.pendingUrl && !liveTab.frozen && !liveTab.discarded) {
+      try { await startScanner(batch, task); } catch { await waitStatus(batch, '新采集页等待读取器响应，正在自动检查。'); }
+    }
+    return { ok: true, batch: clone(batch), hud: hudSummary(batch) };
+  }
   async function advance(batch) {
     let next = batch.stores.findIndex(task=>task.status === 'pending');
     if (next < 0) next = batch.stores.findIndex(task=>task.status === 'deferred');
@@ -457,7 +549,10 @@
       batch.message = '本批仍有类目待人工检查，自动回查已结束。已采记录已保存，可检查后继续。';
     } else {
       batch.status = 'completed';
-      batch.message = '本批类目已扫描完成';
+      const unresolved = batchUnresolvedErpCount(batch);
+      batch.message = unresolved > 0
+        ? `本批类目已扫描完成（有 ${unresolved} 件 ERP 未就绪，详见类目结果与诊断）`
+        : '本批类目已扫描完成';
     }
     await stopScanner(batch);
     await save(batch);
@@ -468,7 +563,9 @@
     const injection=await bounded(chrome.scripting.executeScript({target:{tabId:batch.tabId},files:['store-scanner-core.js','category-core.js','category-scanner.js']}));
     if(injection===null)throw Error('扫描页面暂未响应');
     const pageNativeHidden=batch.backgroundExperiment?await nativePageHidden(batch.tabId):false;
-    const ack=await bounded(chrome.tabs.sendMessage(batch.tabId,{type:'categoryScanStart',batchId:batch.id,attemptId:batch.attemptId,categoryUrl:pageUrl(task),options:batch.options,observedSkus:task.observedSkus||[],pendingSkus:task.pendingSkus||[],recheckFromTop:!!task.pendingCount&&!task.pendingSkus?.length,pageNativeHidden,hud:hudSummary(batch)}));
+    const targetPage=pageUrl(task);
+    const pagePending=task.pendingByPage?(task.pendingByPage[targetPage]?.skus||[]):(task.pendingSkus||[]);
+    const ack=await bounded(chrome.tabs.sendMessage(batch.tabId,{type:'categoryScanStart',batchId:batch.id,attemptId:batch.attemptId,categoryUrl:targetPage,options:batch.options,observedSkus:task.observedSkus||[],pendingSkus:pagePending,revisitPendingOnly:task.revisitingPendingPage===targetPage,recheckFromTop:!!task.pendingCount&&!task.pendingSkus?.length,pageNativeHidden,hud:hudSummary(batch)}));
     if(!ack?.ok)throw Error('扫描器未确认启动');
   }
   async function openCurrent(batch, create = false) {
@@ -570,6 +667,7 @@
       ...(config.taskProfileId ? { taskProfileId: config.taskProfileId } : {}),
       ...(config.taskProfileName ? { taskProfileName: config.taskProfileName } : {}),
       ...(config.continueMode ? { continueMode: config.continueMode } : {}),
+      startedAt: now(),
       updatedAt: now(),
       message: config.startMessage || "类目扫描已开始",
       addedCount: 0,
@@ -903,9 +1001,20 @@
           for (const sku of m.observedSkus || []) if (/^\d+$/.test(String(sku))) observed.add(String(sku));
           task.observedSkus = [...observed]; task.observedCount = observed.size;
           if (!effectiveHidden || observed.size > beforeObserved) {delete task.waitSince;delete task.waitReason;}
-          task.pendingCount = Math.max(0, Number(m.pendingCount) || 0);
-          if(Array.isArray(m.pendingSkus))task.pendingSkus=[...new Set(m.pendingSkus.map(String).filter(s=>/^\d+$/.test(s)&&!observed.has(s)))];
-          batch.lastProgressAt=now();if(observed.size>beforeObserved){batch.lastNewSkuAt=batch.lastProgressAt;task.crashRecoveryCount=0;}batch.recoveryAttempts=0;batch.noResponseCount=0;
+          if (Array.isArray(m.pendingSkus)) {
+            syncPendingByPage(task, pageUrl(task), m.pendingSkus);
+          } else {
+            syncPendingByPage(task, null, null);
+            task.pendingCount = Math.max(allPendingSkus(task).length, Number(m.pendingCount) || 0);
+          }
+          batch.lastSampleAt = now();
+          batch.lastProgressAt = batch.lastSampleAt;
+          if (observed.size > beforeObserved || (task.discoveredCount || 0) > beforeDiscovered) {
+            batch.lastNewSkuAt = batch.lastSampleAt;
+            task.lastNewSkuAt = batch.lastSampleAt;
+          }
+          if (observed.size > beforeObserved) task.crashRecoveryCount = 0;
+          batch.recoveryAttempts = 0; batch.noResponseCount = 0;
           task.activityStatus=batch.activityStatus||'native-background-only';
           phase(batch,effectiveHidden?'background':'foreground',effectiveHidden?'后台扫描类目商品（页面加载可能较慢）':'正在扫描类目商品');
           const skuList = (m.products || []).map(raw => raw?.sku);
@@ -943,13 +1052,15 @@
           for (const p of products) if (!output.products[p.sku]) { output.products[p.sku] = p; output.batchCapture.skus.push(p.sku); }
           batch.qualifiedSkuIds = [...qualifiedSeen];
           task.qualifiedCount = Object.keys(output.products).length;
-          if((task.discoveredCount||0)>beforeDiscovered)task.lastDiscoveryAt=batch.lastDiscoveryAt=now();
+          if((task.discoveredCount||0)>beforeDiscovered){task.lastDiscoveryAt=batch.lastDiscoveryAt=now();batch.lastNewSkuAt=task.lastDiscoveryAt;task.lastNewSkuAt=task.lastDiscoveryAt;}
           if((task.erpReadyCount||0)>beforeErpReady)task.lastErpReadyAt=batch.lastErpReadyAt=now();
           if((task.labelHitCount||0)>beforeHits)task.lastLabelHitAt=batch.lastLabelHitAt=now();
           if(qualifiedSeen.size>beforeQualified){task.lastAcceptedAt=now();batch.lastAcceptedAt=task.lastAcceptedAt;}
           task.diagnosticCounts=diagnosisCounts(task);
           batch.diagnosticBrowser=await browserSnapshot(batch,m.pageReportedHidden,m.pageFocused);
           task.observedSkus = [...new Set([...task.observedSkus, ...Object.keys(output.products)])];
+          task.observedCount = task.observedSkus.length;
+          if (Object.keys(output.products).length) syncPendingByPage(task, null, null);
           const stopBatch = finishAtTarget(batch);
           const hitPerCategoryLimit = !stopBatch && perCatLimit !== null && task.qualifiedCount >= perCatLimit;
           if (stopBatch) {
@@ -997,15 +1108,34 @@
         case "categoryPageDone": {
           const task = assertActive(batch, m, sender);
           if (batch.status !== "running") throw Error("类目批次当前未运行");
+          if (Array.isArray(m.pendingSkus)) syncPendingByPage(task, pageUrl(task), m.pendingSkus);
           const nextUrl = m.reason === "next_page_available" && m.nextUrl && core.paginationUrl?.(m.nextUrl, pageUrl(task));
           if (nextUrl && Number(new URL(nextUrl).searchParams.get('page'))===Number(new URL(pageUrl(task)).searchParams.get('page')||1)+1 && nextUrl!==pageUrl(task)&&!task.visitedPages.includes(nextUrl)) {
+            const oldPageUrl=pageUrl(task);
+            const preservedCount=Number(task.pendingByPage?.[oldPageUrl]?.skus?.length||0);
             const oldTab=batch.tabId==null?null:await chrome.tabs.get(batch.tabId).catch(()=>null);
-            task.visitedPages.push(pageUrl(task)); task.pageUrl = nextUrl;if(hasPagePrice(batch.options))task.pagePriceStatus='pending';task.pendingCount=0;task.pendingSkus=[];task.crashRecoveryCount=0;task.memoryRecycleCount=0;batch.noResponseCount=0;delete task.waitSince;delete task.waitReason; phase(batch,'waiting','继续扫描下一页'); await stopScanner(batch); diagnosticEvent(batch,'tab_recycled','翻页重建标签页释放内存'); batch.attemptId=uuid();batch.watchdogSince=now();batch.recoveryAttempts=0;const fresh=await replaceTaskTab(batch,nextUrl,oldTab);await enableFocusExperiment(batch);await save(batch);
+            task.visitedPages.push(oldPageUrl); task.pageUrl = nextUrl;if(hasPagePrice(batch.options))task.pagePriceStatus='pending';delete task.revisitingPendingPage;syncPendingByPage(task,null,null);task.crashRecoveryCount=0;task.memoryRecycleCount=0;batch.noResponseCount=0;delete task.waitSince;delete task.waitReason; if(preservedCount>0)diagnosticEvent(batch,'pending_preserved_on_paginate',`保留上一页 ${preservedCount} 件待复查 SKU`); phase(batch,'waiting',preservedCount>0?`已保留上一页 ${preservedCount} 件待复查 SKU，继续扫描下一页`:'继续扫描下一页'); await stopScanner(batch); diagnosticEvent(batch,'tab_recycled','翻页重建标签页释放内存'); batch.attemptId=uuid();batch.watchdogSince=now();batch.recoveryAttempts=0;const fresh=await replaceTaskTab(batch,nextUrl,oldTab);await enableFocusExperiment(batch);await save(batch);
             const liveTab=await chrome.tabs.get(fresh.id).catch(()=>null);
             if(liveTab?.status==='complete'&&pageMatches(liveTab.url,task)&&!liveTab.pendingUrl&&!liveTab.frozen&&!liveTab.discarded){
               try{await startScanner(batch,task);}catch{await waitStatus(batch,'新采集页等待读取器响应，正在自动检查。');}
             }
             return { ok: true, batch: clone(batch) };
+          }
+          if (m.reason === 'pending_revisit_done') {
+            delete task.revisitingPendingPage;
+            const nextRevisit = nextPendingRevisitPage(task);
+            if (nextRevisit) return beginPendingPageRevisit(batch, task, nextRevisit);
+            const unresolved = allPendingSkus(task);
+            task.unresolvedErpSkus = unresolved;
+            task.unresolvedErpCount = unresolved.length;
+            task.pendingSkus = unresolved;
+            task.pendingCount = unresolved.length;
+            if (unresolved.length > 0) task.note = `有 ${unresolved.length} 件 ERP 未就绪（回查后仍未加载）`;
+            else delete task.note;
+            diagnosticEvent(batch, 'category_complete', unresolved.length ? `有 ${unresolved.length} 件 ERP 未就绪` : '');
+            task.status = "completed"; task.exhausted = true; delete task.waitSince; delete task.waitReason;
+            await advance(batch);
+            return { ok: true, batch: clone(batch), hud: hudSummary(batch) };
           }
           if (m.reason === 'memory_recycle') {
             if ((Number(task.memoryRecycleCount) || 0) >= MEMORY_RECYCLE_LIMIT) {
@@ -1040,10 +1170,16 @@
             return {ok:true,batch:clone(batch)};
           }
           if (m.complete === true && m.reason === "visible_catalog_end" && !effectivelyHidden) {
-            diagnosticEvent(batch,'category_complete');
+            const revisit = nextPendingRevisitPage(task);
+            if (revisit) return beginPendingPageRevisit(batch, task, revisit);
+            const unresolved = allPendingSkus(task);
+            task.unresolvedErpSkus = unresolved;
+            task.unresolvedErpCount = unresolved.length;
+            if (unresolved.length > 0) task.note = `有 ${unresolved.length} 件 ERP 未就绪`;
+            diagnosticEvent(batch,'category_complete', unresolved.length ? `有 ${unresolved.length} 件 ERP 未就绪` : '');
             task.status = "completed"; task.exhausted = true; delete task.waitSince; delete task.waitReason;
             await advance(batch);
-            return {ok:true,batch:clone(batch)};
+            return {ok:true,batch:clone(batch),hud:hudSummary(batch)};
           } else { await stopScanner(batch);delete task.waitSince;delete task.waitReason;task.status = "partial";batch.status = "paused";const verificationWhy={http_denied:'检测到站点访问受限（HTTP 状态提示），需人工检查',access_restricted:'检测到站点访问受限，需人工检查',security_prompt:'检测到站点安全验证，需人工完成',login_required:'页面要求登录，请在采集页人工处理'};
             const activeRange=pagePriceRangeOf(batch.options);
             const expectedCurrency=activeRange?.currency==='CNY'?'人民币（¥）':'卢布（₽）';
@@ -1072,11 +1208,13 @@
           const tasks=(source.stores||[]).map(t=>{
             const counts=diagnosisCounts(t),examples={};
             for(const [sku,outcome] of Object.entries(t.diagnosticDecisions||{}))if(/^\d{1,24}$/.test(sku)&&diagnosticOutcomes.has(outcome)){const list=examples[outcome]||=[];if(list.length<5)list.push(sku);}
-            return {key:t.sellerKey,status:t.status,pagePriceStatus:t.pagePriceStatus||null,removedFromQueue:t.removedFromQueue===true,counts,examples,observedCount:t.observedCount||0,discoveredCount:t.discoveredCount??null,erpReadyCount:t.erpReadyCount??null,labelHitCount:t.labelHitCount??null,pendingCount:t.pendingCount||0,qualifiedCount:t.qualifiedCount||0,waitReason:waitLabels[t.waitReason]||null,lastDiscoveryAt:t.lastDiscoveryAt||null,lastErpReadyAt:t.lastErpReadyAt||null,lastLabelHitAt:t.lastLabelHitAt||null,lastAcceptedAt:t.lastAcceptedAt||null,unknownDiscoveredCount:counts.unknown||0};
+            const pendingByPageSummary = Object.fromEntries(Object.entries(t.pendingByPage || {}).map(([pUrl, entry]) => [pUrl, { count: Array.isArray(entry?.skus) ? entry.skus.length : 0, revisitAttempts: Number(entry?.revisitAttempts) || 0 }]));
+            const unresolvedList = Array.isArray(t.unresolvedErpSkus) ? t.unresolvedErpSkus.slice(0, 50) : allPendingSkus(t).slice(0, 50);
+            return {key:t.sellerKey,status:t.status,pagePriceStatus:t.pagePriceStatus||null,removedFromQueue:t.removedFromQueue===true,counts,examples,observedCount:t.observedCount||0,discoveredCount:t.discoveredCount??null,erpReadyCount:t.erpReadyCount??null,labelHitCount:t.labelHitCount??null,pendingCount:t.pendingCount||0,unresolvedErpCount:Number(t.unresolvedErpCount??t.pendingCount??0),unresolvedErpSkus:unresolvedList,pendingByPage:pendingByPageSummary,qualifiedCount:t.qualifiedCount||0,waitReason:waitLabels[t.waitReason]||null,lastDiscoveryAt:t.lastDiscoveryAt||null,lastErpReadyAt:t.lastErpReadyAt||null,lastLabelHitAt:t.lastLabelHitAt||null,lastAcceptedAt:t.lastAcceptedAt||null,unknownDiscoveredCount:counts.unknown||0};
           });
           const browser=source===batch&&source.status==='running'?await browserSnapshot(source):source.diagnosticBrowser||null;
           const totals={};for(const task of tasks)for(const [key,count] of Object.entries(task.counts))totals[key]=(totals[key]||0)+count;
-          return {ok:true,diagnostic:{schemaVersion:1,version:'1.50',extensionVersion:chrome.runtime?.getManifest?.().version||'0.6.69',generatedAt:now(),batchId:source.id,status:source.status,currentIndex:source.currentIndex,options:{targetCount:source.options?.targetCount,minPrice:source.options?.minPrice,maxPrice:source.options?.maxPrice,...(source.options?.minPriceRub!=null||source.options?.maxPriceRub!=null?{minPriceRub:source.options?.minPriceRub??null,maxPriceRub:source.options?.maxPriceRub??null}:{}),...(pagePriceRangeOf(source.options)||{})},experimentEnabled:source.backgroundExperiment===true,activityStatus:source.activityStatus||null,pageMode:source.pageMode||null,recentWaitReason:source.recentWaitReason||null,counters:{storeCount:tasks.length,observedCount:tasks.reduce((n,t)=>n+t.observedCount,0),discoveredCount:tasks.reduce((n,t)=>n+(t.discoveredCount||0),0),erpReadyCount:tasks.reduce((n,t)=>n+(t.erpReadyCount||0),0),labelHitCount:tasks.reduce((n,t)=>n+(t.labelHitCount||0),0),acceptedCount:(source.qualifiedSkuIds||[]).length,unknownLegacyCount:totals.unknown||0,decisions:totals},lastProgressAt:source.lastProgressAt||null,lastNewSkuAt:source.lastNewSkuAt||null,lastDiscoveryAt:source.lastDiscoveryAt||null,lastErpReadyAt:source.lastErpReadyAt||null,lastLabelHitAt:source.lastLabelHitAt||null,lastAcceptedAt:source.lastAcceptedAt||null,tasks,browser,events:(source.diagnosticEvents||[]).slice(-120)}};
+          return {ok:true,diagnostic:{schemaVersion:1,version:'1.50',extensionVersion:chrome.runtime?.getManifest?.().version||'0.6.69',generatedAt:now(),batchId:source.id,status:source.status,currentIndex:source.currentIndex,noNewSkuMinutes:computeNoNewSkuMinutes(source,currentStore(source)),unresolvedErpCount:batchUnresolvedErpCount(source),options:{targetCount:source.options?.targetCount,minPrice:source.options?.minPrice,maxPrice:source.options?.maxPrice,...(source.options?.minPriceRub!=null||source.options?.maxPriceRub!=null?{minPriceRub:source.options?.minPriceRub??null,maxPriceRub:source.options?.maxPriceRub??null}:{}),...(pagePriceRangeOf(source.options)||{})},experimentEnabled:source.backgroundExperiment===true,activityStatus:source.activityStatus||null,pageMode:source.pageMode||null,recentWaitReason:source.recentWaitReason||null,counters:{storeCount:tasks.length,observedCount:tasks.reduce((n,t)=>n+t.observedCount,0),discoveredCount:tasks.reduce((n,t)=>n+(t.discoveredCount||0),0),erpReadyCount:tasks.reduce((n,t)=>n+(t.erpReadyCount||0),0),labelHitCount:tasks.reduce((n,t)=>n+(t.labelHitCount||0),0),acceptedCount:(source.qualifiedSkuIds||[]).length,unresolvedErpCount:batchUnresolvedErpCount(source),unknownLegacyCount:totals.unknown||0,decisions:totals},lastProgressAt:source.lastProgressAt||null,lastNewSkuAt:source.lastNewSkuAt||null,lastDiscoveryAt:source.lastDiscoveryAt||null,lastErpReadyAt:source.lastErpReadyAt||null,lastLabelHitAt:source.lastLabelHitAt||null,lastAcceptedAt:source.lastAcceptedAt||null,tasks,browser,events:(source.diagnosticEvents||[]).slice(-120)}};
         }
         case "categoryDeleteBatch": {
           const id=String(m.batchId||"");

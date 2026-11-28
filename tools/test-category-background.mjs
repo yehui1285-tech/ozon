@@ -7,7 +7,7 @@ let created = [], reloads=0, sentMessages=[], debuggerCommands=[], debuggerAttac
 const storage = { async get(k) { return k ? { ...(data[k] ? { [k]: data[k] } : {}) } : { ...data }; }, async set(v) { Object.assign(data, v); }, async remove(k) { for (const key of Array.isArray(k) ? k : [k]) delete data[key]; } };
 let declaredDebugger=true;
 const chrome = {
-  runtime:{getManifest:()=>({version:'0.6.91',permissions:declaredDebugger?['debugger']:[]})},
+  runtime:{getManifest:()=>({version:'0.6.92',permissions:declaredDebugger?['debugger']:[]})},
   storage: { local: storage,session:{async get(k){return {[k]:sessionData[k]}},async set(v){Object.assign(sessionData,v)},async remove(k){delete sessionData[k]}} },
   alarms:{async get(n){return alarms.get(n)},async create(n,o){alarms.set(n,o)},async clear(n){alarms.delete(n)}},
   tabs: {
@@ -908,7 +908,7 @@ const hudSample = await runner.handle({
   products: [{ sku: '77001', name: 'HudItem', link: 'https://www.ozon.ru/product/p-77001', price: '120', qualified: true, shippingRisk: { type: 'clear' } }]
 }, { tab: { id: batch.tabId, url: batch.stores[0].pageUrl } });
 assert.equal(hudSample.ok, true);
-assert.equal(hudSample.hud.version, '0.6.91');
+assert.equal(hudSample.hud.version, '0.6.92');
 assert.equal(hudSample.hud.categoryIndex, 1);
 assert.equal(hudSample.hud.categoryTotal, 2);
 assert.equal(hudSample.hud.qualified, 1);
@@ -922,4 +922,110 @@ assert.equal(skipRes.hud.categoryIndex, 2);
 const skipLast = await runner.handle({ type: 'categorySkipCurrent', batchId: batch.id });
 assert.equal(skipLast.batch.status, 'completed');
 assert.equal(skipLast.hud.status, 'completed');
+
+// V1.74: Forced/proactive pagination preserves per-page pendingSkus, revisits Page 1 cleanly after Page 2,
+// preserves pendingByPage on pause/resume, reports unresolved ERP counts explicitly, and tracks stale no-new-SKU duration.
+const v174Url1 = 'https://www.ozon.ru/category/v174-cat-1/';
+const v174Url1Page2 = `${v174Url1}?page=2`;
+sentMessages.length = 0;
+batch = (await runner.handle({ type: 'categoryStart', urls: [v174Url1], targetCount: 10, confirmArchiveOverflow: true })).batch;
+await runner.handle({
+  type: 'categorySample',
+  batchId: batch.id,
+  attemptId: batch.attemptId,
+  categoryUrl: v174Url1,
+  discoverSkus: ['74000', '74001', '74002'],
+  erpReadySkus: ['74000'],
+  labelHitSkus: ['74000'],
+  observedSkus: ['74000'],
+  pendingSkus: ['74001', '74002'],
+  pendingCount: 2,
+  products: [{ sku: '74000', name: 'Ready74', link: 'https://www.ozon.ru/product/p-74000', price: '100', qualified: true, shippingRisk: { type: 'clear' } }]
+}, { tab: { id: batch.tabId, url: v174Url1 } });
+await runner.handle({
+  type: 'categoryPageDone',
+  batchId: batch.id,
+  attemptId: batch.attemptId,
+  categoryUrl: v174Url1,
+  complete: false,
+  reason: 'next_page_available',
+  nextUrl: v174Url1Page2,
+  pendingSkus: ['74001', '74002']
+}, { tab: { id: batch.tabId, url: v174Url1 } });
+batch = (await runner.handle({ type: 'categoryGet' })).batch;
+assert.equal(batch.stores[0].pageUrl, v174Url1Page2);
+assert.deepEqual(Array.from(batch.stores[0].pendingByPage[v174Url1].skus).sort(), ['74001', '74002'], 'pagination keeps pending SKUs on original page');
+assert.equal(batch.stores[0].pendingCount, 2, 'pendingCount retains unresolved SKUs across forced pagination');
+const page2StartMsg = [...sentMessages].reverse().find(x => x.message.type === 'categoryScanStart' && x.message.categoryUrl === v174Url1Page2);
+assert.deepEqual(Array.from(page2StartMsg.message.pendingSkus), [], 'Page 2 starts with empty page-local pendingSkus');
+assert.equal(page2StartMsg.message.revisitPendingOnly, false);
+
+// Pause & resume preserves pendingByPage and stale noNewSkuMinutes calculation.
+await runner.handle({ type: 'categoryPause' });
+batch = (await runner.handle({ type: 'categoryGet' })).batch;
+assert.deepEqual(Array.from(batch.stores[0].pendingByPage[v174Url1].skus).sort(), ['74001', '74002']);
+await runner.handle({ type: 'categoryResume' });
+batch = (await runner.handle({ type: 'categoryGet' })).batch;
+clock += 150000;
+const staleWaitAck = await runner.handle({
+  type: 'categoryWait',
+  batchId: batch.id,
+  attemptId: batch.attemptId,
+  categoryUrl: v174Url1Page2,
+  reason: 'catalog_loading'
+}, { tab: { id: batch.tabId, url: v174Url1Page2 } });
+assert.ok(staleWaitAck.hud.noNewSkuMinutes >= 2, 'heartbeat without new SKUs reports >= 2 minutes in hudSummary');
+
+// Page 2 ends in foreground -> automatic bounded revisit returns to Page 1 with revisitPendingOnly: true.
+const p2Tab = created.find(t => t.id === batch.tabId);
+p2Tab.active = true; windowFocused = true;
+sentMessages.length = 0;
+await runner.handle({
+  type: 'categoryPageDone',
+  batchId: batch.id,
+  attemptId: batch.attemptId,
+  categoryUrl: v174Url1Page2,
+  pageHidden: false,
+  complete: true,
+  reason: 'visible_catalog_end'
+}, { tab: { id: batch.tabId, url: v174Url1Page2 } });
+batch = (await runner.handle({ type: 'categoryGet' })).batch;
+assert.equal(batch.status, 'running');
+assert.equal(batch.stores[0].pageUrl, v174Url1, 'revisit returns to original page with pending SKUs');
+assert.equal(batch.stores[0].revisitingPendingPage, v174Url1);
+const revisitStart = sentMessages.find(x => x.message.type === 'categoryScanStart' && x.message.categoryUrl === v174Url1);
+assert.equal(revisitStart?.message.revisitPendingOnly, true);
+assert.deepEqual(Array.from(revisitStart?.message.pendingSkus || []).sort(), ['74001', '74002']);
+
+// On revisit: 74001 becomes ready & accepted; 74002 stays unresolved -> marked explicitly without lowering qualified bar.
+await runner.handle({
+  type: 'categorySample',
+  batchId: batch.id,
+  attemptId: batch.attemptId,
+  categoryUrl: v174Url1,
+  observedSkus: ['74001'],
+  pendingSkus: ['74002'],
+  pendingCount: 1,
+  products: [{ sku: '74001', name: 'Recovered74', link: 'https://www.ozon.ru/product/p-74001', price: '120', qualified: true, shippingRisk: { type: 'clear' } }]
+}, { tab: { id: batch.tabId, url: v174Url1 } });
+await runner.handle({
+  type: 'categoryPageDone',
+  batchId: batch.id,
+  attemptId: batch.attemptId,
+  categoryUrl: v174Url1,
+  complete: false,
+  reason: 'pending_revisit_done',
+  pendingSkus: ['74002']
+}, { tab: { id: batch.tabId, url: v174Url1 } });
+batch = (await runner.handle({ type: 'categoryGet' })).batch;
+assert.equal(batch.status, 'completed');
+assert.equal(batch.stores[0].qualifiedCount, 2, 'recovered SKU 74001 is accepted cleanly');
+assert.equal(batch.stores[0].unresolvedErpCount, 1);
+assert.deepEqual(Array.from(batch.stores[0].unresolvedErpSkus), ['74002']);
+assert.match(batch.stores[0].note, /1 件 ERP 未就绪/);
+assert.match(batch.message, /1 件 ERP 未就绪/);
+const diagV174 = (await runner.handle({ type: 'categoryDiagnostic', batchId: batch.id })).diagnostic;
+assert.equal(diagV174.unresolvedErpCount, 1);
+assert.deepEqual(Array.from(diagV174.tasks[0].unresolvedErpSkus), ['74002']);
+windowFocused = false;
 console.log("category background runner tests passed");

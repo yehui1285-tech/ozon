@@ -7,7 +7,13 @@
   const FORCE_NEXT_PAGE_SKUS = 180;
   const MEMORY_RECYCLE_RATIO = 0.85;
   const MEMORY_RECYCLE_BYTES = 1800 * 1024 * 1024;
-  const FAST_SKIP_SETTLE_MS = 350;
+  const FAST_SKIP_SETTLE_MS = 700;
+  const FAST_SKIP_SCROLL_RATIO = 0.75;
+  const NORMAL_SCROLL_RATIO = 0.60;
+  const VIEWPORT_POLL_MS = 500;
+  const VIEWPORT_ERP_MAX_WAIT_MS = 8000;
+  const BACKGROUND_VIEWPORT_ERP_MAX_WAIT_MS = 16000;
+  const STALE_NO_NEW_SKU_MS = 120000;
   const BLANK_IMAGE_DATA_URL = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
   const LIST_WAIT_POLLS = 30;
   const LIST_WAIT_MS = 1000;
@@ -226,9 +232,15 @@
     return null;
   }
   function readCards(list, core, categoryUrl, options = {}, skipSkus = null) {
-    if (!list) return { products: [], observedSkus: [], discoverSkus:[], erpReadySkus:[], labelHitSkus:[], pendingSkus: [], pendingCount: 0, skuDecisions:{}, available: false };
-    const products = [], observed = new Set(), discovered = new Set(), erpReady = new Set(), labelHit = new Set(),pending=new Set(),skuDecisions={},decisionRank={erp_pending:0,no_label:1,data_pending:2,price_outside:3,transport_blocked:3,eligible:4};
+    if (!list) return { products: [], observedSkus: [], discoverSkus:[], erpReadySkus:[], labelHitSkus:[], pendingSkus: [], pendingCount: 0, viewportSkus: [], viewportPendingSkus: [], viewportUnobservedSkus: [], skuDecisions:{}, available: false };
+    const products = [], observed = new Set(), discovered = new Set(), erpReady = new Set(), labelHit = new Set(), pending=new Set(), viewportSkus=new Set(), skuDecisions={}, decisionRank={erp_pending:0,no_label:1,data_pending:2,price_outside:3,transport_blocked:3,eligible:4};
     const seenCardSkus = new Set();
+    const viewportHeight = Number(globalScope.innerHeight) || 800;
+    const inViewport = (el) => {
+      const rect = el?.getBoundingClientRect?.();
+      if (!rect) return true;
+      return rect.bottom > 0 && rect.top < viewportHeight;
+    };
     const decide=(sku,reason)=>{if(!(sku in skuDecisions)||(decisionRank[reason]??0)>(decisionRank[skuDecisions[sku]]??0))skuDecisions[sku]=reason};
     const boundary=[...(list.querySelectorAll?.(headingSelector)||[])].find(el=>recommendationHeading.test(textOf(el))&&visible(el));
     const productSku=href=>{try{const u=new URL(href);return u.origin==='https://www.ozon.ru'&&!u.username&&!u.password?u.pathname.match(/^\/product\/(?:[^/]+-)?(\d+)\/?$/)?.[1]||'':''}catch{return ''}};
@@ -299,6 +311,7 @@
       const link = globalScope.OzonStoreScannerCore?.canonicalProductLink(anchor.href) || '',sku=productSku(link);
       if(!sku)continue;
       discovered.add(sku);
+      if(inViewport(anchor))viewportSkus.add(sku);
       if(skipSkus&&skipSkus.has(sku)){observed.add(sku);continue;}
       if(seenCardSkus.has(sku))continue;
       decide(sku,'erp_pending');
@@ -345,7 +358,9 @@
         else if(!globalScope.OzonCategoryCore.priceAllowed(product,options))decide(sku,'price_outside');
       }
     }
-    return { products, observedSkus: [...observed], discoverSkus:[...discovered], erpReadySkus:[...erpReady], labelHitSkus:[...labelHit], pendingSkus:[...pending],pendingCount:pending.size, skuDecisions, available: anchors.length > 0 };
+    const viewportPendingSkus = [...viewportSkus].filter(sku => pending.has(sku));
+    const viewportUnobservedSkus = [...viewportSkus].filter(sku => !observed.has(sku));
+    return { products, observedSkus: [...observed], discoverSkus:[...discovered], erpReadySkus:[...erpReady], labelHitSkus:[...labelHit], pendingSkus:[...pending],pendingCount:pending.size, viewportSkus:[...viewportSkus], viewportPendingSkus, viewportUnobservedSkus, skuDecisions, available: anchors.length > 0 };
   }
   function pagination(doc, core, categoryUrl) {
     const page=Number(new URL(categoryUrl).searchParams.get('page')||1);
@@ -366,7 +381,7 @@
     return href || '';
   }
   function createReader(doc, core) { return { read: (url, options, list=pickList(doc), skipSkus=null) => readCards(list, core, url, options, skipSkus), next: (url) => pagination(doc, core, url), pickList: () => pickList(doc) }; }
-  globalScope.OzonCategoryScanner = Object.freeze({ createReader, readCards, pickList, confirmPagePrice, confirmRubPrice, detectCurrencyMismatch, detectNonRubCurrency, pruneScrolledCards, MAX_SAMPLES, MAX_SCROLLS, PROACTIVE_NEXT_PAGE_SCROLLS, PROACTIVE_NEXT_PAGE_SKUS, FORCE_NEXT_PAGE_SCROLLS, FORCE_NEXT_PAGE_SKUS, FAST_SKIP_SETTLE_MS });
+  globalScope.OzonCategoryScanner = Object.freeze({ createReader, readCards, pickList, confirmPagePrice, confirmRubPrice, detectCurrencyMismatch, detectNonRubCurrency, pruneScrolledCards, MAX_SAMPLES, MAX_SCROLLS, PROACTIVE_NEXT_PAGE_SCROLLS, PROACTIVE_NEXT_PAGE_SKUS, FORCE_NEXT_PAGE_SCROLLS, FORCE_NEXT_PAGE_SKUS, FAST_SKIP_SETTLE_MS, FAST_SKIP_SCROLL_RATIO, NORMAL_SCROLL_RATIO, VIEWPORT_POLL_MS, VIEWPORT_ERP_MAX_WAIT_MS, STALE_NO_NEW_SKU_MS });
 
   const core = globalScope.OzonCategoryCore;
   if (!core || !globalScope.chrome?.runtime?.onMessage || !core.exactPageUrl(globalScope.location?.href || '') || globalScope.__ozonCategoryListenerInstalled) return;
@@ -413,6 +428,7 @@
         .chud-actions .chud-warn{color:#8a5800;background:#fff7df;border-color:#f0cf7b}
         .chud-actions .chud-stop{color:#a82b45;background:#fff0f2;border-color:#ffd5de}
         .chud-status{margin-top:8px;padding:6px 8px;border-radius:8px;background:#eef1f8;color:#556380;font-size:11px;line-height:1.4;overflow-wrap:anywhere}
+        .chud-status.warn{background:#fff7df;color:#8a5800;border:1px solid #f0cf7b}
         .chud-foot{margin-top:6px;display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11px;color:#6b7a94;padding:0 2px}
         .chud-link{color:#3559d6;font-weight:700;text-decoration:none;cursor:pointer;background:none;border:0;padding:0;font:inherit}
         .chud-link:hover{text-decoration:underline}
@@ -503,18 +519,22 @@
       const s=state||{};
       const done=['completed','stopped','failed'].includes(s.status);
       const targetText=Number(s.targetCount)>0?`${s.qualified||0}/${s.targetCount}`:String(s.qualified||0);
+      const staleMins=!done&&Number(s.noNewSkuMinutes)>=2?Math.floor(Number(s.noNewSkuMinutes)):0;
+      const unresolved=Number(s.unresolvedErpCount??s.pending??0);
       q('ver').textContent=s.version?`v${s.version}`:'';
       q('pos').textContent=`类目 ${s.categoryIndex||1}/${s.categoryTotal||1} · 第${s.pageNum||1}页`;
       q('catName').textContent=s.categoryName||'类目扫描中';
       q('observed').textContent=String(s.observed||0);
       q('qualified').textContent=targetText;
       q('pending').textContent=String(s.pending||0);
-      q('pillText').textContent=`OZON 类目 · ${targetText} · 第${s.pageNum||1}页`;
+      q('pillText').textContent=staleMins>=2?`OZON 类目 · ${targetText} · 第${s.pageNum||1}页 · ${staleMins}分无新增`:`OZON 类目 · ${targetText} · 第${s.pageNum||1}页`;
       const pauseBtn=q('pauseResume'),skipBtn=q('skip'),stopBtn=q('stop');
       pauseBtn.textContent=s.status==='paused'?'继续':'暂停';
       pauseBtn.hidden=done;skipBtn.hidden=done;stopBtn.hidden=done;
       pauseBtn.disabled=hudBusy;skipBtn.disabled=hudBusy;stopBtn.disabled=hudBusy;
-      q('status').textContent=s.statusText||s.message||(s.status==='paused'?'已暂停，点击继续可恢复扫描':'扫描中…');
+      const statusEl=q('status');
+      statusEl.classList.toggle('warn',staleMins>=2||(done&&unresolved>0));
+      statusEl.textContent=s.statusText||(staleMins>=2?`采集页仍有响应，已 ${staleMins} 分钟未发现新商品${s.pageHidden?'（后台可能被限流，建议切回前台）':''}`:done&&unresolved>0?`已结束 · 有 ${unresolved} 件 ERP 未就绪`:s.message||(s.status==='paused'?'已暂停，点击继续可恢复扫描':'扫描中…'));
       if(s.savedAt)q('saved').textContent=`已保存 ${s.savedAt}`;
     }
     const api={update(next){hudState={...(hudState||{}),...(next||{})};renderHud(hudState);}};
@@ -561,6 +581,9 @@
     const sentObserved = new Set(msg.observedSkus||[]), sentDiscovered = new Set(), sentErpReady = new Set(), sentLabelHit = new Set(), sentDecisions = new Map();
     let scrolls = 0, stable = 0, bottomStable = 0, lastHeight = -1, noListPolls = 0,ambiguousPolls=0,reviewPasses=0,bottomSince=0,previousHidden=hidden(),zeroNewObserved=0,pageNewObserved=0;
     let recheckFromTop=!!msg.recheckFromTop;
+    const revisitPendingOnly=msg.revisitPendingOnly===true;
+    let viewportWaitSince=0,lastSampleSentAt=0,lastNewSkuAt=Date.now(),lastAck=null,viewportWaitPolls=0;
+    const MAX_VIEWPORT_WAIT_POLLS=600,viewportTimedOutSkus=new Set();
     const rubRange=resolvedPagePriceRange(msg.options);let pagePriceConfirmed=!rubRange,pricePolls=0;
     const wait=ms=>waitForRun(run,ms);
     const settle=()=>hidden()?BACKGROUND_SETTLE_MS:FOREGROUND_SETTLE_MS;
@@ -568,25 +591,25 @@
     const waitStopped=ack=>ack.ok!==true||ack.stop===true||ack.stopped===true||activeRun!==run;
     for (let sample = 0; sample < MAX_SAMPLES && scrolls <= MAX_SCROLLS; sample++) {
       if (activeRun!==run) return;
-      if(core.exactPageUrl(globalScope.location.href)!==url)return done(msg,false,'wrong_category_page');
-      const pageHidden=hidden();if(previousHidden&&!pageHidden){noListPolls=0;stable=0;bottomStable=0;bottomSince=0;reviewPasses=0}previousHidden=pageHidden;
+      if(core.exactPageUrl(globalScope.location.href)!==url)return done(msg,false,'wrong_category_page','','',[...pending]);
+      const pageHidden=hidden();if(previousHidden&&!pageHidden){noListPolls=0;stable=0;bottomStable=0;bottomSince=0;reviewPasses=0;viewportWaitSince=0;}previousHidden=pageHidden;
       const verification=verificationDetail(globalScope.document);
-      if(verification)return done(msg,false,'manual-verification','',verification);
+      if(verification)return done(msg,false,'manual-verification','',verification,[...pending]);
       if(!pagePriceConfirmed){
         if(confirmPagePrice(globalScope.document,msg.options))pagePriceConfirmed=true;
         else {
-          if(++pricePolls>=3 && detectCurrencyMismatch(globalScope.document,msg.options))return done(msg,false,'price_currency_mismatch');
-          if(pricePolls>=LIST_WAIT_POLLS)return done(msg,false,'price_filter_unconfirmed');
+          if(++pricePolls>=3 && detectCurrencyMismatch(globalScope.document,msg.options))return done(msg,false,'price_currency_mismatch','','',[...pending]);
+          if(pricePolls>=LIST_WAIT_POLLS)return done(msg,false,'price_filter_unconfirmed','','',[...pending]);
           if(pricePolls===1||pricePolls%5===0){const ack=await reportWait('price_filter_loading');if(waitStopped(ack))return;}
           await wait(pageHidden?BACKGROUND_SETTLE_MS:LIST_WAIT_MS);sample--;continue;
         }
       }
-      if(recheckFromTop){recheckFromTop=false;globalScope.scrollTo(0,0);}
+      if(recheckFromTop){recheckFromTop=false;viewportWaitSince=0;viewportTimedOutSkus.clear();globalScope.scrollTo(0,0);}
       const candidates = mainCandidates(globalScope.document);
       const list = pickList(globalScope.document,candidates);
       if(!list&&candidates.size>1){
         noListPolls=0;ambiguousPolls++;stable=0;bottomStable=0;lastHeight=-1;
-        if(ambiguousPolls>=LIST_WAIT_POLLS)return done(msg,false,'catalog_list_unavailable');
+        if(ambiguousPolls>=LIST_WAIT_POLLS)return done(msg,false,'catalog_list_unavailable','','',[...pending]);
         const ack=await reportWait('list_ambiguous');if(waitStopped(ack))return;
         await wait(pageHidden?BACKGROUND_RETRY_MS:LIST_WAIT_MS);sample--;continue;
       }
@@ -594,7 +617,7 @@
       const result=reader.read(url,msg.options||{},list,observed);
       const endMarker = list?.querySelector?.('[data-testid*="no-more"], [data-testid="end-of-list"], [data-testid="catalog-list-end"]');
       if(!list||(!result.available&&!visible(endMarker))){
-        if(noListPolls>=LIST_WAIT_POLLS&&!pageHidden)return done(msg,false,'catalog_list_unavailable');
+        if(noListPolls>=LIST_WAIT_POLLS&&!pageHidden)return done(msg,false,'catalog_list_unavailable','','',[...pending]);
         if(noListPolls>=LIST_WAIT_POLLS)noListPolls=0;
         if(noListPolls%5===0){const ack=await reportWait('catalog_loading');if(waitStopped(ack))return;}
         noListPolls++;stable=0;bottomStable=0;lastHeight=-1;
@@ -611,21 +634,54 @@
       const deltaLabelHit=result.labelHitSkus.filter(sku=>!sentLabelHit.has(sku));
       const deltaDecisions={};
       for(const [sku,outcome] of Object.entries(result.skuDecisions||{}))if(sentDecisions.get(sku)!==outcome)deltaDecisions[sku]=outcome;
+      if(deltaDiscover.length>0||deltaObserved.length>0)lastNewSkuAt=Date.now();
+      const unwaitedViewportPending=(result.viewportPendingSkus||[]).filter(sku=>!viewportTimedOutSkus.has(sku));
+      const maxViewportWait=pageHidden?BACKGROUND_VIEWPORT_ERP_MAX_WAIT_MS:VIEWPORT_ERP_MAX_WAIT_MS;
+      let waitingForViewportErp=false;
+      if(unwaitedViewportPending.length>0&&viewportWaitPolls<MAX_VIEWPORT_WAIT_POLLS){
+        if(!viewportWaitSince)viewportWaitSince=Date.now();
+        if(Date.now()-viewportWaitSince<maxViewportWait)waitingForViewportErp=true;
+        else {for(const sku of unwaitedViewportPending)viewportTimedOutSkus.add(sku);viewportWaitSince=0;}
+      }else viewportWaitSince=0;
+      const hasDelta=products.length>0||deltaObserved.length>0||deltaDiscover.length>0||deltaErpReady.length>0||deltaLabelHit.length>0||Object.keys(deltaDecisions).length>0;
+      const shouldSendSample=!waitingForViewportErp||lastSampleSentAt===0||hasDelta||(Date.now()-lastSampleSentAt>=2500);
       const categoryName=textOf(globalScope.document.querySelector?.('h1')).slice(0,120);
-      const ack = await new Promise((resolve) => globalScope.chrome.runtime.sendMessage({ type: 'categorySample', batchId: msg.batchId, attemptId: msg.attemptId, categoryUrl: url,categoryName,products,observedSkus: deltaObserved,discoverSkus:deltaDiscover,erpReadySkus:deltaErpReady,labelHitSkus:deltaLabelHit,pendingSkus:[...pending],pendingCount:pending.size,skuDecisions:deltaDecisions,compactAck:true,...(rubRange?{pagePriceConfirmed}:{}),...pageState() }, (response) => resolve(response || {})));
-      if(activeRun!==run)return;
-      if (ack.ok !== true) return done(msg, false, 'sample_not_persisted');
-      if(ack.stop===true||ack.stopped===true||activeRun!==run)return;
-      if(typeof ack.pageNativeHidden==='boolean')nativeHidden=ack.pageNativeHidden;
-      for(const p of products)sent.add(p.sku);
-      for(const s of deltaObserved)sentObserved.add(s);
-      for(const s of deltaDiscover)sentDiscovered.add(s);
-      for(const s of deltaErpReady)sentErpReady.add(s);
-      for(const s of deltaLabelHit)sentLabelHit.add(s);
-      for(const [s,o] of Object.entries(deltaDecisions))sentDecisions.set(s,o);
-      pageNewObserved+=deltaObserved.length;
+      let ack=lastAck||{ok:true,hud:hudState||{}};
+      if(shouldSendSample){
+        ack = await new Promise((resolve) => globalScope.chrome.runtime.sendMessage({ type: 'categorySample', batchId: msg.batchId, attemptId: msg.attemptId, categoryUrl: url,categoryName,products,observedSkus: deltaObserved,discoverSkus:deltaDiscover,erpReadySkus:deltaErpReady,labelHitSkus:deltaLabelHit,pendingSkus:[...pending],pendingCount:pending.size,skuDecisions:deltaDecisions,compactAck:true,...(rubRange?{pagePriceConfirmed}:{}),...pageState() }, (response) => resolve(response || {})));
+        if(activeRun!==run)return;
+        if (ack.ok !== true) return done(msg, false, 'sample_not_persisted','','',[...pending]);
+        if(ack.stop===true||ack.stopped===true||activeRun!==run)return;
+        if(typeof ack.pageNativeHidden==='boolean')nativeHidden=ack.pageNativeHidden;
+        lastSampleSentAt=Date.now();
+        lastAck=ack;
+        for(const p of products)sent.add(p.sku);
+        for(const s of deltaObserved)sentObserved.add(s);
+        for(const s of deltaDiscover)sentDiscovered.add(s);
+        for(const s of deltaErpReady)sentErpReady.add(s);
+        for(const s of deltaLabelHit)sentLabelHit.add(s);
+        for(const [s,o] of Object.entries(deltaDecisions))sentDecisions.set(s,o);
+        pageNewObserved+=deltaObserved.length;
+        if(pageHidden&&result.available){if(newObserved)zeroNewObserved=0;else zeroNewObserved++;}
+      }
+      if(revisitPendingOnly&&pending.size===0)return done(msg,true,'pending_revisit_done','','',[]);
+      if(pageHidden&&zeroNewObserved>=8){zeroNewObserved=0;const waiting=await reportWait('no_new_sku');if(waitStopped(waiting))return;await wait(BACKGROUND_RETRY_MS);sample--;continue;}
+      const staleMinutes=Math.max(Number(ack.hud?.noNewSkuMinutes)||0,(Date.now()-lastNewSkuAt>=STALE_NO_NEW_SKU_MS)?Math.floor((Date.now()-lastNewSkuAt)/60000):0);
+      if(waitingForViewportErp){
+        viewportWaitPolls++;
+        if(ack.hud||canMountHud()){
+          const nowTime=new Date().toLocaleTimeString('zh-CN',{hour12:false});
+          const baseHud=ack.hud||{};
+          const waitSec=Math.max(1,Math.ceil((Date.now()-viewportWaitSince)/1000));
+          const maxSec=Math.round(maxViewportWait/1000);
+          const statusText=staleMinutes>=2
+            ?`采集页仍有响应，已 ${staleMinutes} 分钟未发现新商品${pageHidden?'（后台可能被限流，建议切回前台）':''}`
+            :`等待本屏毛子 ERP 加载（${unwaitedViewportPending.length} 件待出卡 · ${waitSec}/${maxSec}s）`;
+          updateCategoryHud({...baseHud,pending:pending.size,observed:baseHud.observed??observed.size,noNewSkuMinutes:staleMinutes,pageHidden,savedAt:nowTime,statusText});
+        }
+        await wait(pageHidden?BACKGROUND_SETTLE_MS:VIEWPORT_POLL_MS);sample--;continue;
+      }
       pruneScrolledCards(list, observed, pending);
-      if(pageHidden&&result.available){if(newObserved)zeroNewObserved=0;else zeroNewObserved++;}
       const height = globalScope.document.documentElement?.scrollHeight || 0;
       const atBottom = globalScope.innerHeight + globalScope.scrollY >= height - 8;
       if (atBottom && height === lastHeight) { stable++; bottomStable++;if(!bottomSince)bottomSince=Date.now(); } else { stable = 0; bottomStable = 0;bottomSince=0; }
@@ -633,50 +689,68 @@
       const confirmedBottom=atBottom&&bottomStable>=(pageHidden?BACKGROUND_BOUNDARY_POLLS:3)&&(!pageHidden||Date.now()-bottomSince>=BACKGROUND_BOUNDARY_MS);
       const nextUrl = confirmedBottom ? reader.next(url) : '';
       const reachedEnd = confirmedBottom && stable >= 2 && visible(endMarker);
+      if(revisitPendingOnly&&(nextUrl||reachedEnd||scrolls>=PROACTIVE_NEXT_PAGE_SCROLLS||isMemoryHigh())){
+        if(pending.size&&reviewPasses<1){
+          reviewPasses++;viewportWaitSince=0;viewportTimedOutSkus.clear();
+          globalScope.scrollTo(0,0);stable=0;bottomStable=0;bottomSince=0;lastHeight=-1;
+          await wait(settle());continue;
+        }
+        return done(msg,pending.size===0,'pending_revisit_done','','',[...pending]);
+      }
       if(nextUrl||reachedEnd){
         if(pending.size&&reviewPasses<MAX_REVIEW_PASSES){
           reviewPasses++;const reviewAck=await reportWait('review_pending');if(waitStopped(reviewAck))return;
+          viewportWaitSince=0;viewportTimedOutSkus.clear();
           globalScope.scrollTo(0,0);stable=0;bottomStable=0;bottomSince=0;lastHeight=-1;
           await wait(settle());continue;
         }
         if(pending.size&&pageHidden){const waiting=await reportWait('review_pending');if(waitStopped(waiting))return;await wait(BACKGROUND_RETRY_MS);sample--;continue;}
-        if(pending.size)return done(msg,false,'pending_cards');
-        return nextUrl?done(msg,false,'next_page_available',nextUrl):done(msg,true,'visible_catalog_end');
+        if(pending.size)return done(msg,false,'pending_cards','','',[...pending]);
+        return nextUrl?done(msg,false,'next_page_available',nextUrl,'',[...pending]):done(msg,true,'visible_catalog_end','','',[...pending]);
       }
-      const softPaginate = pending.size===0 && (scrolls>=PROACTIVE_NEXT_PAGE_SCROLLS || pageNewObserved>=PROACTIVE_NEXT_PAGE_SKUS);
+      const softPaginate = !revisitPendingOnly && pending.size===0 && (scrolls>=PROACTIVE_NEXT_PAGE_SCROLLS || pageNewObserved>=PROACTIVE_NEXT_PAGE_SKUS);
       const highMemory = isMemoryHigh();
-      const forcePaginate = scrolls>=FORCE_NEXT_PAGE_SCROLLS || pageNewObserved>=FORCE_NEXT_PAGE_SKUS || highMemory;
+      const forcePaginate = !revisitPendingOnly && (scrolls>=FORCE_NEXT_PAGE_SCROLLS || pageNewObserved>=FORCE_NEXT_PAGE_SKUS || highMemory);
       if(softPaginate || forcePaginate){
         const earlyNextUrl=reader.next(url);
-        if(earlyNextUrl)return done(msg,false,'next_page_available',earlyNextUrl);
-        if(highMemory)return done(msg,false,'memory_recycle');
+        if(earlyNextUrl)return done(msg,false,'next_page_available',earlyNextUrl,'',[...pending]);
+        if(highMemory)return done(msg,false,'memory_recycle','','',[...pending]);
       }
       // Hidden lazy-loaded lists can stop briefly at the current document end.
       // Wait for layout/explicit pagination evidence instead of exhausting
       // the scan budget on repeated scrolls against the same bottom.
       if(pageHidden&&atBottom){if(confirmedBottom){const waiting=await reportWait('hidden_bottom');if(waitStopped(waiting))return;}await wait(confirmedBottom?BACKGROUND_RETRY_MS:BACKGROUND_SETTLE_MS);sample--;continue;}
       if (sample === MAX_SAMPLES - 1 || scrolls >= MAX_SCROLLS) break;
-      const fastSkip = !pageHidden && result.available && result.discoverSkus.length > 0 && deltaObserved.length === 0 && products.length === 0 && pending.size === 0 && !confirmedBottom && !atBottom;
+      const fastSkip = !pageHidden && !revisitPendingOnly && result.available && (result.viewportSkus?.length||0) > 0 && (result.viewportPendingSkus?.length||0) === 0 && (result.viewportUnobservedSkus?.length||0) === 0 && deltaObserved.length === 0 && products.length === 0 && pending.size === 0 && !confirmedBottom && !atBottom;
       if(ack.hud||canMountHud()){
         const nowTime=new Date().toLocaleTimeString('zh-CN',{hour12:false});
         const baseHud=ack.hud||{};
-        const statusText=ack.stop?(baseHud.message||'已达到采集目标'):fastSkip?`快进跳过已查商品（第${baseHud.pageNum||1}页）`:pageHidden?'后台扫描中…':`正在扫描第${baseHud.pageNum||1}页 · 待复查 ${pending.size}`;
-        updateCategoryHud({...baseHud,pending:pending.size,observed:baseHud.observed??observed.size,savedAt:nowTime,statusText});
+        const statusText=ack.stop
+          ?(baseHud.message||'已达到采集目标')
+          :staleMinutes>=2
+            ?`采集页仍有响应，已 ${staleMinutes} 分钟未发现新商品${pageHidden?'（后台可能被限流，建议切回前台）':''}`
+            :revisitPendingOnly
+              ?`正在回查原页未就绪 ERP（待复查 ${pending.size} 件）`
+              :fastSkip
+                ?`快进跳过已查商品（第${baseHud.pageNum||1}页）`
+                :pageHidden
+                  ?'后台扫描中…'
+                  :`正在扫描第${baseHud.pageNum||1}页 · 待复查 ${pending.size}`;
+        updateCategoryHud({...baseHud,pending:pending.size,observed:baseHud.observed??observed.size,noNewSkuMinutes:staleMinutes,pageHidden,savedAt:nowTime,statusText});
       }
-      const scrollStep = fastSkip ? Math.max(400, Math.floor(globalScope.innerHeight * 1.25)) : Math.max(200, Math.floor(globalScope.innerHeight * 0.65));
+      const scrollStep = fastSkip ? Math.max(320, Math.floor((globalScope.innerHeight||800) * FAST_SKIP_SCROLL_RATIO)) : Math.max(200, Math.floor((globalScope.innerHeight||800) * NORMAL_SCROLL_RATIO));
       const beforeScroll=globalScope.scrollY;globalScope.scrollBy(0, scrollStep);
       if(pageHidden&&Math.abs(globalScope.scrollY-beforeScroll)<5){const waiting=await reportWait('scroll_stalled');if(waitStopped(waiting))return;await wait(BACKGROUND_RETRY_MS);sample--;continue;}
       scrolls++;
-      if(pageHidden&&zeroNewObserved>=8){zeroNewObserved=0;const waiting=await reportWait('no_new_sku');if(waitStopped(waiting))return;await wait(BACKGROUND_RETRY_MS);sample--;continue;}
       await wait(fastSkip ? FAST_SKIP_SETTLE_MS : settle());
     }
-    return done(msg, false, 'scan_bound_reached');
+    return done(msg, false, 'scan_bound_reached','','',[...pending]);
   }
-  function done(msg, complete, reason, nextUrl = '', verification = '') {
+  function done(msg, complete, reason, nextUrl = '', verification = '', pendingSkus = null) {
     const requested = core.exactPageUrl(msg.categoryUrl);
-    const doneNote=reason==='next_page_available'?'正在翻至下一页…':complete?'本类目已扫到底':'扫描已暂停';
+    const doneNote=reason==='next_page_available'?'正在翻至下一页…':reason==='pending_revisit_done'?(complete?'原页待复查商品已完成':'原页回查结束，仍有 ERP 未就绪'):complete?'本类目已扫到底':'扫描已暂停';
     updateCategoryHud({statusText:doneNote});
-    const result = { type: 'categoryPageDone', batchId: msg.batchId, attemptId: msg.attemptId, categoryUrl: requested, ...(nextUrl ? { nextUrl } : {}), ...(verification?{verificationDetail:verification}:{}), complete, reason };
+    const result = { type: 'categoryPageDone', batchId: msg.batchId, attemptId: msg.attemptId, categoryUrl: requested, ...(nextUrl ? { nextUrl } : {}), ...(verification?{verificationDetail:verification}:{}), ...(Array.isArray(pendingSkus)?{pendingSkus}:{}), complete, reason };
     return new Promise((resolve) => globalScope.chrome.runtime.sendMessage(result, (res) => { if(res?.hud)updateCategoryHud(res.hud); resolve(result); }));
   }
 })(globalThis);

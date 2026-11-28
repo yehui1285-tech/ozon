@@ -1,5 +1,29 @@
 # CHANGELOG.md - Ozon 项目续接记录
 
+## 2026-11-28 - V1.74 / 0.6.92 修复类目扫描“快进飙速 / 跳过延迟 ERP / 翻页清空待复查”，并增加无新增耗时提示（工作台待部署）
+
+- 变更背景与目标：
+  - 修复类目扫描运行数分钟后触发过宽 `fastSkip`（`1.25 屏 / 350ms`）导致未出卡跳过、无视口等待直接按固定 `1.6s` 滚动、提前翻页（65 屏 / 180 SKU）清空待复查列表，以及后台被遮挡“时间在跳但数字不动”无显式提示的问题。
+- 关键改动（共享逻辑 + 扩展双版同步 `0.6.92`）：
+  - `ozon-erp-collector-extension/category-scanner.js`：
+    - `readCards` 统计当前视口内卡片及待出卡 SKU（`viewportSkus`、`viewportPendingSkus`、`viewportUnobservedSkus`）。
+    - 新增视口毛子 ERP 等待：若视口存在未超时待出卡商品，原地每 `500ms` 轮询（前台上限 `8s`、后台 `16s`）并在左下角悬浮窗展示等待计数与倒计时；收到 `revisitPendingOnly` 时专注完成本页待复查并上报 `pending_revisit_done`。
+    - 收紧并放慢 `fastSkip`：要求当前视口存在可见商品且全为已查 `observed` SKU，步幅从 `1.25 屏` 降为 `0.75 屏`、等待从 `350ms` 放宽到 `700ms`，普通前景滚屏微调为 `0.60 屏`。
+    - 悬浮窗新增警示态样式 `.chud-status.warn`，在持续无新增或存在 `ERP 未就绪` 结束时高亮提示。
+  - `ozon-erp-collector-extension/category-background.js`：
+    - 新增 `pendingByPage` 按原 `pageUrl` 保存待复查 SKU，`next_page_available` 翻页时不再清零历史待复查列表，并在记录中保留原页记录（`pending_preserved_on_paginate`）。
+    - 类目扫至 `visible_catalog_end` 时通过 `beginPendingPageRevisit` 自动回查含待复查 SKU 的原页（每页限 `1` 次），仍未加载者显式记入 `unresolvedErpSkus` / `unresolvedErpCount` 并在 `task.note`、`batch.message` 与诊断报告标注「有 X 件 ERP 未就绪」，同时保持入池「符合要求」门槛不变。
+    - 新增 `computeNoNewSkuMinutes` 统计心跳活跃但持续 `>= 2` 分钟未发现新 SKU 时长并随 `hudSummary` 与 `categoryDiagnostic` 下发。
+  - `ozon-erp-collector-extension/category.js`：类目卡片及批状态栏同步显示 `有 X 件 ERP 未就绪`、`正在回查原页未就绪 ERP` 与 `采集页仍有响应，已 X 分钟未发现新商品`。
+  - 版本同步与测试扩展：`manifest.json`、`popup.html`、`sourcing-enrichment.html` 及全部测试版本号升至 `0.6.92`；`tools/test-category-scanner.mjs` 与 `tools/test-category-background.mjs` 补充视口等待、超时、`no-fast-offscreen`、`pendingByPage` 跨页保留与自动回查、暂停恢复与无新增计时测试；工作台同步升级至 `V1.74`（源码 `e12941f`）。
+- 验证结果：
+  - `powershell -ExecutionPolicy Bypass -File tools\build-release.ps1`、`node tools/test-1688-extension.mjs`、`node tools/test-pinduoduo-agent.mjs`、`node tools/sync-workbench-core.mjs --workbench $wb --check` 全部通过；独立版生成 41 个文件。
+  - 工作台 `e12941f`：`npm run check:ozon-shared`、`npx tsc --noEmit`、`node scripts/check-release-version.mjs`（`V1.73 → V1.74`）、`node --test tests/*.test.mjs`（273 通过 / 0 失败）、`npm.cmd run build` 全部通过；无新增 D1 迁移。
+  - 双版扩展 ZIP SHA-256：
+    - `ozon-erp-collector-extension.zip`：`B2D63453B8DE5A92B038529645A7908E9D0484841C7ADB9A173A46ADBB842793`
+    - `ozon-standalone-extension.zip`：`12FE63DC0830BE9DBE691F8106DAB4D584BCD0D28383827EA98AB5DFC48B49E9`
+  - 回滚备份：`_备份_20261128_v174_category_viewport_erp_wait_and_pending_revisit_before`（常规 `_备份_*` 保持 5 个）。
+
 ## 2026-11-28 - V1.73 / 0.6.91 新增类目选品左下角 Shadow DOM 悬浮进度小窗并精简统一店铺扫描双胞胎小窗（工作台已上线）
 
 - 变更背景与目标：

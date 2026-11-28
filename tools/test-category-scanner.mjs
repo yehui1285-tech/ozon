@@ -296,7 +296,7 @@ bg.document.querySelectorAll = s => s.includes('tileGridDesktop') ? [forceList] 
 bg.chrome.runtime.sendMessage = (m, cb) => { reported.push(m); cb({ ok: true }); };
 backgroundListener({ type: 'categoryScanStart', batchId: 'hidden-b', attemptId: 'force-1', categoryUrl: bg.location.href }, {}, () => {});
 await new Promise(setImmediate);
-for (let i = 0; i < context.OzonCategoryScanner.FORCE_NEXT_PAGE_SCROLLS + 5 && !reported.some(m => m.type === 'categoryPageDone'); i++) {
+for (let i = 0; i < context.OzonCategoryScanner.FORCE_NEXT_PAGE_SCROLLS + 15 && !reported.some(m => m.type === 'categoryPageDone'); i++) {
   fakeNow += 2000;
   wake('force-1');
   await new Promise(setImmediate);
@@ -332,7 +332,7 @@ for (let i = 0; i < 175 && !reported.some(m => m.type === 'categoryPageDone'); i
 assert.equal(reported.some(m => m.type === 'categoryPageDone' && m.reason === 'memory_recycle'), false, 'must not trigger memory_recycle merely on scroll count');
 backgroundListener({ type: 'categoryScanStop', batchId: 'hidden-b', attemptId: 'no-blind-recycle' }, {}, () => {});
 
-// Foreground fast-skip on already-observed cards uses 1.25x viewport step and 350ms settle.
+// Foreground fast-skip on already-observed viewport cards uses 0.75x viewport step and 700ms settle.
 reported.length = 0;
 timers.clear();
 let scrollSteps = [];
@@ -349,9 +349,91 @@ const fastList = makeEl({ widget: 'tileGridDesktop', children: [fastCard] });
 bg.document.querySelectorAll = s => s.includes('tileGridDesktop') ? [fastList] : [];
 backgroundListener({ type: 'categoryScanStart', batchId: 'hidden-b', attemptId: 'fast-skip-1', categoryUrl: bg.location.href, observedSkus: ['88001'] }, {}, () => {});
 await new Promise(setImmediate);
-assert.equal(scrollSteps[0], 1000, 'fastSkip scrolls 1.25x innerHeight (1000px for 800px height)');
-const lastTimer = [...timers.values()].at(-1);
-assert.equal(lastTimer?.ms, context.OzonCategoryScanner.FAST_SKIP_SETTLE_MS, 'fastSkip waits 350ms');
+assert.equal(scrollSteps[0], 600, 'fastSkip scrolls 0.75x innerHeight (600px for 800px height)');
+let lastTimer = [...timers.values()].at(-1);
+assert.equal(lastTimer?.ms, context.OzonCategoryScanner.FAST_SKIP_SETTLE_MS, 'fastSkip waits 700ms');
 backgroundListener({ type: 'categoryScanStop', batchId: 'hidden-b', attemptId: 'fast-skip-1' }, {}, () => {});
+
+// V1.74: Off-screen observed card only (no cards inside viewport) must NOT fastSkip.
+reported.length = 0;
+timers.clear();
+scrollSteps = [];
+bg.scrollY = 0;
+const offscreenCard = makeEl({
+  text: '选品标签： 符合要求\n100,00 ¥\n毛子ERP\nrFBS佣金：10%\nSKU：88002\n月销量：20\n发货模式：FBS\n长宽高：10×10×10\n重量：500g',
+  children: [makeEl({ tag: 'A', href: 'https://www.ozon.ru/product/p-88002/', text: 'offscreen-item' })],
+});
+offscreenCard.children[0].getBoundingClientRect = () => ({ width: 200, height: 100, top: 1200, bottom: 1300 });
+const offscreenList = makeEl({ widget: 'tileGridDesktop', children: [offscreenCard] });
+bg.document.querySelectorAll = s => s.includes('tileGridDesktop') ? [offscreenList] : [];
+backgroundListener({ type: 'categoryScanStart', batchId: 'hidden-b', attemptId: 'no-fast-offscreen', categoryUrl: bg.location.href, observedSkus: ['88002'] }, {}, () => {});
+await new Promise(setImmediate);
+assert.equal(scrollSteps[0], 480, 'empty viewport uses normal 0.60x scroll instead of fastSkip');
+lastTimer = [...timers.values()].at(-1);
+assert.equal(lastTimer?.ms, 1600, 'empty viewport uses normal foreground settle');
+backgroundListener({ type: 'categoryScanStop', batchId: 'hidden-b', attemptId: 'no-fast-offscreen' }, {}, () => {});
+
+// V1.74: Mixed page (red-label + no-label + delayed ERP) waits in place at 500ms until delayed ERP renders, then scrolls.
+reported.length = 0;
+timers.clear();
+scrollSteps = [];
+bg.scrollY = 0;
+let delayedReady = false;
+const makeDelayedCard = () => makeEl({
+  text: delayedReady
+    ? '选品标签： 符合要求\n200,00 ¥\n毛子ERP\nrFBS佣金：10%\nSKU：89003\n月销量：30\n发货模式：FBS\n长宽高：10×10×10\n重量：500g'
+    : '200,00 ¥\n毛子ERP\nSKU：89003\n月销量：加载中',
+  children: [
+    makeEl({ tag: 'A', href: 'https://www.ozon.ru/product/p-89003/', text: 'delayed-item' }),
+    ...(delayedReady ? [makeEl({ text: '毛子ERP\n选品标签： 符合要求', children: [makeEl({ text: '选品标签： 符合要求' })] })] : []),
+  ],
+});
+const mixRed = card('89001', 'mix-red', '选品标签： 符合要求');
+const mixNoLabel = card('89002', 'mix-no', '无标签');
+const viewportWaitList = () => makeEl({ widget: 'tileGridDesktop', children: [mixRed, mixNoLabel, makeDelayedCard()] });
+let activeViewportList = viewportWaitList();
+bg.document.querySelectorAll = s => s.includes('tileGridDesktop') ? [activeViewportList] : [];
+backgroundListener({ type: 'categoryScanStart', batchId: 'hidden-b', attemptId: 'viewport-wait-1', categoryUrl: bg.location.href }, {}, () => {});
+await new Promise(setImmediate);
+assert.equal(scrollSteps.length, 0, 'scanner waits in place when viewport has unready Maozi ERP card');
+assert.equal([...timers.values()].at(-1)?.ms, context.OzonCategoryScanner.VIEWPORT_POLL_MS, 'viewport wait polls at 500ms');
+delayedReady = true;
+activeViewportList = viewportWaitList();
+fakeNow += 600;
+wake('viewport-wait-1');
+await new Promise(setImmediate);
+assert.equal(scrollSteps.length, 1, 'scanner scrolls immediately after delayed viewport ERP loads');
+assert.ok(reported.flatMap(m => m.products || []).some(p => p.sku === '89003'), 'delayed SKU 89003 is captured once ERP finishes loading');
+backgroundListener({ type: 'categoryScanStop', batchId: 'hidden-b', attemptId: 'viewport-wait-1' }, {}, () => {});
+
+// V1.74: Viewport wait times out cleanly after VIEWPORT_ERP_MAX_WAIT_MS without permanently stalling, and revisitPendingOnly finishes cleanly.
+reported.length = 0;
+timers.clear();
+scrollSteps = [];
+bg.scrollY = 0;
+delayedReady = false;
+const timeoutList = makeEl({ widget: 'tileGridDesktop', children: [makeDelayedCard()] });
+bg.document.querySelectorAll = s => s.includes('tileGridDesktop') ? [timeoutList] : [];
+backgroundListener({ type: 'categoryScanStart', batchId: 'hidden-b', attemptId: 'viewport-timeout-1', categoryUrl: bg.location.href }, {}, () => {});
+await new Promise(setImmediate);
+assert.equal(scrollSteps.length, 0);
+fakeNow += context.OzonCategoryScanner.VIEWPORT_ERP_MAX_WAIT_MS + 100;
+wake('viewport-timeout-1');
+await new Promise(setImmediate);
+assert.equal(scrollSteps.length, 1, 'viewport wait advances after VIEWPORT_ERP_MAX_WAIT_MS timeout');
+backgroundListener({ type: 'categoryScanStop', batchId: 'hidden-b', attemptId: 'viewport-timeout-1' }, {}, () => {});
+
+// V1.74: revisitPendingOnly mode completes with pending_revisit_done as soon as pending resolves, and returns remaining pendingSkus if unresolved.
+reported.length = 0;
+bg.scrollY = 0;
+delayedReady = true;
+const revisitOkList = makeEl({ widget: 'tileGridDesktop', children: [makeDelayedCard()] });
+bg.document.querySelectorAll = s => s.includes('tileGridDesktop') ? [revisitOkList] : [];
+backgroundListener({ type: 'categoryScanStart', batchId: 'hidden-b', attemptId: 'revisit-ok', categoryUrl: bg.location.href, revisitPendingOnly: true }, {}, () => {});
+await new Promise(setImmediate);
+const revisitDoneOk = reported.find(m => m.type === 'categoryPageDone');
+assert.equal(revisitDoneOk?.reason, 'pending_revisit_done');
+assert.equal(revisitDoneOk?.complete, true);
+assert.deepEqual(Array.from(revisitDoneOk?.pendingSkus || []), []);
 
 console.log('category scanner real-core synthetic DOM tests passed');

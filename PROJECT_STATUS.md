@@ -1,10 +1,15 @@
 # Ozon 当前状态
 
-更新时间：2026-11-28（用户确认工作台 V1.73 已成功部署上线，源码 `cfef93b`，内嵌扩展 `v0.6.91`；独立分享版 `0.6.91` 已构建；**无新增 D1 迁移**；Ozon 仓库同步推送 `origin/main`）。
+更新时间：2026-11-28（工作台 V1.74 / 扩展 `v0.6.92` / 独立分享版 `0.6.92` 已完成改造、构建与本地验收，**无新增 D1 迁移**；工作台源码 `e12941f` 待部署上线，Ozon 仓库将同步推送 `origin/main`）。
 用途：新对话快速续接。详细过程按需查 [CHANGELOG](CHANGELOG.md) 和 [历史入口](docs/history/README.md)，不把历史待办当作当前任务。
 
 ## 当前版本与结论
 
+- V1.74 / 0.6.92（工作台源码 `e12941f` 本地构建与校验已通过，**待部署上线**；双版 `ozon-erp-collector-extension.zip` / `ozon-standalone-extension.zip` 已构建）：
+  - **视口内毛子 ERP 等待与 `fastSkip` 收紧限速**：[category-scanner.js](ozon-erp-collector-extension/category-scanner.js) 识别当前视口待出卡 SKU（`viewportPendingSkus`），每 `500ms` 原地轮询等待毛子 ERP 渲染（前台上限 `8s`、后台上限 `16s`）后再滚动；收紧 `fastSkip` 仅在视口内存在可见商品且全为已查 SKU 时触发，并将步幅/间隔从 `1.25 屏 / 350ms` 调慢为 `0.75 屏 / 700ms`，防止跳过延迟加载卡片。
+  - **翻页按原页保留 `pendingByPage` + 有限回查 + 明确残余提示**：[category-background.js](ozon-erp-collector-extension/category-background.js) 在主动/强行翻页时不再清空待复查列表，改按原 `pageUrl` 保存在 `pendingByPage`；类目到达可见末尾时自动对含待复查 SKU 的原页回查 `1` 次（`revisitPendingOnly`），仍未就绪的明确统计并在结果/悬浮窗/诊断中标注 `有 X 件 ERP 未就绪`（不降低「符合要求」入池门槛）。
+  - **「有响应但无新增商品」显式告警**：`hudSummary`、[category-scanner.js](ozon-erp-collector-extension/category-scanner.js) 悬浮窗与 [category.js](ozon-erp-collector-extension/category.js) 管理页持续检测心跳（`90s` 内活跃）而连续 `>= 2` 分钟未发现新 SKU 时，直接显示 `采集页仍有响应，已 X 分钟未发现新商品`。
+  - 双版 SHA-256：`ozon-erp-collector-extension.zip` = `B2D63453B8DE5A92B038529645A7908E9D0484841C7ADB9A173A46ADBB842793`；`ozon-standalone-extension.zip` = `12FE63DC0830BE9DBE691F8106DAB4D584BCD0D28383827EA98AB5DFC48B49E9`；回滚备份 `_备份_20261128_v174_category_viewport_erp_wait_and_pending_revisit_before`。
 - V1.73 / 0.6.91（用户确认工作台 V1.73 已上线，源码 `cfef93b`，**无新增 D1 数据库迁移**；双版独立包已构建）：
   - **类目选品悬浮进度小窗（Shadow DOM 双胞胎 HUD）**：`category-background.js` 新增 `hudSummary`、`notifyHud`、`categorySkipCurrent` 与 `categoryOpenManager`；`category-scanner.js` 在 `document.documentElement` 挂载可拖动、可折叠胶囊的蓝紫渐变 Shadow DOM 小窗（默认左下角 `18px/18px`），展示进度、数量、跳过与停止控制及管理页快捷入口，不污染 `readCards` / 翻页统计。
   - **店铺扫描小窗精简与统一**：`store-scanner.js` 同步为左下角 `18px/18px`、`304px` 蓝紫渐变可拖动/可折叠双胞胎 HUD，主按钮精简为单行（`开始/停止扫描` + 批量 `结束当前店，扫描下一家`），`导出 Markdown` / `清空本店记录` 收纳进 `更多 ▾` 抽屉，底部持久化提示精简为安静单行 `✓ 已保存 HH:MM:SS`（保留全部原有 DOM ID 与测试契约）。
@@ -61,6 +66,7 @@
 
 ## 当前待验收与已知边界
 
+- 待现场真实验收：工作台 V1.74（`e12941f`）待部署上线；加载 `v0.6.92` / 独立分享版 `0.6.92` 后建议按两项实测闭环：① 准备含「有红标、无红标、ERP 延迟出现」的类目页，分别测试正常翻页、65 屏/180 SKU 强行翻页及暂停续扫并逐 SKU 对账（核对命中 / 排除 / 回查 / `有 X 件 ERP 未就绪` 报告）；② 同一类目在前台、被另一窗口完全遮挡、恢复前台三种状态下对比新增 SKU / ERP 就绪 / 红标命中，并确认无新增持续 2 分钟时是否准确提示 `采集页仍有响应，已 X 分钟未发现新商品`。
 - 待现场真实验收：工作台 V1.73（`cfef93b`）已上线，待在真实 Ozon 页面覆盖加载 `v0.6.91` / 独立分享版 `0.6.91` 后验收类目扫描左下角 Shadow DOM 悬浮小窗（进度、拖动、折叠胶囊、暂停/跳过类目/停止/返回管理页 ↗）与精简版店铺扫描双胞胎小窗（左下角定位、拖动、折叠、`更多 ▾` 抽屉与底部单行保存提示）视觉与交互。
 - 待现场真实验收：工作台 V1.72（`73eba34`）已上线，待在真实浏览器覆盖加载 `v0.6.90` / 独立分享版 `0.6.90` 后验收免 `F5` 从首页/其他页面切入 `/ozon/pool` 直接点击「读取同源黑标价（测试）」的成功率与耗时表现。
 - 本机测试环境未配置 Playwright 模块，隔离浏览器脚本（`test-category-browser.mjs`、`test-product-pool-browser.mjs`、`ozon-pool-browser.mjs` 等）未在本机运行；所有版本均未执行外部站点绕过或自动下单。
