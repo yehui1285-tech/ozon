@@ -165,6 +165,28 @@
     }
     return result.slice(-5000);
   }
+  function normalizePendingByPage(source, observedSkus = [], expectedBaseUrl = '') {
+    const observed = new Set((Array.isArray(observedSkus) ? observedSkus : []).map(String));
+    const expectedCanon = expectedBaseUrl ? core.exactPageUrl(expectedBaseUrl) : '';
+    const output = {};
+    let total = 0;
+    for (const [rawUrl, rawEntry] of Object.entries(source && typeof source === 'object' && !Array.isArray(source) ? source : {})) {
+      let pageUrl;
+      try {
+        const parsed = new URL(String(rawUrl));
+        if (parsed.protocol !== 'https:' || !(parsed.hostname === 'ozon.ru' || parsed.hostname.endsWith('.ozon.ru')) || !(parsed.pathname.startsWith('/category/') || parsed.pathname.startsWith('/highlight/'))) continue;
+        pageUrl = expectedCanon ? core.exactPageUrl(parsed.href) : parsed.href;
+        if (!pageUrl) continue;
+        if (expectedCanon && pageUrl !== expectedCanon && !core.paginationUrl?.(pageUrl, expectedCanon)) continue;
+      } catch { continue; }
+      const skus = [...new Set((Array.isArray(rawEntry?.skus) ? rawEntry.skus : []).map(String).filter(s => s.length > 0 && [...s].every(ch => ch >= '0' && ch <= '9') && !observed.has(s)))].slice(-500);
+      if (!skus.length || total >= 5000 || Object.keys(output).length >= 200) continue;
+      const kept = skus.slice(0, 5000 - total);
+      output[pageUrl] = { skus: kept, revisitAttempts: Math.max(0, Math.min(PENDING_PAGE_REVISIT_LIMIT, Number(rawEntry?.revisitAttempts) || 0)) };
+      total += kept.length;
+    }
+    return output;
+  }
   function syncPendingByPage(task, currentPageUrl, currentPagePendingSkus) {
     if (!task) return [];
     const observed = new Set(Array.isArray(task.observedSkus) ? task.observedSkus.map(String) : []);
@@ -312,6 +334,15 @@
       const prevCp = profile.checkpoints[key] || {};
       const observedSkus = capUniqueList([...(prevCp.observedSkus || []), ...(task.observedSkus || [])], CHECKPOINT_SKU_LIMIT);
       const visitedPages = capUniqueList([...(prevCp.visitedPages || []), ...(task.visitedPages || [])], 200);
+      const mergedPendingByPage = {};
+      for (const [page, entry] of Object.entries({ ...normalizePendingByPage(prevCp.pendingByPage, observedSkus), ...normalizePendingByPage(task.pendingByPage, observedSkus) })) {
+        const prior = mergedPendingByPage[page];
+        mergedPendingByPage[page] = {
+          skus: capUniqueList([...(prior?.skus || []), ...(entry?.skus || [])], 500),
+          revisitAttempts: Math.max(Number(prior?.revisitAttempts) || 0, Number(entry?.revisitAttempts) || 0)
+        };
+      }
+      const pendingByPage = normalizePendingByPage(mergedPendingByPage, observedSkus);
       const bsKey = `${batch.id}:${key}`;
       const prevStoreCount = Number(profile.batchStoreCounts[bsKey]) || 0;
       const currStoreCount = Number(task.qualifiedCount) || 0;
@@ -324,6 +355,7 @@
         pageUrl: task.pageUrl || prevCp.pageUrl || task.url,
         visitedPages,
         observedSkus,
+        pendingByPage,
         exhausted: prevCp.exhausted === true || task.exhausted === true,
         observedCount: observedSkus.length,
         qualifiedCount: nextStoreQual,
@@ -356,7 +388,8 @@
         checkpoint: {
           pageUrl: task.pageUrl || task.url,
           visitedPages: task.visitedPages || [],
-          observedSkus: task.observedSkus || []
+          observedSkus: task.observedSkus || [],
+          pendingByPage: task.pendingByPage || {}
         }
       });
     }
@@ -636,7 +669,9 @@
       const targetPageUrl = reconcileCheckpointPageUrl(cp.pageUrl, url, options);
       const visitedPages = capUniqueList(cp.visitedPages, 200);
       const observedSkus = capUniqueList(cp.observedSkus, CHECKPOINT_SKU_LIMIT);
-      const hasCheckpoint = observedSkus.length > 0 || visitedPages.length > 0 || targetPageUrl !== core.pricePageUrl(url, options);
+      const pendingByPage = normalizePendingByPage(cp.pendingByPage, observedSkus, core.pricePageUrl(url, options));
+      const pendingSkus = [...new Set(Object.values(pendingByPage).flatMap(entry => entry.skus || []))].slice(-5000);
+      const hasCheckpoint = observedSkus.length > 0 || visitedPages.length > 0 || pendingSkus.length > 0 || targetPageUrl !== core.pricePageUrl(url, options);
       return {
         sellerKey: core.keyFromUrl(url),
         url,
@@ -647,7 +682,9 @@
         status: i === 0 ? "scanning" : "pending",
         observedCount: observedSkus.length,
         qualifiedCount: 0,
-        pendingCount: 0,
+        pendingByPage,
+        pendingSkus,
+        pendingCount: pendingSkus.length,
         observedSkus,
         visitedPages,
         ...(hasCheckpoint ? { resumedFromCheckpoint: true, note: `已续接上轮进度（已检查 ${observedSkus.length} 个商品）` } : {})

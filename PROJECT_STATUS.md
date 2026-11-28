@@ -1,10 +1,15 @@
 # Ozon 当前状态
 
-更新时间：2026-11-28（用户确认工作台 V1.75 已成功部署上线，源码 `b425806`，内嵌扩展 `v0.6.93`；独立分享版 `0.6.93` 已构建；**无新增 D1 迁移**；Ozon 仓库同步推送 `origin/main`）。
+更新时间：2026-11-28（工作台 V1.76 / 扩展 `v0.6.94` / 独立分享版 `0.6.94` 已完成全部补丁、构建与本地验收，**无新增 D1 迁移**；工作台源码 `b9cd893` 待部署上线——Codex 额度恢复后触发发布即可，Ozon 仓库同步推送 `origin/main`）。
 用途：新对话快速续接。详细过程按需查 [CHANGELOG](CHANGELOG.md) 和 [历史入口](docs/history/README.md)，不把历史待办当作当前任务。
 
 ## 当前版本与结论
 
+- V1.76 / 0.6.94（工作台源码 `b9cd893` 本地构建与 276 项校验已全部通过，**待部署上线**；双版 `ozon-erp-collector-extension.zip` / `ozon-standalone-extension.zip` 已构建）：
+  - **跨轮续扫与长页面深处回查完整性**：[category-background.js](ozon-erp-collector-extension/category-background.js) 常用任务断点、`继续扫下一轮` 与新批次恢复完整继承 `pendingByPage`，并在恢复时按新批次 `currency_price` 条件校验过滤旧页；[category-scanner.js](ozon-erp-collector-extension/category-scanner.js) 原页回查滚动上限提至 `REVISIT_MAX_SCROLLS = 85`、回顶复查重置 `scrolls`，并在无目标待复查 SKU 时启用安全快进，保证 `>45 屏` 深处延迟红标仍可回查到位。
+  - **新建核价幂等防重 + 严格 `base` 原值校验**：[quick-pricing-panel.js](ozon-erp-collector-extension/quick-pricing-panel.js) 草稿新建生成稳定 `draftOperationId`，断网重按复用同编号；[app/api/ozon/route.ts](C:/Users/Microsoft/AppData/Local/Temp/ozon-workbench-tls-6438271f99d243b3a9fe30bbbb5a0a60/.sites-checkout/app/api/ozon/route.ts)、[quick-pricing-local.js](ozon-erp-collector-extension/quick-pricing-local.js) 与独立分享版 [build-standalone.mjs](tools/build-standalone.mjs) 同编号同内容重试幂等返回原记录（不同内容报 `409`）；工作台 `lib/ozon-model.ts` 要求所有修改字段必带对应 `base` 原值（缺失直接 `400` 拒写）。
+  - **分页缓存同快照核对修订号**：工作台 `lib/ozon-pool/store.ts` 缓存命中时在同一 `db.batch` 核对 `revision`，并发写入自动失效缓存重算整份最新数据。
+  - 双版 SHA-256：`ozon-erp-collector-extension.zip` = `45ACA8DD0C1E85F96DC6DB793A10ABCC4FD136882DEA0C45975AF1448B05B1B6`；`ozon-standalone-extension.zip` = `A27E09C973BD686224FEF03269DD44D8B542A51AF86C88E6BAED5136497C9486`；回滚备份 `_备份_20261128_v176_before`。
 - V1.75 / 0.6.93（用户确认工作台 V1.75 已上线，源码 `b425806`，**无新增 D1 数据库迁移**；双版独立包已构建）：
   - **商品池「保存 / 新建一件核价」单行原子写入**：工作台 `lib/ozon-model.ts`、`app/api/ozon/route.ts` 新增 `action: 'patchRow'` 与 `'createRow'` 原子 CAS 接口，[pool-desk.tsx](C:/Users/Microsoft/AppData/Local/Temp/ozon-workbench-tls-6438271f99d243b3a9fe30bbbb5a0a60/.sites-checkout/app/ozon/pool/pool-desk.tsx) 取消保存前的整表 `GET /api/ozon` 与整表回传，仅发送当前修改行（保留 R2 变更前快照备份、行级冲突检测 `409`、并发改不同 SKU 自动 CAS 重试合并与保存成功校验）。
   - **商品池汇总与批次/设备统计按修订号复用 + 实操压测**：工作台 `lib/ozon-pool/store.ts` 为 `readPoolPage` 新增按 `revision` + `30s` TTL 缓存 `total`/`newCount`/`historyCount`/`batches`/`devices`，翻页或切换批次免重复全表 `json_each` 聚合，`saveTouched` 写入后立即失效；`ozon-pool-benchmark.mjs` 补齐 1k / 10k / 50k 规模下「打开商品池、切换批次、连续复核 20 件」耗时实测（50k 规模深度翻页 `2.27ms`、单次更新 `0.14ms`、冷开池 `69.59ms`、切批次 `87.69ms`、20 连复核均单件 `69.86ms`）。
@@ -71,6 +76,7 @@
 
 ## 当前待验收与已知边界
 
+- 待现场与上线验收：工作台 V1.76（`b9cd893`）待上线（双版 `v0.6.94` ZIP 已就绪）；上线并重载 `v0.6.94` 后可验收：① 跨轮续扫/常用任务断点恢复后仍能回查第 1 页待复查 SKU 及 `>45 屏` 深处延迟红标；② 核价新建断网重试不重复建行，且独立分享版 `quickPricingCreate` 幂等返回原记录；③ 线上同时配合 V1.75 的双设备同改/分改与「打开池、切批次、连复核 20 件」体验。
 - 待现场真实验收：工作台 V1.75（`b425806`，含 V1.74 改动）已上线，加载 `v0.6.93` / 独立分享版 `0.6.93` 后建议验收：① 双设备分别修改不同 SKU 的核价行可独立保存（提示附真实耗时 `ms`），再同时修改同一核价行触发 `409` 冲突保护不互相覆盖；② 线上实测「打开商品池、切换批次、连续复核 20 件（保存→下一件）」耗时体感。
 - 待现场真实验收：工作台 V1.74 / V1.75 已上线，加载 `v0.6.93` / 独立分享版 `0.6.93` 后建议按两项实测闭环类目扫描：① 准备含「有红标、无红标、ERP 延迟出现」的类目页，分别测试正常翻页、65 屏/180 SKU 强行翻页及暂停续扫并逐 SKU 对账（核对命中 / 排除 / 回查 / `有 X 件 ERP 未就绪` 报告）；② 同一类目在前台、被另一窗口完全遮挡、恢复前台三种状态下对比新增 SKU / ERP 就绪 / 红标命中，并确认无新增持续 2 分钟时是否准确提示 `采集页仍有响应，已 X 分钟未发现新商品`。
 - 待现场真实验收：工作台 V1.73（`cfef93b`）已上线，待在真实 Ozon 页面覆盖加载 `v0.6.91` / 独立分享版 `0.6.91` 后验收类目扫描左下角 Shadow DOM 悬浮小窗（进度、拖动、折叠胶囊、暂停/跳过类目/停止/返回管理页 ↗）与精简版店铺扫描双胞胎小窗（左下角定位、拖动、折叠、`更多 ▾` 抽屉与底部单行保存提示）视觉与交互。

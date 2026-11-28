@@ -168,13 +168,15 @@ assert.throws(()=>createRow([],{sku:'5418079062',values:{green:'94.10',black:''}
 // Verify draft prefill + test black-price fetch + create flow inside QuickPricingPanel.
 let currentRows=[];
 let createCalls=[];
+let loseCreateResponse=true;
+const createdByOperation=new Map();
 const draftFixture=new Element();
 const draftPanel=context.OzonQuickPricingPanel.create(draftFixture,{
   math:context.math,
   taskPricing:context.OzonTaskPricingCore,
   normalizeImageUrl:poolCore.normalizeImageUrl,
   load:async sku=>rowsForSku(currentRows,sku),
-  create:async req=>{createCalls.push(req);const res=createRow(currentRows,{sku:req.sku,link:req.link,values:req.values});currentRows=res.rows;return res.row},
+  create:async req=>{createCalls.push(req);if(createdByOperation.has(req.id))return createdByOperation.get(req.id);const res=createRow(currentRows,{id:req.id,sku:req.sku,link:req.link,values:req.values});currentRows=res.rows;createdByOperation.set(req.id,res.row);if(loseCreateResponse){loseCreateResponse=false;throw Error('模拟保存成功但响应丢失')}return res.row},
   fetchBlackPrice:async item=>({
     ok:true,sku:item.sku,blackPriceSource:'competitor',sourceProductUrl:'https://www.ozon.ru/product/comp-999/',
     effectiveGreenPrice:94.10,selectedCommission:14,internationalFreight:10.43,freightRoute:'CEL Economy Extra Small',originalBlackPrice:118.00
@@ -198,7 +200,12 @@ draftFixture.querySelector('[data-field="cost"]').events.input();
 assert.equal(draftFixture.querySelector('[data-qp="save"]').disabled,false);
 await draftFixture.querySelector('[data-qp="save"]').events.click();
 await new Promise(resolve=>setImmediate(resolve));
-assert.equal(createCalls.length,1);
+assert.match(draftFixture.querySelector('[data-qp="message"]').textContent,/保存未确认/,'uncertain create remains a retryable draft');
+const firstCreateId=createCalls[0]?.id;assert.ok(firstCreateId,'draft create generates an operation ID');
+await draftFixture.querySelector('[data-qp="save"]').events.click();
+await new Promise(resolve=>setImmediate(resolve));
+assert.equal(createCalls.length,2);
+assert.equal(createCalls[1]?.id,firstCreateId,'retry reuses the original operation ID');
 assert.equal(currentRows.length,1);
 assert.equal(currentRows[0].black,'118.00');
 draftPanel.dispose();

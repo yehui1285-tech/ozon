@@ -9,7 +9,7 @@
     root.innerHTML='<div class="qp-header"><h2>单品快速核价</h2><button type="button" data-qp="refresh">刷新核价</button></div><div class="qp-head-card"><button type="button" class="qp-thumb-btn" data-qp="thumb" title="点击放大主图扫码找同款" hidden></button><div class="qp-current" data-qp="title">请在左侧选择商品</div></div><div class="qp-link-row"><a data-qp="link" target="_blank" rel="noopener noreferrer" hidden>打开 Ozon 商品页</a><button type="button" class="qp-test-btn" data-qp="fetchBlack" hidden>读取同源黑标价（测试）</button></div><div class="qp-prefill" data-qp="prefill" hidden></div><p data-qp="message" role="status" class="qp-message">请选择待处理商品</p><label class="qp-choice">核价记录<select data-qp="row" aria-label="核价记录"></select></label><div class="qp-fields"></div><div class="qp-result" data-qp="result"></div><div class="qp-margin" data-qp="margin" aria-live="polite"></div><p class="qp-hint">使用原核价规则；调整定价或系数后，请重新确认运费。实际采购成本和货源由人工核实。</p><div class="qp-actions"><button data-qp="save" type="button">保存核价</button><button data-qp="approve" type="button" class="qp-primary">保存并标记已复核</button><button data-qp="reject" type="button" class="qp-reject">淘汰</button><button data-qp="next" type="button">下一件</button></div>';
     const q=key=>root.querySelector(`[data-qp="${key}"]`), inputs={};
     for(const [key,label] of fields){const l=document.createElement('label');l.textContent=label;const el=document.createElement(key==='note'?'textarea':'input');el.dataset.field=key;el.setAttribute('aria-label',label);el.maxLength=key==='source'||key==='note'?4000:240;if(key!=='source'&&key!=='note')el.inputMode='decimal';l.append(el);root.querySelector('.qp-fields').append(l);inputs[key]=el;el.addEventListener('input',updateResult);if(key==='quoteOverride'){const box=document.createElement('div');box.className='qp-price';box.dataset.qp='price';box.setAttribute('aria-live','polite');root.querySelector('.qp-fields').append(box)}}
-    let product=null,base=null,rows=[],busy=false,seq=0,fetchSeq=0,disposed=false,timer=null,inFlight=null,isDraft=false,prefillInfo=null,fetchingBlack=false,sourceUrlNote='';
+    let product=null,base=null,rows=[],busy=false,seq=0,fetchSeq=0,disposed=false,timer=null,inFlight=null,isDraft=false,draftOperationId=null,prefillInfo=null,fetchingBlack=false,sourceUrlNote='';
     const scheduleTimer=(...args)=>typeof scope.setTimeout==='function'?scope.setTimeout(...args):typeof setTimeout==='function'?setTimeout(...args):0;
     const cancelTimer=id=>typeof scope.clearTimeout==='function'?scope.clearTimeout(id):typeof clearTimeout==='function'?clearTimeout(id):undefined;
     function schedulePoll(){if(timer!==null){cancelTimer(timer);timer=null}if(disposed||!product)return;const delay=base&&!isDraft?15000:2000;timer=scheduleTimer(()=>{timer=null;if(!disposed&&document.visibilityState==='visible')void refresh();else schedulePoll()},delay)}
@@ -69,7 +69,7 @@
       }
       for(const input of Object.values(inputs))input.disabled=busy||fetchingBlack||!base;
     }
-    function setBase(row,draftMode=false){isDraft=Boolean(draftMode&&row);base=row?{...row}:null;for(const [key] of fields)inputs[key].value=String(row?.[key]??'');updateResult();schedulePoll()}
+    function setBase(row,draftMode=false){isDraft=Boolean(draftMode&&row);if(isDraft&&!draftOperationId)draftOperationId='qp-'+(typeof crypto!=='undefined'&&crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+'-'+Math.random().toString(36).slice(2));if(!isDraft)draftOperationId=null;base=row?{...row}:null;for(const [key] of fields)inputs[key].value=String(row?.[key]??'');updateResult();schedulePoll()}
     function updateChoices(matches,preferred){rows=matches;const list=q('row');list.replaceChildren();if(matches.length!==1){const o=document.createElement('option');o.value='';o.textContent=matches.length?'请选择具体核价记录':isDraft?'商品池预填草稿（尚未入核价表）':'未找到匹配核价记录';list.append(o)}for(const row of matches){const o=document.createElement('option');o.value=row.id;o.textContent=`绿标 ${row.green||'—'} / 黑标 ${row.black||'—'} · ${row.id.slice(0,10)}`;list.append(o)}list.value=matches.some(r=>r.id===preferred)?preferred:matches.length===1?matches[0].id:'';}
     function showProduct(){
       q('title').textContent=product?`${product.sku} · ${product.title||'商品'}`:'请点击左侧商品名称';
@@ -117,7 +117,7 @@
       if(disposed||busy||fetchingBlack)return false;
       if(product?.sku===next?.sku&&next){product=next;showProduct();return true}
       if(dirty()&&!confirm('当前核价有未保存修改，确认放弃后切换商品？'))return false;
-      seq++;fetchSeq++;product=next||null;rows=[];isDraft=false;prefillInfo=null;sourceUrlNote='';updateChoices([],null);setBase(null,false);showProduct();adapter.selection?.(product);
+      seq++;fetchSeq++;product=next||null;rows=[];isDraft=false;draftOperationId=null;prefillInfo=null;sourceUrlNote='';updateChoices([],null);setBase(null,false);showProduct();adapter.selection?.(product);
       if(product)void refresh(true);else notify('请选择商品');return true;
     }
     q('row').addEventListener('change',()=>{if(dirty()&&!confirm('当前核价有未保存修改，确认切换核价记录？')){q('row').value=base.id;return}setBase(rows.find(r=>r.id===q('row').value),false);notify(base?'已选择核价记录。':'请选择核价记录。')});
@@ -159,12 +159,12 @@
       const selected=product,savedBase=base,wasDraft=isDraft,startedAt=typeof performance!=='undefined'?performance.now():Date.now();busy=true;seq++;updateResult();notify(wasDraft?'正在新建并保存核价…':'正在保存核价…');let pricingSaved=false;
       try{
         const saved=wasDraft
-          ?await adapter.create({sku:selected.sku,link:selected.link||'',values})
+          ?await adapter.create({id:draftOperationId,sku:selected.sku,link:selected.link||'',values})
           :await adapter.save({sku:selected.sku,id:savedBase.id,base:savedBase,patch:patch()});
         if(!saved||(!wasDraft&&saved.id!==savedBase.id)||!saved.id||String(saved.sku)!==String(selected.sku))throw Error('未确认核价记录身份');
         pricingSaved=true;prefillInfo=null;
         const nextRows=wasDraft?[...rows,saved]:rows.map(r=>r.id===saved.id?saved:r);
-        isDraft=false;updateChoices(nextRows,saved.id);setBase(saved,false);
+        isDraft=false;draftOperationId=null;updateChoices(nextRows,saved.id);setBase(saved,false);
         const elapsedMs=Math.max(1,Math.round((typeof performance!=='undefined'?performance.now():Date.now())-startedAt));
         if(approve){if(!core.evaluate(saved,adapter.math).complete||selected.blocked)throw Error('核价数据不全或运输待复核');await adapter.status(selected,'approved');const totalMs=Math.max(1,Math.round((typeof performance!=='undefined'?performance.now():Date.now())-startedAt));notify(`核价已保存，商品已标记人工已复核（${totalMs}ms）。`);busy=false;updateResult();adapter.advance(selected);return}
         notify(wasDraft?`✓ 已新建并保存到核价表（${elapsedMs}ms）`:`✓ 核价已保存（${elapsedMs}ms）`);

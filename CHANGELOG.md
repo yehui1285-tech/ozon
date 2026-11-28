@@ -1,5 +1,25 @@
 # CHANGELOG.md - Ozon 项目续接记录
 
+## 2026-11-28 - V1.76 / 0.6.94 跨轮续扫保留待复查、长页深处回查（>45 屏）、新建核价幂等防重与分页缓存同快照核对（工作台待部署）
+
+- 变更背景与目标：
+  - 基于 V1.74 / V1.75 复盘审计发现的 5 项可靠性与一致性缺口进行双线补齐（Codex 完成前段 80% 主干，本轮接手修复遗漏与缺陷并完成全量构建测试）。
+- 关键改动（工作台 + 扩展 + 独立分享版 `0.6.94`）：
+  - `ozon-erp-collector-extension/category-background.js`：`syncTaskCheckpoint`、`selectContinuationEntries`、`startCategoryBatch` 完整保留并恢复 `pendingByPage`；新增 `normalizePendingByPage(..., expectedBaseUrl)`，跨轮调整价格筛选（`currency_price`）时自动过滤旧价格条件页，防止跳回不匹配页面。
+  - `ozon-erp-collector-extension/category-scanner.js`：原页回查滚动上限由 `45` 提至 `REVISIT_MAX_SCROLLS = 85`（回顶复查重置 `scrolls = 0`），并在不含待复查目标 SKU 的已查视口允许安全 `fastSkip`（`0.75 屏 / 700ms`），解决长页 `>45 屏` 深处延迟红标无法回查到位问题。
+  - 核价幂等与严格原值检查：
+    - `ozon-erp-collector-extension/quick-pricing-panel.js`、`quick-pricing-local.js`、`tools/build-standalone.mjs`：草稿态生成固定 `draftOperationId`，重试复用同一 `id`；服务端 `app/api/ozon/route.ts` 与独立版 `build-standalone.mjs` 的 `quickPricingCreate` 收到同 `id` 同内容重试时幂等返回原记录，同 `id` 异内容报 `409`/冲突错误，主动新建第二套报价时换新 `id`。
+    - 工作台 `lib/ozon-model.ts`：`parseSingleRowPatch` 强制 `patch` 每个字段都必须带 `base` 原值（缺原值直接 `400` 拒绝）。
+  - 工作台 `lib/ozon-pool/store.ts`：分页缓存命中路径在同一 `db.batch` 中核对 `SELECT revision FROM ozon_pool_accounts WHERE owner=?`，并发变动立即失效缓存并读取单版本完整快照。
+  - 版本与测试：`0.6.93 → 0.6.94` / `V1.75 → V1.76`；`tools/test-category-scanner.mjs`（补充深页 `>45 屏` 回查用例）、`tools/test-category-background.mjs`（补充断点保留与改价过滤用例）、`tools/test-quick-pricing.mjs`、`tests/ozon-sync.test.mjs`、`tests/ozon-pool-d1.test.mjs` 全覆盖。
+- 验证结果：
+  - `node tools/sync-workbench-core.mjs --workbench $wb`、`powershell -ExecutionPolicy Bypass -File tools\build-release.ps1`、`node tools/test-1688-extension.mjs`、`node tools/test-pinduoduo-agent.mjs`、`node tools/sync-workbench-core.mjs --workbench $wb --check` 全部通过；独立分享版生成 `41` 个文件。
+  - 工作台 `b9cd893`：`npm run check:ozon-shared`、`npx tsc --noEmit`、`node scripts/check-release-version.mjs`（`V1.75 → V1.76`）、`node --test tests/*.test.mjs`（`276` 通过 / `0` 失败）、`npm.cmd run build` 全部通过；无新增 D1 迁移。
+  - 双版扩展 ZIP SHA-256：
+    - `ozon-erp-collector-extension.zip`：`45ACA8DD0C1E85F96DC6DB793A10ABCC4FD136882DEA0C45975AF1448B05B1B6`
+    - `ozon-standalone-extension.zip`：`A27E09C973BD686224FEF03269DD44D8B542A51AF86C88E6BAED5136497C9486`
+  - 回滚备份：`_备份_20261128_v176_before`（常规 `_备份_*` 保持 5 个）。
+
 ## 2026-11-28 - V1.75 / 0.6.93 商品池「保存/新建一件核价」单行原子化、汇总/批次统计按版本缓存与实操压测（工作台已上线）
 
 - 变更背景与目标：

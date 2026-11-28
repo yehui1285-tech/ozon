@@ -436,4 +436,33 @@ assert.equal(revisitDoneOk?.reason, 'pending_revisit_done');
 assert.equal(revisitDoneOk?.complete, true);
 assert.deepEqual(Array.from(revisitDoneOk?.pendingSkus || []), []);
 
+// V1.76: Deep-page revisitPendingOnly (>45 scrolls) uses safe fastSkip across observed rows and still captures deep delayed red-label SKUs.
+reported.length = 0;
+timers.clear();
+const deepSteps = [];
+bg.scrollBy = (_x, y) => { deepSteps.push(y); bg.scrollY += y; };
+bg.scrollY = 0;
+bg.innerHeight = 800;
+bg.document.hidden = false;
+bg.document.documentElement.scrollHeight = 100000;
+const observedFiller = card('89010', 'seen-filler', '符合要求');
+const deepRedCard = screenshotCard('89011', 'deep-red');
+const shallowOnlyList = makeEl({ widget: 'tileGridDesktop', children: [observedFiller] });
+const deepHitList = makeEl({ widget: 'tileGridDesktop', children: [observedFiller, deepRedCard] });
+bg.document.querySelectorAll = s => s.includes('tileGridDesktop') ? [bg.scrollY >= 30000 ? deepHitList : shallowOnlyList] : [];
+backgroundListener({ type: 'categoryScanStart', batchId: 'hidden-b', attemptId: 'revisit-deep', categoryUrl: bg.location.href, observedSkus: ['89010'], pendingSkus: ['89011'], revisitPendingOnly: true }, {}, () => {});
+await new Promise(setImmediate);
+assert.equal(deepSteps[0], 600, 'revisit uses 0.75x fastSkip on observed-only viewports without target pending');
+for (let i = 0; i < 65 && !reported.some(m => m.type === 'categoryPageDone'); i++) {
+  fakeNow += 1000;
+  wake('revisit-deep');
+  await new Promise(setImmediate);
+}
+assert.ok(deepSteps.length >= 50, `expected >45 scrolls before hitting deep item (got ${deepSteps.length})`);
+assert.ok(reported.flatMap(m => m.products || []).some(p => p.sku === '89011'), 'captures deep red-label SKU past 45 scrolls');
+const revisitDeepDone = reported.find(m => m.type === 'categoryPageDone');
+assert.equal(revisitDeepDone?.reason, 'pending_revisit_done');
+assert.equal(revisitDeepDone?.complete, true);
+assert.deepEqual(Array.from(revisitDeepDone?.pendingSkus || []), []);
+
 console.log('category scanner real-core synthetic DOM tests passed');

@@ -7,7 +7,7 @@ let created = [], reloads=0, sentMessages=[], debuggerCommands=[], debuggerAttac
 const storage = { async get(k) { return k ? { ...(data[k] ? { [k]: data[k] } : {}) } : { ...data }; }, async set(v) { Object.assign(data, v); }, async remove(k) { for (const key of Array.isArray(k) ? k : [k]) delete data[key]; } };
 let declaredDebugger=true;
 const chrome = {
-  runtime:{getManifest:()=>({version:'0.6.93',permissions:declaredDebugger?['debugger']:[]})},
+  runtime:{getManifest:()=>({version:'0.6.94',permissions:declaredDebugger?['debugger']:[]})},
   storage: { local: storage,session:{async get(k){return {[k]:sessionData[k]}},async set(v){Object.assign(sessionData,v)},async remove(k){delete sessionData[k]}} },
   alarms:{async get(n){return alarms.get(n)},async create(n,o){alarms.set(n,o)},async clear(n){alarms.delete(n)}},
   tabs: {
@@ -643,6 +643,48 @@ assert.equal(tasksAfterRun[0].runCount, 1);
 assert.equal(tasksAfterRun[0].totalQualifiedCount, 1);
 assert.ok(tasksAfterRun[0].priorQualifiedSkuIds.includes('91001'));
 assert.ok(tasksAfterRun[0].checkpoints['category:901'].observedSkus.includes('91001'));
+// Pending ERP SKUs survive a reusable-profile checkpoint and are carried into both
+// a subsequent profile run and an explicit next-round batch.
+await runner.handle({ type: 'categoryTaskProfileRun', taskId, confirmArchiveOverflow: true });
+batch = (await runner.handle({ type: 'categoryGet' })).batch;
+const profilePage1 = batch.stores[0].pageUrl;
+const profilePage2 = new URL(profilePage1);
+profilePage2.searchParams.set('page', '2');
+const profilePage2Url = profilePage2.href;
+await runner.handle({
+  type: 'categorySample', batchId: batch.id, attemptId: batch.attemptId, categoryUrl: profilePage1,
+  observedSkus: ['91002'], pendingSkus: ['91003'], pendingCount: 1, pagePriceConfirmed: true
+}, { tab: { id: batch.tabId, url: profilePage1 } });
+await runner.handle({
+  type: 'categoryPageDone', batchId: batch.id, attemptId: batch.attemptId, categoryUrl: profilePage1,
+  complete: false, reason: 'next_page_available', nextUrl: profilePage2Url, pendingSkus: ['91003']
+}, { tab: { id: batch.tabId, url: profilePage1 } });
+await runner.handle({ type: 'categoryStop' });
+tasksAfterRun = (await runner.handle({ type: 'categoryGet' })).tasks;
+const profileCheckpoint = tasksAfterRun[0].checkpoints['category:901'];
+assert.equal(profileCheckpoint.pageUrl, profilePage2Url, 'profile checkpoint retains the latest page URL');
+assert.ok(profileCheckpoint.visitedPages.includes(profilePage1));
+assert.deepEqual(Array.from(profileCheckpoint.pendingByPage[profilePage1].skus), ['91003']);
+
+await runner.handle({ type: 'categoryTaskProfileRun', taskId, confirmArchiveOverflow: true });
+batch = (await runner.handle({ type: 'categoryGet' })).batch;
+assert.equal(batch.stores[0].pageUrl, profilePage2Url, 'profile resume continues from its saved page');
+assert.deepEqual(Array.from(batch.stores[0].pendingByPage[profilePage1].skus), ['91003']);
+await runner.handle({ type: 'categoryStop' });
+const nextRound = await runner.handle({ type: 'categoryContinueNextRound', batchId: batch.id, mode: 'resume_all', confirmArchiveOverflow: true });
+batch = nextRound.batch;
+assert.equal(batch.stores[0].pageUrl, profilePage2Url);
+assert.deepEqual(Array.from(batch.stores[0].pendingByPage[profilePage1].skus), ['91003']);
+await runner.handle({ type: 'categoryStop' });
+const changedPriceRound = await runner.handle({
+  type: 'categoryContinueNextRound', batchId: batch.id, mode: 'resume_all',
+  minPrice: null, maxPrice: null, pageMinCny: null, pageMaxCny: null, pageMinRub: 999, pageMaxRub: 1999,
+  confirmArchiveOverflow: true
+});
+assert.deepEqual(Object.keys(changedPriceRound.batch.stores[0].pendingByPage || {}), [], 'changed currency_price drops mismatched pendingByPage entries');
+assert.equal(changedPriceRound.batch.stores[0].pendingCount, 0);
+await runner.handle({ type: 'categoryStop' });
+
 await runner.handle({ type: 'categoryTaskProfileReset', taskId });
 tasksAfterRun = (await runner.handle({ type: 'categoryGet' })).tasks;
 assert.equal(tasksAfterRun[0].runCount, 0);
@@ -908,7 +950,7 @@ const hudSample = await runner.handle({
   products: [{ sku: '77001', name: 'HudItem', link: 'https://www.ozon.ru/product/p-77001', price: '120', qualified: true, shippingRisk: { type: 'clear' } }]
 }, { tab: { id: batch.tabId, url: batch.stores[0].pageUrl } });
 assert.equal(hudSample.ok, true);
-assert.equal(hudSample.hud.version, '0.6.93');
+assert.equal(hudSample.hud.version, '0.6.94');
 assert.equal(hudSample.hud.categoryIndex, 1);
 assert.equal(hudSample.hud.categoryTotal, 2);
 assert.equal(hudSample.hud.qualified, 1);

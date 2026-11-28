@@ -4,6 +4,7 @@
   const PROACTIVE_NEXT_PAGE_SCROLLS = 45;
   const PROACTIVE_NEXT_PAGE_SKUS = 120;
   const FORCE_NEXT_PAGE_SCROLLS = 65;
+  const REVISIT_MAX_SCROLLS = FORCE_NEXT_PAGE_SCROLLS + 20;
   const FORCE_NEXT_PAGE_SKUS = 180;
   const MEMORY_RECYCLE_RATIO = 0.85;
   const MEMORY_RECYCLE_BYTES = 1800 * 1024 * 1024;
@@ -381,7 +382,7 @@
     return href || '';
   }
   function createReader(doc, core) { return { read: (url, options, list=pickList(doc), skipSkus=null) => readCards(list, core, url, options, skipSkus), next: (url) => pagination(doc, core, url), pickList: () => pickList(doc) }; }
-  globalScope.OzonCategoryScanner = Object.freeze({ createReader, readCards, pickList, confirmPagePrice, confirmRubPrice, detectCurrencyMismatch, detectNonRubCurrency, pruneScrolledCards, MAX_SAMPLES, MAX_SCROLLS, PROACTIVE_NEXT_PAGE_SCROLLS, PROACTIVE_NEXT_PAGE_SKUS, FORCE_NEXT_PAGE_SCROLLS, FORCE_NEXT_PAGE_SKUS, FAST_SKIP_SETTLE_MS, FAST_SKIP_SCROLL_RATIO, NORMAL_SCROLL_RATIO, VIEWPORT_POLL_MS, VIEWPORT_ERP_MAX_WAIT_MS, STALE_NO_NEW_SKU_MS });
+  globalScope.OzonCategoryScanner = Object.freeze({ createReader, readCards, pickList, confirmPagePrice, confirmRubPrice, detectCurrencyMismatch, detectNonRubCurrency, pruneScrolledCards, MAX_SAMPLES, MAX_SCROLLS, PROACTIVE_NEXT_PAGE_SCROLLS, PROACTIVE_NEXT_PAGE_SKUS, FORCE_NEXT_PAGE_SCROLLS, REVISIT_MAX_SCROLLS, FORCE_NEXT_PAGE_SKUS, FAST_SKIP_SETTLE_MS, FAST_SKIP_SCROLL_RATIO, NORMAL_SCROLL_RATIO, VIEWPORT_POLL_MS, VIEWPORT_ERP_MAX_WAIT_MS, STALE_NO_NEW_SKU_MS });
 
   const core = globalScope.OzonCategoryCore;
   if (!core || !globalScope.chrome?.runtime?.onMessage || !core.exactPageUrl(globalScope.location?.href || '') || globalScope.__ozonCategoryListenerInstalled) return;
@@ -689,9 +690,9 @@
       const confirmedBottom=atBottom&&bottomStable>=(pageHidden?BACKGROUND_BOUNDARY_POLLS:3)&&(!pageHidden||Date.now()-bottomSince>=BACKGROUND_BOUNDARY_MS);
       const nextUrl = confirmedBottom ? reader.next(url) : '';
       const reachedEnd = confirmedBottom && stable >= 2 && visible(endMarker);
-      if(revisitPendingOnly&&(nextUrl||reachedEnd||scrolls>=PROACTIVE_NEXT_PAGE_SCROLLS||isMemoryHigh())){
+      if(revisitPendingOnly&&(nextUrl||reachedEnd||scrolls>=REVISIT_MAX_SCROLLS||isMemoryHigh())){
         if(pending.size&&reviewPasses<1){
-          reviewPasses++;viewportWaitSince=0;viewportTimedOutSkus.clear();
+          reviewPasses++;scrolls=0;viewportWaitSince=0;viewportTimedOutSkus.clear();
           globalScope.scrollTo(0,0);stable=0;bottomStable=0;bottomSince=0;lastHeight=-1;
           await wait(settle());continue;
         }
@@ -721,7 +722,8 @@
       // the scan budget on repeated scrolls against the same bottom.
       if(pageHidden&&atBottom){if(confirmedBottom){const waiting=await reportWait('hidden_bottom');if(waitStopped(waiting))return;}await wait(confirmedBottom?BACKGROUND_RETRY_MS:BACKGROUND_SETTLE_MS);sample--;continue;}
       if (sample === MAX_SAMPLES - 1 || scrolls >= MAX_SCROLLS) break;
-      const fastSkip = !pageHidden && !revisitPendingOnly && result.available && (result.viewportSkus?.length||0) > 0 && (result.viewportPendingSkus?.length||0) === 0 && (result.viewportUnobservedSkus?.length||0) === 0 && deltaObserved.length === 0 && products.length === 0 && pending.size === 0 && !confirmedBottom && !atBottom;
+      const viewportHasTargetPending = (result.viewportSkus||[]).some(sku=>pending.has(sku));
+      const fastSkip = !pageHidden && result.available && (result.viewportSkus?.length||0) > 0 && (result.viewportPendingSkus?.length||0) === 0 && (result.viewportUnobservedSkus?.length||0) === 0 && !viewportHasTargetPending && deltaObserved.length === 0 && products.length === 0 && (revisitPendingOnly || pending.size === 0) && !confirmedBottom && !atBottom;
       if(ack.hud||canMountHud()){
         const nowTime=new Date().toLocaleTimeString('zh-CN',{hour12:false});
         const baseHud=ack.hud||{};

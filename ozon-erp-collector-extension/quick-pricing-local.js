@@ -20,10 +20,13 @@
   async function createRow(request){
     const pricingUrl=chrome.runtime.getURL('pricing.html');const open=(await chrome.tabs.query({})).filter(tab=>tab.url===pricingUrl||tab.pendingUrl===pricingUrl);
     if(open.length>1)throw Error('请只保留一个本地核价表页面，避免同时保存');
-    if(open.length===1){const response=await chrome.runtime.sendMessage({type:'quickPricingCreate',...request});if(!response?.ok)throw Error(response?.error||'核价页面未准备好，请重试');const created=response.row;if(!created?.id||String(created.sku)!==String(request.sku))throw Error('本地核价新建未确认');return created}
+    if(open.length===1){const response=await chrome.runtime.sendMessage({type:'quickPricingCreate',...request});if(!response?.ok)throw Error(response?.error||'核价页面未准备好，请重试');const created=response.row;if(!created?.id||created.id!==request.id||String(created.sku)!==String(request.sku))throw Error('本地核价新建未确认');return created}
     const {raw,payload}=readDraft();
     const baseRows=payload.rows.length===1&&isBlankRow(payload.rows[0])?[]:payload.rows;
-    const {rows,row}=quick.createRow(baseRows,{sku:request.sku,link:request.link,values:request.values},1000);
+    const existing=baseRows.find(row=>row.id===request.id);
+    const expected=quick.createRow([],request,1000).row;
+    if(existing){if(JSON.stringify(existing)===JSON.stringify(expected))return existing;throw Error('本次新建编号已用于其他核价内容')}
+    const {rows,row}=quick.createRow(baseRows,{...request},1000);
     const serialized=JSON.stringify({...payload,savedAt:new Date().toISOString(),rows});if(serialized.length>4000000)throw Error('核价记录超过容量限制');if(localStorage.getItem(key)!==raw)throw Error('核价已变化，请重新读取');localStorage.setItem(key,serialized);
     const saved=readDraft().payload.rows.find(r=>r.id===row.id&&r.sku===String(request.sku));if(!saved)throw Error('本地核价新建未确认');return saved;
   }

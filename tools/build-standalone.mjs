@@ -136,7 +136,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const blankFirst = before.length === 1 && (typeof isBlankOrLegacyDefaultRow === "function" ? isBlankOrLegacyDefaultRow(before[0]) : false);
       const baseRows = blankFirst ? [] : before;
       const cap = typeof MAX_DRAFT_ROWS === "number" ? MAX_DRAFT_ROWS : 1000;
-      const created = OzonQuickPricingCore.createRow(baseRows,{sku:message.sku,link:message.link,values:message.values},cap);
+      const reqPayload = {id:message.id,sku:message.sku,link:message.link,values:message.values};
+      const existing = message.id ? baseRows.find(row => row.id === message.id) : null;
+      const expected = OzonQuickPricingCore.createRow([],reqPayload,cap).row;
+      if (existing) {
+        if (PRICING_ROW_KEYS.every(key => String(existing[key] ?? '') === String(expected[key] ?? ''))) {
+          sendResponse({ok:true,row:existing,rows:OzonQuickPricingCore.rowsForSku(rows,message.sku)});
+          return false;
+        }
+        throw new Error("本次新建编号已用于其他核价内容");
+      }
+      const created = OzonQuickPricingCore.createRow(baseRows,reqPayload,cap);
       rows = created.rows;
       renderRows();
       if(!savePricingDraft()){rows=before;renderRows();throw Error("核价新建未确认，请刷新核价页");}
